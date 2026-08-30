@@ -1,0 +1,30 @@
+# Python生成物
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 開発環境と開発ツール
+/.venv-format/
+/.dev-tools/
+/.pyrightconfig.generated.json
+
+# build・配布生成物
+/build/
+/dist/
+*.egg-info/
+
+# Mayaのローカル生成物
+*.autosave
+*.ma~
+*.mb~
+mayaCrashLog*.log
+
+# editor・OSの生成物
+*.swp
+*.tmp
+.DS_Store
+Thumbs.db

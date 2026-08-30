@@ -1,0 +1,16 @@
+{
+    "include": [
+        "bakedanuki/bakedanuki-tools/python/bd_tools",
+        "tests"
+    ],
+    "extraPaths": [
+        "bakedanuki/bakedanuki-tools/python",
+        "../bakedanuki-util/bakedanuki/bakedanuki-util/python"
+    ],
+    "stubPath": "../bakedanuki-util/typings",
+    "pythonVersion": "3.11",
+    "pythonPlatform": "Windows",
+    "typeCheckingMode": "strict",
+    "reportMissingTypeStubs": "none",
+    "reportUnnecessaryTypeIgnoreComment": "error"
+}

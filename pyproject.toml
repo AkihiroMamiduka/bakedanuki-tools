@@ -1,0 +1,11 @@
+[tool.black]
+line-length = 79
+target-version = ["py311"]
+required-version = "26.5.1"
+include = '\.pyi?$'
+extend-exclude = '''
+(
+  ^/\.venv-format/
+  | ^/\.dev-tools/
+)
+'''
