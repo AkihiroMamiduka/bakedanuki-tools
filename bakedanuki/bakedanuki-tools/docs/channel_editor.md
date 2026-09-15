@@ -30,7 +30,7 @@ channel_editor.dispose()
   tooltipへ表示します。属性のないnodeへ属性を追加することはありません。
 
 選択・初期表示・外部変更の同期・更新ボタンでは値を書き込みません。
-数値入力はEnterまたはフォーカス移動で確定し、step・Sliderは操作時に反映します。
+数値入力はEnterまたはフォーカス移動で確定し、値欄の上下操作・Sliderは操作時に反映します。
 未編集のEnterやフォーカス移動も値を書き込みません。boolはoff/onの選択変更で適用します。
 
 値が異なる場合、基準の値を表示したまま「混在」を添えます。
@@ -40,9 +40,29 @@ channel_editor.dispose()
 ## 範囲、単位、編集不可
 
 両側のhard min/maxが有限で最小値より最大値が大きいfloatには
-`FloatSliderSpinBox`、それ以外には`FloatSpinBox`を使用します。
+`FloatSliderSpinBox`、それ以外には`FloatValueStepSpinBox`を使用します。
 片側のhard limitも数値入力では尊重します。soft limitは初版では使用しません。
 Mayaの表示単位へ追従し、小数桁数は行の生成時にChannel Box設定から取得します。
+
+Slider以外の行には、値欄の右へ `step` 欄を表示します。
+フィールド内の「step」表記は省略し、4桁程度と単位が収まるコンパクトな幅にします。
+
+| 属性 | step変更方式 | 初期値 | step欄の上下操作 |
+| --- | --- | --- | --- |
+| 距離（doubleLinear） | multiplicative | 1 | 0.1 ↔ 1 ↔ 10 |
+| 角度（doubleAngle） | additive | 15 | 15 ↔ 30 ↔ 45 |
+| その他のfloat / double | multiplicative | 1 | 0.1 ↔ 1 ↔ 10 |
+| 正式属性名がradius | multiplicative | 0.1 | 0.01 ↔ 0.1 ↔ 1 |
+
+radiusは型の設定より優先します。Slider行の構成・操作は変更しません。
+stepの変更だけでは属性値・Undo履歴を変更せず、次の値欄の上下操作から適用します。
+stepは現在の表示単位で扱い、単位変更時も数値を維持します（例: step 1 cm → 1 m）。
+step欄への直接入力も可能です。ロック等で値が編集不可でも、step設定だけは変更できます。
+
+変更したstepはWindowが開いている間、正式属性pathと型区分（数値／距離／角度）ごとに
+保持します。別ノードの同属性、選択解除・再選択、更新、Undo / Redo、scene切替でも維持し、
+X/Y/Zは独立して扱います。Windowの終了・reload後は既定値から開始し、設定ファイルや
+sceneへstepを保存しません。
 
 表示範囲は基準属性を使い、他対象の制限は書込み前に検証します。
 入力がどれかの編集可能な対象の範囲外なら、その入力全体を拒否して理由を表示します。
@@ -51,7 +71,7 @@ Mayaの表示単位へ追従し、小数桁数は行の生成時にChannel Box�
 
 自身またはcompound祖先にlock・入力接続がある属性は編集不可です。
 アニメーション接続も表示専用で、キーの作成・変更や接続解除は行いません。
-基準が編集不可なら行全体の入力を止めます。基準以外の編集不可属性は除外し、
+基準が編集不可なら行全体の値入力を止めます。基準以外の編集不可属性は除外し、
 残る編集可能な対応属性へ適用します。表示件数はその適用対象数です。
 
 一回の数値確定・bool変更は一回のUndoで戻ります。Sliderドラッグは、全対象を含めて
@@ -76,6 +96,7 @@ bd_tools.reload_package(reload_util=True) # utilも変更した場合
 
 `channel_editor/ui.py` は公開Windowと配置・reload、`widget.py` は属性行と表示、
 `controller.py` は基準node・対応属性・選択追従を所有します。
+stepの初期値選択とWindow内の設定保持はtools、値とstepの連動はutilの複合Viewが所有します。
 値の単位変換・型付き属性列挙・一括書込み・混在状態・Undoはutilを使用します。
 別ツールはこのcontrollerへ暗黙に依存せず、必要な汎用APIをutilから利用します。
 
@@ -85,6 +106,10 @@ bd_tools.reload_package(reload_util=True) # utilも変更した場合
 View選択、混在編集、除外対象、範囲違い、Undo、構成変更、closeとreloadを検証します。
 公開入口の型は `tests/typecheck/channel_editor_contract.py` で固定します。
 対応Maya全versionでruntime testを行い、本体の操作確認は開発用smoke scriptを利用します。
+
+step追加時はtools runtime testが各versionで30件成功し、utilの統一検証も通過しています。
+Maya 2025本体でstep欄のキー操作、刻み幅による一括入力、Undo後のstep保持も確認しました。
+検証用Mayaアプリケーションの終了待ちは、下記手順書に記載したタイムアウトが継続しています。
 
 初回実装ではMaya 2025 / 2026 / 2027のtools runtime test各17件と、utilの
 統一検証を通過しています。Maya 2025本体でもキー入力、Sliderドラッグ、Undo、

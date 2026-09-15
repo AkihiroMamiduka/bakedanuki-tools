@@ -59,6 +59,8 @@ class _MayaSmokeSession:
             self._setup_scene,
             self._show,
             self._inspect,
+            self._edit_step,
+            self._undo_step_value,
             self._edit_bool,
             self._undo_bool,
             self._edit_float,
@@ -197,6 +199,43 @@ class _MayaSmokeSession:
             raise AssertionError("min/max属性のSlider Viewが見つかりません")
         self._capture("01-multiple-selection.png")
         self.steps.append("inspect_rendered_views")
+
+    def _edit_step(self) -> None:
+        """stepの実入力は正本を維持し、値欄の増減にだけ反映する。"""
+        from maya import cmds
+
+        from bd_util.ui import FloatValueStepSpinBox, qt
+
+        view = self._row("translate.translateX").editor
+        if not isinstance(view, FloatValueStepSpinBox):
+            raise AssertionError("translateXに値とstepのViewがありません")
+        cmds.flushUndo()
+        self._key(view.step_spin_box, qt.Qt.Key.Key_Down)
+        if view.singleStep() != 0.1:
+            raise AssertionError("stepの桁変更が反映されません")
+        self._assert_values("translateX", (0, 0))
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("step変更でUndo履歴が増えました")
+        self._key(view.spin_box, qt.Qt.Key.Key_Up)
+        self._assert_values("translateX", (0.1, 0.1))
+        self.steps.append("step_field_changes_only_increment")
+
+    def _undo_step_value(self) -> None:
+        """値だけをUndoし、再構築後もユーザーのstepを保持する。"""
+        from maya import cmds
+
+        from bd_util.ui import FloatValueStepSpinBox
+
+        cmds.undo()
+        self._flush_gui()
+        self._assert_values("translateX", (0, 0))
+        view = self._row("translate.translateX").editor
+        if (
+            not isinstance(view, FloatValueStepSpinBox)
+            or view.singleStep() != 0.1
+        ):
+            raise AssertionError("Undoでstep設定が失われました")
+        self.steps.append("undo_value_preserves_step")
 
     def _edit_bool(self) -> None:
         """ComboBoxのキー操作で複数ノードを同じ値へ変更する。"""
@@ -397,7 +436,7 @@ class _MayaSmokeSession:
         from maya import cmds
 
         from bd_tools import channel_editor
-        from bd_util.ui import FloatSpinBox
+        from bd_util.ui import FloatValueStepSpinBox
 
         cmds.file(new=True, force=True)
         self.nodes = []
@@ -430,10 +469,10 @@ class _MayaSmokeSession:
             sum(self._callback_counts().values()) - baseline_count
         )
         row = self._row("field00")
-        if not isinstance(row.editor, FloatSpinBox):
+        if not isinstance(row.editor, FloatValueStepSpinBox):
             raise AssertionError("負荷測定用float属性のViewがありません")
         started = time.perf_counter()
-        row.editor.setValue(0.5)
+        row.editor.spin_box.setValue(0.5)
         self._flush_gui()
         self.measurements["edit_ten_targets_ms"] = round(
             (time.perf_counter() - started) * 1000, 3

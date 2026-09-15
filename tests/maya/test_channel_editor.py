@@ -11,7 +11,12 @@ import pytest
 from maya import cmds
 
 from bd_util.maya.ui import MayaBoolPlugsBinding, MayaFloatPlugsBinding
-from bd_util.ui import BoolComboBox, FloatSliderSpinBox, FloatSpinBox, qt
+from bd_util.ui import (
+    BoolComboBox,
+    FloatSliderSpinBox,
+    FloatValueStepSpinBox,
+    qt,
+)
 
 from bd_tools.channel_editor.widget import (
     AttributeRowWidget,
@@ -106,7 +111,7 @@ def test_supported_types_flags_and_view_selection(
     assert {"translateX", "rotateY", "scaleZ", "visibility", "shown"} <= names
     assert {"hidden", "integer", "translate"}.isdisjoint(names)
     assert isinstance(_row(editor, "visibility").editor, BoolComboBox)
-    assert isinstance(_row(editor, "lowerOnly").editor, FloatSpinBox)
+    assert isinstance(_row(editor, "lowerOnly").editor, FloatValueStepSpinBox)
     assert isinstance(_row(editor, "weight").editor, FloatSliderSpinBox)
 
 
@@ -347,3 +352,133 @@ def test_missing_and_incompatible_attributes_are_excluded(
     _events()
     row = _row(editor, "weight")
     assert "対応する属性なし" in row.status_label.toolTip()
+
+
+def _value_step(
+    widget: ChannelEditorWidget, name: str
+) -> FloatValueStepSpinBox:
+    """指定した属性行から値とstepの複合Viewを返す。"""
+    view = _row(widget, name).editor
+    assert isinstance(view, FloatValueStepSpinBox)
+    return view
+
+
+@pytest.mark.parametrize(
+    "name,step,mode,increment",
+    [
+        ("translateX", 1, "multiplicative", 1),
+        ("rotateY", 15, "additive", 15),
+        ("scaleZ", 1, "multiplicative", 1),
+        ("lowerOnly", 1, "multiplicative", 1),
+    ],
+)
+def test_step_defaults_by_attribute_kind(
+    editor: ChannelEditorWidget,
+    name: str,
+    step: float,
+    mode: str,
+    increment: float,
+) -> None:
+    """単位種別に応じたstepと、step欄自身の増減幅を設定する。"""
+    view = _value_step(editor, name)
+    assert view.singleStep() == view.step_spin_box.value() == step
+    assert view.step_spin_box.stepMode() == mode
+    assert view.step_spin_box.singleStep() == increment
+    view.step_spin_box.stepUp()
+    assert view.singleStep() == (step * 10 if mode == "multiplicative" else 30)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize("kind", ["double", "doubleLinear", "doubleAngle"])
+@pytest.mark.parametrize("bounded", [False, True])
+def test_radius_override_respects_slider_priority(
+    editor: ChannelEditorWidget,
+    kind: str,
+    bounded: bool,
+) -> None:
+    """radiusは型より優先し、Sliderのある行は元の構成を維持する。"""
+    cmds.addAttr(
+        "channelA", longName="radius", attributeType=kind, keyable=True
+    )
+    if bounded:
+        cmds.addAttr("channelA.radius", edit=True, minValue=0, maxValue=10)
+    _events()
+    view = _row(editor, "radius").editor
+    if bounded:
+        assert isinstance(view, FloatSliderSpinBox)
+    else:
+        assert isinstance(view, FloatValueStepSpinBox)
+        assert view.singleStep() == 0.1
+        assert view.step_spin_box.stepMode() == "multiplicative"
+
+
+def test_step_survives_value_undo_refresh_and_selection(
+    editor: ChannelEditorWidget,
+) -> None:
+    """混在した値だけをUndoし、同属性のstepは再構築を越えて保持する。"""
+    _set_value("channelB.scaleX", 2)
+    _events()
+    cmds.flushUndo()
+    view = _value_step(editor, "scaleX")
+    view.step_spin_box.setValue(0.1)
+    assert cmds.getAttr("channelA.scaleX") == 1
+    assert cmds.getAttr("channelB.scaleX") == 2
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    view.spin_box.stepUp()
+    assert isclose(float(cmds.getAttr("channelA.scaleX")), 1.1)
+    assert isclose(float(cmds.getAttr("channelB.scaleX")), 1.1)
+    cmds.undo()
+    _events()
+    assert cmds.getAttr("channelA.scaleX") == 1
+    assert cmds.getAttr("channelB.scaleX") == 2
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    assert _value_step(editor, "scaleX").singleStep() == 0.1
+    editor.refresh()
+    assert _value_step(editor, "scaleX").singleStep() == 0.1
+    assert _value_step(editor, "scaleY").singleStep() == 1
+    cmds.select(clear=True)
+    _events()
+    cmds.select("channelB", replace=True)
+    _events()
+    assert _value_step(editor, "scaleX").singleStep() == 0.1
+
+
+def test_step_cache_is_separate_by_kind_and_window(
+    editor: ChannelEditorWidget,
+) -> None:
+    """同名でも型が変われば既定値を使い、新規Windowは前回のstepを引き継がない。"""
+    _value_step(editor, "shown").setSingleStep(0.01)
+    cmds.deleteAttr("channelA.shown")
+    cmds.addAttr(
+        "channelA", longName="shown", attributeType="doubleAngle", keyable=True
+    )
+    _events()
+    assert _value_step(editor, "shown").singleStep() == 15
+    _value_step(editor, "translateX").setSingleStep(10)
+    other = ChannelEditorWidget()
+    try:
+        assert _value_step(other, "translateX").singleStep() == 1
+    finally:
+        other.dispose()
+        other.deleteLater()
+        _events()
+
+
+def test_step_tracks_display_units_without_converting_numeric_step(
+    editor: ChannelEditorWidget,
+) -> None:
+    """表示単位の変更はstepの数値を維持し、step欄の単位を揃える。"""
+    original = str(cmds.currentUnit(query=True, linear=True))
+    view = _value_step(editor, "translateX")
+    view.setSingleStep(2.5)
+    try:
+        cmds.currentUnit(linear="m")
+        _events()
+        view = _value_step(editor, "translateX")
+        assert view.singleStep() == view.step_spin_box.value() == 2.5
+        assert view.step_spin_box.suffix() == view.spin_box.suffix() == " m"
+        editor.refresh()
+        assert _value_step(editor, "translateX").singleStep() == 2.5
+    finally:
+        cmds.currentUnit(linear=original)
+        _events()

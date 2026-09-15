@@ -3,8 +3,16 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 from bd_util.maya.ui import MayaBoolPlugsBinding, get_channel_box_precision
-from bd_util.ui import BoolComboBox, FloatSliderSpinBox, FloatSpinBox, qt
+from bd_util.ui import (
+    BoolComboBox,
+    FloatSliderSpinBox,
+    FloatStepMode,
+    FloatValueStepSpinBox,
+    qt,
+)
 
 from .controller import ChannelEditorController, ChannelRow
 
@@ -14,8 +22,15 @@ __all__ = ["AttributeRowWidget", "ChannelEditorWidget"]
 class AttributeRowWidget(qt.QWidget):
     """属性名、既存MVVM View、適用対象と混在状態を1行で表示する。"""
 
+    step_changed = qt.Signal(float)
+
     def __init__(
-        self, row: ChannelRow, selection_count: int, parent: qt.QWidget
+        self,
+        row: ChannelRow,
+        selection_count: int,
+        parent: qt.QWidget,
+        *,
+        single_step: float | None = None,
     ) -> None:
         """初期値を書き込まず、Bindingと表示部品を接続する。"""
         super().__init__(parent)
@@ -33,7 +48,9 @@ class AttributeRowWidget(qt.QWidget):
         self.align_button.setToolTip("編集可能な対象を基準ノードの値に揃える")
         self.align_button.setMaximumWidth(58)
         self.align_button.clicked.connect(self._align_values)
-        self.editor = self._create_editor()
+        self.editor = self._create_editor(single_step)
+        if isinstance(self.editor, FloatValueStepSpinBox):
+            self.editor.settingsChanged.connect(self._notify_step_changed)
 
         # 値の混在と編集可能数はBindingの読み取り通知だけで更新する
         row.binding.state_changed.connect(self._update_state)
@@ -47,7 +64,8 @@ class AttributeRowWidget(qt.QWidget):
 
     def _create_editor(
         self,
-    ) -> BoolComboBox | FloatSliderSpinBox | FloatSpinBox:
+        single_step: float | None,
+    ) -> BoolComboBox | FloatSliderSpinBox | FloatValueStepSpinBox:
         """属性の種類と両側のhard limitから入力Viewを選ぶ。"""
         binding = self.row.binding
         if isinstance(binding, MayaBoolPlugsBinding):
@@ -68,9 +86,32 @@ class AttributeRowWidget(qt.QWidget):
             editor.slider.setMinimumWidth(110)
             editor.spin_box.setMinimumWidth(110)
             return editor
-        spin_box = FloatSpinBox(binding, self, decimals=decimals)
-        spin_box.setMinimumWidth(110)
-        return spin_box
+        # 属性名の特例を型の既定値より優先し、保存済みstepだけを上書きする
+        default, mode, increment = self._step_defaults()
+        value_editor = FloatValueStepSpinBox(
+            binding,
+            self,
+            decimals=decimals,
+            single_step=default if single_step is None else single_step,
+            step_mode=mode,
+            step_increment=increment,
+        )
+        value_editor.spin_box.setMinimumWidth(110)
+        value_editor.step_spin_box.setFixedWidth(72)
+        return value_editor
+
+    def _step_defaults(self) -> tuple[float, FloatStepMode, float]:
+        """Slider以外の属性に、名前・型に応じた刻み幅を割り当てる。"""
+        if self.row.attribute.name == "radius":
+            return 0.1, "multiplicative", 1.0
+        if self.row.attribute.kind == "angle":
+            return 15.0, "additive", 15.0
+        return 1.0, "multiplicative", 1.0
+
+    def _notify_step_changed(self) -> None:
+        """現在のstepを通知し、Window側で属性ごとの設定を保持する。"""
+        if isinstance(self.editor, FloatValueStepSpinBox):
+            self.step_changed.emit(self.editor.singleStep())
 
     def _update_state(self) -> None:
         """混在表示と除外理由を更新し、明示的な統一操作の可否を示す。"""
@@ -107,6 +148,7 @@ class ChannelEditorWidget(qt.QWidget):
     def __init__(self, parent: qt.QWidget | None = None) -> None:
         """画面を作成してから選択監視を開始する。"""
         super().__init__(parent)
+        self._steps: dict[tuple[str, str], float] = {}
         self.row_widgets: tuple[AttributeRowWidget, ...] = ()
         self.header_label = qt.QLabel("ノードを選択してください", self)
         self.header_label.setTextInteractionFlags(
@@ -176,7 +218,14 @@ class ChannelEditorWidget(qt.QWidget):
         widgets: list[AttributeRowWidget] = []
         try:
             for row in self.controller.rows:
-                widget = AttributeRowWidget(row, len(names), self._contents)
+                key = (row.attribute.path, row.attribute.kind)
+                widget = AttributeRowWidget(
+                    row,
+                    len(names),
+                    self._contents,
+                    single_step=self._steps.get(key),
+                )
+                widget.step_changed.connect(partial(self._remember_step, key))
                 widgets.append(widget)
                 self._rows_layout.insertWidget(len(widgets) - 1, widget)
         except Exception:
@@ -189,6 +238,10 @@ class ChannelEditorWidget(qt.QWidget):
             if names
             else "Maya ノードを選択すると、入力可能な種類の属性を表示します。"
         )
+
+    def _remember_step(self, key: tuple[str, str], value: float) -> None:
+        """ノードに依存しない属性path・型ごとのstepをWindow内に保持する。"""
+        self._steps[key] = value
 
     def dispose(self) -> None:
         """画面の入力と監視を即時に終了する。"""

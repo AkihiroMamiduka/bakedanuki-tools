@@ -9,6 +9,13 @@
 
 ### Added
 
+- Channel EditorのSlider以外のfloat系入力に、utilの `FloatValueStepSpinBox` を採用。
+  距離・通常数値はmultiplicative/1、角度はadditive/15、radiusはmultiplicative/0.1とする。
+  stepの変更は値やUndo履歴へ影響せず、選択変更やUndo後もWindow内で属性ごとに保持する。
+  step欄は名称の接頭辞を省略し、4桁程度と単位を表示できるコンパクトな幅とする。
+  行の公開 `editor` 型が `FloatSpinBox` から複合Viewへ変わるため、利用コードでは
+  値欄へのアクセスを `editor.spin_box`、刻み幅の変更を `editor.setSingleStep()` へ移行する。
+  対応するutilの更新が必要。既存scene・設定ファイルの移行は不要。
 - 最初のツール `bd_tools.channel_editor` を追加。`show()` で通常Windowを開き、
   選択リストの先頭を基準に bool・float・距離・角度の属性を入力できる。
   `keyable OR channelBox` のscalar属性を表示し、両側hard limit付きfloatにはSliderを使う。
