@@ -50,6 +50,7 @@ PythonのuserSetupは読み込まず、検証用sceneで操作した後に専用
 boolのキー入力、floatの文字入力、Sliderのマウスドラッグ、右クリックメニューからの
 表示更新と混在値を揃える操作、
 各操作の1回Undo、選択追従、close / reopen、utilとtoolsのreloadを確認します。
+ドッキングからfloatingへの切替、Mayaへのタブ再配置、Maya側のcloseによる破棄も確認します。
 step欄のキー入力が値とUndoを変更しないこと、変更後の刻み幅で値入力できること、
 値をUndoしてもstepが保持されることも確認します。
 さらに10ノード・各30個の追加float属性を用いて、Window生成、一括入力、選択切替を
@@ -62,8 +63,9 @@ step欄のキー入力が値とUndoを変更しないこと、変更後の刻み
 - `01-multiple-selection.png`、`02-single-selection.png`、`03-after-reload.png`:
   QtのWindow描画から保存した確認画像。
 - `04-attribute-menu.png`: 属性名を右クリックして開いた操作メニュー。
+- `05-docked.png`、`06-floating-content.png`: Maya右側へのドッキングとfloatingの表示。
 - `progress.json`: 実行中の段階と完了済みの操作。
-- `maya.log`、`process.log`、`python-stacks.log`: Mayaの出力と、長時間停止した場合の
+- `maya-initial.log`、`process-initial.log`、`python-stacks-initial.log`: Mayaの出力と、長時間停止した場合の
   Python stack。
 
 終了codeが0で `result.json` の `success` がTrueでも、保存画像で文字切れ、配置、
@@ -74,6 +76,31 @@ Mayaアプリケーションの終了待ちが180秒でタイムアウトしま�
 deferred quitでも発生しており、終了待ちの原因は未特定です。runnerはこの場合も
 成功扱いにせず、結果を表示して専用processだけを停止し、終了code 1を返します。
 操作の検証結果とMayaアプリケーションの正常終了は区別して確認してください。
+
+### Maya再起動による配置復元
+
+一度目の検証で `--prepare-restart` を指定すると、全操作の確認後に新しいWindowを開き、
+floatingにしてworkspaceとpreferencesを専用profileへ保存します。
+
+```powershell
+& "C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe" -B `
+    scripts/test_channel_editor_maya.py --maya-version 2025 --prepare-restart --timeout 180
+```
+
+一度目のprocessが終了したことと `result.json` の成功、`prepared-restart.json` の存在を確認し、
+表示された `output` を二度目の `--restart-from` に指定します。
+終了待ちだけがタイムアウトした場合も、専用processの停止を確認してから実行します。
+
+```powershell
+& "C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe" -B `
+    scripts/test_channel_editor_maya.py --maya-version 2025 --restart-from <output> --timeout 180
+```
+
+二度目は同じprofileの別processを起動し、`show()` を呼ぶ前にworkspaceControlと入力UIが
+自動復元されたことを確認します。floating配置・寸法の復元を確認し、新しいsceneの選択と
+一括入力を検証してから終了します。結果は `result-restart.json`、画像は
+`07-after-maya-restart.png`、ログは `*-restart.log` に保存し、一度目の結果を残します。
+この再起動検証はsceneの保存・復元ではなく、Maya workspaceからのUI復元を対象にします。
 
 ## Type Contracts
 

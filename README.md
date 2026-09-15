@@ -77,6 +77,9 @@ from bd_tools import channel_editor
 channel_editor.show()
 ```
 
+初回はMaya右側へドッキングし、タイトル部分のドラッグでfloatingやタブ配置へ変更できます。
+終了は `channel_editor.close()`、配置のリセットと再表示は `channel_editor.reset_layout()` です。
+
 選択リストの先頭ノードを基準に、Channel Box に表示する bool・float 系属性の
 入力欄を表示します。同名・同種の属性を持つ選択ノードへ、編集時だけ値を一括反映します。
 選択や表示更新では値を揃えません。両側に hard min/max がある属性は Slider 付き、

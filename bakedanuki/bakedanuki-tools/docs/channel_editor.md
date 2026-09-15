@@ -8,12 +8,34 @@
 from bd_tools import channel_editor
 
 window = channel_editor.show()
-channel_editor.dispose()
+channel_editor.close()
 ```
 
 `show()` は既存Windowを再利用します。importだけでは表示やscene変更を行いません。
-通常Windowとして起動し、配置は `channel_editor/windows/main` に保存します。
+初回はMaya右側へドッキングします。タイトル部分をドラッグして、他の領域への移動、
+タブ化、floatingへ切り替えられます。移動だけでは入力やstep設定を破棄しません。
+配置はMayaのworkspaceへ保存され、再表示やMaya再起動時の復元に使われます。
 本変更に対応した `bakedanuki-util` と組み合わせて使用してください。
+
+タイトルバーまたは `close()` で、workspaceControl・入力・callbackを破棄します。
+次の `show()` は新しいWindowを生成します。開発時の完全破棄には `dispose()` を使います。
+Escapeは値欄やメニューの操作に使い、パネル全体は閉じません。
+
+配置を初期状態へ戻す場合は、次を実行します。
+
+```python
+window = channel_editor.reset_layout()
+```
+
+固定workspaceControl名は `channel_editor.WORKSPACE_CONTROL_NAME`
+（`bdToolsChannelEditorWindowWorkspaceControl`）です。
+MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中のcontrolへ内容を接続します。
+`restore()` は通常の起動用ではなくMayaの復元処理専用です。
+再起動後もtoolsとutilをimportできるよう、Maya.envまたはmodule pathの設定が必要です。
+
+旧通常Windowの `channel_editor/windows/main` にある配置はdock配置へ自動変換しません。
+初回は右側へ配置し、以降はMayaが保存したworkspace配置を使います。
+`reset_layout()` はこの旧配置とworkspaceControlの保存配置をutilの統合APIで消去します。
 
 ## 表示と入力
 
@@ -32,7 +54,8 @@ channel_editor.dispose()
   属性名と入力Viewのtooltipへ表示します。属性のないnodeへ属性を追加することはありません。
 
 属性名は共通幅の列で右揃えにし、入力欄の左端を全行で揃えます。
-初回Windowサイズは420×360です。保存済みのWindow配置はそのまま利用します。
+初期サイズの指定は420×360で、実際の寸法はMayaのドック領域に合わせて調整されます。
+値・step欄が狭いタブへ隠れないよう、最小幅は360です。
 
 選択・初期表示・外部変更の同期・表示更新では値を書き込みません。
 数値入力はEnterまたはフォーカス移動で確定し、値欄の上下操作・Sliderは操作時に反映します。
@@ -92,7 +115,7 @@ sceneへstepを保存しません。
 選択、属性追加・削除、keyable/channelBox切替、改名、Undo/Redo、scene切替で
 構成を再取得します。通常の値変更では全行を作り直さず、Bindingで表示を同期します。
 選択が変わると古いBindingと連続編集を終了してから、新しい対象へ接続します。
-close、Escape、`dispose()`、tools reloadでもcallbackと入力を終了します。
+タイトルバーのclose、`close()`、`dispose()`、tools reloadでもcallbackと入力を終了します。
 選択変更による行の再構築とWindow終了では、開いている属性メニューも閉じます。
 
 ```python
@@ -106,6 +129,9 @@ bd_tools.reload_package(reload_util=True) # utilも変更した場合
 
 `channel_editor/ui.py` は公開Windowと配置・reload、`widget.py` は属性行と表示、
 `controller.py` は基準node・対応属性・選択追従を所有します。
+Windowはutilの `MayaDockableWindow` を継承し、`dock_closed` と
+`dock_about_to_dispose` で入力controllerを終了します。workspaceControl作成・削除・
+Maya再起動時の接続・画面外補正・配置resetはutilへ委譲します。
 stepの初期値選択とWindow内の設定保持はtools、値とstepの連動はutilの複合Viewが所有します。
 値の単位変換・型付き属性列挙・一括書込み・混在状態・Undoはutilを使用します。
 別ツールはこのcontrollerへ暗黙に依存せず、必要な汎用APIをutilから利用します。
@@ -113,7 +139,9 @@ stepの初期値選択とWindow内の設定保持はtools、値とstepの連動�
 ## 検証
 
 `tests/maya/test_channel_editor.py` は、選択時の無書込み、外部変更の非伝播、
-View選択、混在編集、除外対象、範囲違い、Undo、構成変更、closeとreloadを検証します。
+View選択、混在編集、除外対象、範囲違い、Undo、構成変更を検証します。
+`tests/maya/test_channel_editor_dock.py` は、batchで扱えないworkspaceの画面境界を置換し、
+公開show / restore / close / reset、Window重複防止、監視解除とreloadを検証します。
 公開入口の型は `tests/typecheck/channel_editor_contract.py` で固定します。
 対応Maya全versionでruntime testを行い、本体の操作確認は開発用smoke scriptを利用します。
 

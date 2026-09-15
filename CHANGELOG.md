@@ -9,6 +9,16 @@
 
 ### Changed
 
+- Channel Editorをutilの `MayaDockableWindowController` に移行し、Maya右側へのドッキング、
+  タブ化、floating、workspaceControlによる配置復元へ対応。
+  `show()` の戻り値は同名の `ChannelEditorWindow` だが、基底は `QDialog` から
+  `MayaDockableWindow` へ変更する。`exec()` / `reject()` は使用せず、表示は `show()`、
+  終了はタイトルバーまたは新しい `channel_editor.close()` / `dispose()` へ移行する。
+  Escapeではパネル全体を閉じない。closeで入力・callbackを破棄し、再表示で作り直す。
+  固定IDは `bdToolsChannelEditorWindowWorkspaceControl`、復元入口は
+  `bd_tools.channel_editor.ui.restore`。`reset_layout()` はutilの統合reset APIを利用する。
+  旧 `channel_editor/windows/main` の通常Window配置は自動変換せず、最初は右ドックから開始する。
+  sceneの移行は不要。旧配置ファイルは明示的な `reset_layout()` で削除できる。
 - Channel Editorの常設ボタン・件数欄・「基準:」表記を削除し、属性名を右揃えに変更。
   混在は属性名の左の小さな印、対象数と除外理由はtooltipへ集約する。
   属性名の右クリックメニューへ「この値に揃える」「表示を更新」を移し、余白からも更新可能。

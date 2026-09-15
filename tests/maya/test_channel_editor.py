@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from math import isclose
-from pathlib import Path
 from typing import cast
 import pytest
 from maya import cmds
@@ -333,38 +332,6 @@ def test_dispose_prevents_selection_updates(
     _events()
     assert editor.controller.is_disposed
     assert not editor.controller.rows
-
-
-def test_window_reuses_closes_and_reloads(
-    qt_application: qt.QApplication,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """Window重複防止とclose・tools reloadによる即時終了を確認する。"""
-    import bd_tools
-    from bd_tools import channel_editor
-    from bd_util.maya.ui import window as maya_window
-    from bd_util.maya.ui import settings as maya_settings
-
-    assert qt_application is not None
-    monkeypatch.setattr(maya_window, "get_main_window", lambda: None)
-    monkeypatch.setattr(
-        maya_settings, "get_ui_settings_root", lambda: tmp_path
-    )
-    cmds.select(clear=True)
-    first = channel_editor.show()
-    assert channel_editor.show() is first
-    first.close()
-    assert not first.isVisible()
-    assert first.widget.controller.is_disposed
-    second = channel_editor.show()
-    assert second is not first
-    old_controller = second.widget.controller
-    bd_tools.reload_package()
-    assert old_controller.is_disposed
-    _events()
-    assert not qt.isValid(first)
-    assert not qt.isValid(second)
 
 
 def test_range_rejection_is_visible_and_leaves_all_targets_unchanged(

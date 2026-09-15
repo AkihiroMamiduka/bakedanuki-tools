@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from bd_util.ui import qt
 
 _OUTPUT_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_OUTPUT"
+_PHASE_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PHASE"
+_PREPARE_RESTART_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PREPARE_RESTART"
 _STARTUP_IDLE_COMMAND = (
     "import __main__; "
     "__main__._bd_tools_channel_editor_qa_session.begin_when_idle()"
@@ -39,7 +41,8 @@ class _MayaSmokeSession:
     def __init__(self, output: Path) -> None:
         """結果保存先と各段階で保持するWindowを初期化する。"""
         self.output = output
-        self._trace_file = (output / "python-stacks.log").open(
+        self._phase = os.environ.get(_PHASE_VARIABLE, "initial")
+        self._trace_file = (output / f"python-stacks-{self._phase}.log").open(
             "w", encoding="utf-8"
         )
         faulthandler.dump_traceback_later(
@@ -59,6 +62,11 @@ class _MayaSmokeSession:
             self._setup_scene,
             self._show,
             self._inspect,
+            self._float_dock,
+            self._inspect_floating,
+            self._redock,
+            self._inspect_redocked,
+            self._reset_dock_layout,
             self._refresh_from_context_menu,
             self._edit_step,
             self._undo_step_value,
@@ -81,6 +89,13 @@ class _MayaSmokeSession:
             self._benchmark,
             self._finish,
         )
+        if self._phase == "restart":
+            self._stages = (
+                self._inspect_restart,
+                self._setup_scene,
+                self._edit_after_restart,
+                self._finish,
+            )
 
     def begin_when_idle(self) -> None:
         """Mayaの起動時deferred処理がなくなってから検証を開始する。"""
@@ -200,6 +215,81 @@ class _MayaSmokeSession:
             raise AssertionError("min/max属性のSlider Viewが見つかりません")
         self._capture("01-multiple-selection.png")
         self.steps.append("inspect_rendered_views")
+
+    def _float_dock(self) -> None:
+        """初回の右ドックを確認し、Maya標準のfloatingへ切り替える。"""
+        from maya import cmds
+        from bd_tools import channel_editor
+
+        name = channel_editor.WORKSPACE_CONTROL_NAME
+        if not cmds.workspaceControl(name, query=True, exists=True):
+            raise AssertionError("workspaceControlが作成されていません")
+        if cmds.workspaceControl(name, query=True, floating=True):
+            raise AssertionError("初回表示がドッキングされていません")
+        if channel_editor.show() is not self._require_window():
+            raise AssertionError("showでWindowが重複生成されました")
+        self._capture_maya("05-docked.png")
+        cmds.workspaceControl(name, edit=True, floating=True)
+
+    def _inspect_floating(self) -> None:
+        """floating後も同じ入力と監視が生存し、内容を表示できることを確認する。"""
+        from maya import cmds
+        from bd_tools import channel_editor
+
+        if not cmds.workspaceControl(
+            channel_editor.WORKSPACE_CONTROL_NAME, query=True, floating=True
+        ):
+            raise AssertionError("floatingへ切り替わりません")
+        window = self._require_window()
+        if window.widget.controller.is_disposed or not window.isVisible():
+            raise AssertionError("floatingへの移動で入力が終了しました")
+        self._capture("06-floating-content.png")
+        self.steps.append("dock_to_floating_preserves_content")
+
+    def _redock(self) -> None:
+        """floatingからMaya右側の既存パネルとタブ化する。"""
+        from maya import cmds
+        from bd_tools import channel_editor
+
+        cmds.workspaceControl(
+            channel_editor.WORKSPACE_CONTROL_NAME,
+            edit=True,
+            dockToMainWindow=("right", True),
+        )
+
+    def _inspect_redocked(self) -> None:
+        """再ドッキング後も同じWindowで入力を継続できることを確認する。"""
+        from maya import cmds
+        from bd_tools import channel_editor
+
+        if cmds.workspaceControl(
+            channel_editor.WORKSPACE_CONTROL_NAME, query=True, floating=True
+        ):
+            raise AssertionError("Mayaへ再ドッキングできません")
+        if channel_editor.show() is not self._require_window():
+            raise AssertionError("再ドッキングでWindowが重複しました")
+        self.steps.append("redock_to_maya_tab")
+
+    def _reset_dock_layout(self) -> None:
+        """配置resetが旧入力を破棄し、新しい右ドックへ戻すことを確認する。"""
+        from maya import cmds
+        from bd_tools import channel_editor
+        from bd_util.ui import qt
+
+        old_window = self._require_window()
+        old_controller = old_window.widget.controller
+        self.window = channel_editor.reset_layout()
+        self._flush_gui()
+        if not old_controller.is_disposed or qt.isValid(old_window):
+            raise AssertionError(
+                "配置reset後に旧Windowまたは入力が残っています"
+            )
+        if cmds.workspaceControl(
+            channel_editor.WORKSPACE_CONTROL_NAME, query=True, floating=True
+        ):
+            raise AssertionError("配置reset後に右ドックへ戻りません")
+        self._assert_values("weight", (0.25, 0.75))
+        self.steps.append("reset_layout_recreates_right_dock")
 
     def _refresh_from_context_menu(self) -> None:
         """属性名の右クリックメニューから更新し、値とUndoを維持する。"""
@@ -394,8 +484,13 @@ class _MayaSmokeSession:
         self.steps.append("undo_alignment_once")
 
     def _close(self) -> None:
-        """Windowを閉じてQtによる完全破棄を要求する。"""
-        self._require_window().close()
+        """Maya側のclose操作からworkspaceControlごと完全破棄する。"""
+        from maya import cmds
+        from bd_tools import channel_editor
+
+        cmds.workspaceControl(
+            channel_editor.WORKSPACE_CONTROL_NAME, edit=True, close=True
+        )
         self.steps.append("close")
 
     def _reopen(self) -> None:
@@ -526,7 +621,92 @@ class _MayaSmokeSession:
 
         channel_editor.dispose()
         self.steps.append("dispose")
+        if os.environ.get(_PREPARE_RESTART_VARIABLE) == "1":
+            self._prepare_restart()
         self._complete(True)
+
+    def _prepare_restart(self) -> None:
+        """独立profileへfloating配置を保存し、次のMaya起動の検証資料を残す。"""
+        from maya import cmds
+        from bd_tools import channel_editor
+
+        self.window = channel_editor.show()
+        cmds.workspaceControl(
+            channel_editor.WORKSPACE_CONTROL_NAME,
+            edit=True,
+            floating=True,
+            resizeWidth=420,
+            resizeHeight=360,
+        )
+        self._flush_gui()
+        host = self._require_window().window()
+        geometry = host.geometry().getRect()
+        cmds.workspaceLayoutManager(save=True)
+        cmds.savePrefs(general=True, uiLayout=True)
+        _write_json(
+            self.output / "prepared-restart.json",
+            {
+                "maya_version": str(cmds.about(version=True)),
+                "control_name": channel_editor.WORKSPACE_CONTROL_NAME,
+                "geometry": geometry,
+            },
+        )
+        self.steps.append("save_floating_workspace_for_restart")
+
+    def _inspect_restart(self) -> None:
+        """showを呼ぶ前に、Mayaの保存workspaceとuiScriptだけで復元したUIを確認する。"""
+        from maya import cmds
+        from bd_tools import channel_editor
+        from bd_util.ui import qt
+
+        name = channel_editor.WORKSPACE_CONTROL_NAME
+        if not cmds.workspaceControl(name, query=True, exists=True):
+            raise AssertionError(
+                "Maya再起動でworkspaceControlが復元されません"
+            )
+        windows = [
+            widget
+            for widget in qt.QApplication.allWidgets()
+            if isinstance(widget, channel_editor.ChannelEditorWindow)
+        ]
+        if len(windows) != 1:
+            raise AssertionError(
+                f"復元されたChannel Editorの数が不正です: {len(windows)}"
+            )
+        self.window = windows[0]
+        if not cmds.workspaceControl(name, query=True, floating=True):
+            raise AssertionError("保存したfloating配置が復元されません")
+        saved = json.loads(
+            (self.output / "prepared-restart.json").read_text(encoding="utf-8")
+        )
+        geometry = self.window.window().geometry().getRect()
+        if any(abs(a - b) > 40 for a, b in zip(geometry, saved["geometry"])):
+            raise AssertionError(
+                f"floatingの保存配置と復元結果が異なります: {saved['geometry']} -> {geometry}"
+            )
+        if channel_editor.show() is not self.window:
+            raise AssertionError("再起動後のshowでWindowが重複しました")
+        self.steps.append("maya_restart_restores_workspace_and_content")
+
+    def _edit_after_restart(self) -> None:
+        """復元したUIが新しい選択と一括入力へ追従することを確認する。"""
+        from bd_util.ui import FloatValueStepSpinBox
+
+        view = self._row("translate.translateX").editor
+        if not isinstance(view, FloatValueStepSpinBox):
+            raise AssertionError("復元したUIに入力Viewがありません")
+        view.spin_box.setValue(0.5)
+        self._assert_values("translateX", (0.5, 0.5))
+        if (
+            self._require_window()
+            .widget.scroll_area.horizontalScrollBar()
+            .maximum()
+        ):
+            raise AssertionError(
+                "再起動後の標準属性の入力欄が横幅に収まりません"
+            )
+        self._capture("07-after-maya-restart.png")
+        self.steps.append("edit_multiple_nodes_after_maya_restart")
 
     @staticmethod
     def _flush_gui() -> None:
@@ -632,6 +812,16 @@ class _MayaSmokeSession:
             raise RuntimeError(f"Window画像を保存できません: {image_path}")
         self.screenshots.append(str(image_path))
 
+    def _capture_maya(self, filename: str) -> None:
+        """独立したMaya main windowを描画し、ドッキング位置の確認画像を保存する。"""
+        from bd_util.maya.ui import get_main_window
+
+        window = get_main_window()
+        image_path = self.output / filename
+        if window is None or not window.grab().save(str(image_path)):
+            raise RuntimeError("Maya全体のドッキング画像を保存できません")
+        self.screenshots.append(str(image_path))
+
     def _callback_counts(self) -> dict[str, int]:
         """検証nodeに登録されたMaya callbackの本数を返す。"""
         from maya.api import OpenMaya as om
@@ -652,7 +842,12 @@ class _MayaSmokeSession:
         faulthandler.cancel_dump_traceback_later()
         self._trace_file.close()
         _write_json(
-            self.output / "result.json",
+            self.output
+            / (
+                "result-restart.json"
+                if self._phase == "restart"
+                else "result.json"
+            ),
             {
                 "success": success,
                 "maya_version": cmds.about(version=True),
@@ -703,7 +898,14 @@ def _start_inside_maya() -> None:
     session.defer_until_idle()
 
 
-def _launch(maya_version: str, util_root: Path, timeout: int) -> int:
+def _launch(
+    maya_version: str,
+    util_root: Path,
+    timeout: int,
+    *,
+    prepare_restart: bool = False,
+    restart_from: Path | None = None,
+) -> int:
     """固有の設定と作業ディレクトリを使う検証Maya processを起動する。"""
     repository = Path(__file__).resolve().parents[1]
     executable = Path(
@@ -716,11 +918,27 @@ def _launch(maya_version: str, util_root: Path, timeout: int) -> int:
         raise FileNotFoundError(util_python)
 
     # 既存Mayaの設定、起動script、作業sceneを参照しないprocess環境にする
-    output = Path(
-        tempfile.mkdtemp(prefix=f"bd-channel-editor-maya{maya_version}-")
-    )
-    for name in ("prefs", "env", "project", "scripts"):
-        (output / name).mkdir()
+    phase = "restart" if restart_from is not None else "initial"
+    if restart_from is None:
+        output = Path(
+            tempfile.mkdtemp(prefix=f"bd-channel-editor-maya{maya_version}-")
+        )
+        for name in ("prefs", "env", "project", "scripts"):
+            (output / name).mkdir()
+    else:
+        output = restart_from.resolve()
+        # 通常のMaya設定を再起動検証に流用せず、このrunnerの保存資料だけを許可する
+        if not output.name.startswith(
+            f"bd-channel-editor-maya{maya_version}-"
+        ):
+            raise ValueError(
+                "このrunnerが作成した検証ディレクトリを指定してください"
+            )
+        prepared = json.loads(
+            (output / "prepared-restart.json").read_text(encoding="utf-8")
+        )
+        if prepared["maya_version"] != maya_version:
+            raise ValueError("再起動前後のMaya versionが異なります")
     environment = os.environ.copy()
     environment.pop("QT_QPA_PLATFORM", None)
     environment["MAYA_APP_DIR"] = str(output / "prefs")
@@ -732,6 +950,8 @@ def _launch(maya_version: str, util_root: Path, timeout: int) -> int:
     environment["PYTHONNOUSERSITE"] = "1"
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     environment[_OUTPUT_VARIABLE] = str(output)
+    environment[_PHASE_VARIABLE] = phase
+    environment[_PREPARE_RESTART_VARIABLE] = "1" if prepare_restart else "0"
     environment["BAKEDANUKI_UTIL_ROOT"] = str(util_root)
     environment["PYTHONPATH"] = os.pathsep.join(
         (
@@ -753,13 +973,18 @@ def _launch(maya_version: str, util_root: Path, timeout: int) -> int:
         + ", run_name='__maya_ui_smoke__')"
     )
     mel_command = python_command.replace("\\", "\\\\").replace('"', '\\"')
-    startup_script = output / "startup.mel"
+    startup_script = output / f"startup-{phase}.mel"
     startup_script.write_text(f'python("{mel_command}");\n', encoding="utf-8")
     startup_info = subprocess.STARTUPINFO()
     startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     startup_info.wShowWindow = subprocess.SW_HIDE
     # Mayaの補助processにもrunnerの出力pipeを引き継がせない
-    with (output / "process.log").open("wb") as process_log:
+    result_path = output / (
+        "result-restart.json" if phase == "restart" else "result.json"
+    )
+    # 同じprofileの再検証で、前回の成功結果を今回の結果として扱わない
+    result_path.unlink(missing_ok=True)
+    with (output / f"process-{phase}.log").open("wb") as process_log:
         process = subprocess.Popen(
             [
                 str(executable),
@@ -767,7 +992,7 @@ def _launch(maya_version: str, util_root: Path, timeout: int) -> int:
                 "-proj",
                 str(output / "project"),
                 "-log",
-                str(output / "maya.log"),
+                str(output / f"maya-{phase}.log"),
                 "-script",
                 str(startup_script),
             ],
@@ -779,7 +1004,13 @@ def _launch(maya_version: str, util_root: Path, timeout: int) -> int:
             stderr=subprocess.STDOUT,
         )
         print(
-            json.dumps({"process_id": process.pid, "output": str(output)}),
+            json.dumps(
+                {
+                    "process_id": process.pid,
+                    "output": str(output),
+                    "phase": phase,
+                }
+            ),
             flush=True,
         )
         try:
@@ -788,7 +1019,6 @@ def _launch(maya_version: str, util_root: Path, timeout: int) -> int:
             # 起動した専用processだけを停止し、検証資料は削除せず残す
             process.terminate()
             process.wait(timeout=30)
-            result_path = output / "result.json"
             if result_path.is_file():
                 print(result_path.read_text(encoding="utf-8"), flush=True)
                 raise RuntimeError(
@@ -798,7 +1028,6 @@ def _launch(maya_version: str, util_root: Path, timeout: int) -> int:
             raise RuntimeError(
                 f"Maya UI検証が時間内に完了しませんでした: {output}"
             ) from None
-    result_path = output / "result.json"
     if not result_path.is_file():
         raise RuntimeError(f"Maya UI検証結果がありません: {output}")
     print(result_path.read_text(encoding="utf-8"), flush=True)
@@ -814,6 +1043,9 @@ def main() -> int:
     )
     parser.add_argument("--util-root", type=Path)
     parser.add_argument("--timeout", type=int, default=180)
+    restart_group = parser.add_mutually_exclusive_group()
+    restart_group.add_argument("--prepare-restart", action="store_true")
+    restart_group.add_argument("--restart-from", type=Path)
     arguments = parser.parse_args()
     util_root = arguments.util_root or Path(
         os.environ.get(
@@ -822,7 +1054,11 @@ def main() -> int:
         )
     )
     return _launch(
-        arguments.maya_version, util_root.resolve(), arguments.timeout
+        arguments.maya_version,
+        util_root.resolve(),
+        arguments.timeout,
+        prepare_restart=arguments.prepare_restart,
+        restart_from=arguments.restart_from,
     )
 
 

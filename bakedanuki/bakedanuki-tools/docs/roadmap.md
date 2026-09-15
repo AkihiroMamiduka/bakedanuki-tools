@@ -21,7 +21,8 @@
 
 ## Phase 3: Tool Collection Conventions
 
-Channel Editorの次段階では、キー付き属性の入力、ドッキング、Slider操作範囲の
+Channel Editorはutil基盤によるドッキングへ対応しています。
+次段階では、キー付き属性の入力、Slider操作範囲の
 カスタマイズを実用途に応じて検討します。初版仕様は [Channel Editor](channel_editor.md) を参照します。
 
 - [ ] 個別ツールの命名と package 構成を実例から確定する

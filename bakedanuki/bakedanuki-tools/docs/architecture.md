@@ -59,6 +59,9 @@ bd_tools/
 
 最初の実装は `bd_tools.channel_editor` です。`ui.py` がWindow、`widget.py` が入力行、
 `controller.py` が選択と対応属性を組み立てます。汎用の属性列挙と一括編集はutilへ配置します。
+Channel Editorは `MayaDockableWindowController` を使い、固定workspaceControl IDと
+`bd_tools.channel_editor.ui.restore` を維持します。初回は右ドック、close時は完全破棄とし、
+workspace配置の復元・resetはutil、入力と選択監視の終了はtoolsが所有します。
 値とstepの複合Viewもutilへ配置し、属性別の初期stepとWindow内での設定保持は
 Channel Editorが所有します。step設定はsceneの値・Undo履歴へ含めません。
 属性名の整列、混在の印、対象情報のtooltip、更新・揃えるための右クリックメニューも
