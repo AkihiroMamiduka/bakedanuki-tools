@@ -47,7 +47,8 @@ PythonのuserSetupは読み込まず、検証用sceneで操作した後に専用
 時間切れの場合も、runner自身が起動したprocessだけを終了します。
 起動時のdeferred処理が完了した後に検証を開始し、専用sceneのUndoを有効にします。
 
-boolのキー入力、floatの文字入力、Sliderのマウスドラッグ、混在値を揃える操作、
+boolのキー入力、floatの文字入力、Sliderのマウスドラッグ、右クリックメニューからの
+表示更新と混在値を揃える操作、
 各操作の1回Undo、選択追従、close / reopen、utilとtoolsのreloadを確認します。
 step欄のキー入力が値とUndoを変更しないこと、変更後の刻み幅で値入力できること、
 値をUndoしてもstepが保持されることも確認します。
@@ -60,6 +61,7 @@ step欄のキー入力が値とUndoを変更しないこと、変更後の刻み
 - `result.json`: 成否、操作履歴、実行Maya version、性能計測値、各段階のUndo状態。
 - `01-multiple-selection.png`、`02-single-selection.png`、`03-after-reload.png`:
   QtのWindow描画から保存した確認画像。
+- `04-attribute-menu.png`: 属性名を右クリックして開いた操作メニュー。
 - `progress.json`: 実行中の段階と完了済みの操作。
 - `maya.log`、`process.log`、`python-stacks.log`: Mayaの出力と、長時間停止した場合の
   Python stack。

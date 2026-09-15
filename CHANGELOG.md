@@ -7,6 +7,17 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Channel Editorの常設ボタン・件数欄・「基準:」表記を削除し、属性名を右揃えに変更。
+  混在は属性名の左の小さな印、対象数と除外理由はtooltipへ集約する。
+  属性名の右クリックメニューへ「この値に揃える」「表示を更新」を移し、余白からも更新可能。
+  初回Windowサイズを420×360へ縮小する。保存済みの配置とsceneの移行は不要。
+  UI部品を直接参照するコードでは `align_button` を `align_action`、`refresh_button` を
+  `refresh_action` へ置き換え、操作は `trigger()` で実行する。
+  `status_label.toolTip()` は `name_label.toolTip()` へ移行する。
+  `widget.refresh()` とBindingによる一括編集APIは引き続き利用できる。
+
 ### Added
 
 - Channel EditorのSlider以外のfloat系入力に、utilの `FloatValueStepSpinBox` を採用。

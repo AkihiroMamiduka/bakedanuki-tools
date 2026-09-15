@@ -61,6 +61,8 @@ bd_tools/
 `controller.py` が選択と対応属性を組み立てます。汎用の属性列挙と一括編集はutilへ配置します。
 値とstepの複合Viewもutilへ配置し、属性別の初期stepとWindow内での設定保持は
 Channel Editorが所有します。step設定はsceneの値・Undo履歴へ含めません。
+属性名の整列、混在の印、対象情報のtooltip、更新・揃えるための右クリックメニューも
+Channel Editorが所有し、値欄のQt標準編集メニューとは独立して提供します。
 空の directory は作りません。個別ツール同士の
 暗黙の import は避け、共有処理は責務に応じた場所へ抽出します。
 

@@ -3,7 +3,12 @@
 
 from typing import assert_type
 
-from bd_util.ui import BoolComboBox, FloatSliderSpinBox, FloatValueStepSpinBox
+from bd_util.ui import (
+    BoolComboBox,
+    FloatSliderSpinBox,
+    FloatValueStepSpinBox,
+    qt,
+)
 
 from bd_tools import channel_editor
 from bd_tools.channel_editor.widget import ChannelEditorWidget
@@ -15,3 +20,8 @@ assert_type(
     BoolComboBox | FloatSliderSpinBox | FloatValueStepSpinBox,
 )
 assert_type(channel_editor.dispose(), None)
+assert_type(channel_editor.show().widget.refresh_action, qt.QAction)
+assert_type(
+    channel_editor.show().widget.row_widgets[0].align_action, qt.QAction
+)
+assert_type(channel_editor.show().widget.row_widgets[0].context_menu, qt.QMenu)

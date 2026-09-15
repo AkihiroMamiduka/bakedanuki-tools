@@ -48,6 +48,18 @@ def _row(widget: ChannelEditorWidget, name: str) -> AttributeRowWidget:
     return next(w for w in widget.row_widgets if w.row.attribute.name == name)
 
 
+def _open_context_menu(widget: qt.QWidget) -> None:
+    """右クリック通知を送り、子Widgetからの伝播も含めてメニューを開く。"""
+    position = widget.rect().center()
+    event = qt.QtGui.QContextMenuEvent(
+        qt.QtGui.QContextMenuEvent.Reason.Mouse,
+        position,
+        widget.mapToGlobal(position),
+    )
+    qt.QApplication.sendEvent(widget, event)
+    _events()
+
+
 @pytest.fixture
 def editor(qt_application: qt.QApplication) -> Iterator[ChannelEditorWidget]:
     """異なる値を持つ2ノードを、値を揃えずに表示する。"""
@@ -95,8 +107,8 @@ def test_selection_and_refresh_only_read_values(
     assert row.editor.spin_box.value() == 0.25
     row.editor.spin_box.setFocus()
     row.editor.spin_box.editingFinished.emit()
-    editor.refresh_button.setFocus()
-    editor.refresh()
+    editor.header_label.setFocus()
+    editor.refresh_action.trigger()
     _events()
     assert cmds.getAttr("channelA.weight") == 0.25
     assert cmds.getAttr("channelB.weight") == 0.75
@@ -115,10 +127,10 @@ def test_supported_types_flags_and_view_selection(
     assert isinstance(_row(editor, "weight").editor, FloatSliderSpinBox)
 
 
-def test_enter_does_not_activate_dialog_buttons(
+def test_enter_does_not_activate_context_actions(
     editor: ChannelEditorWidget,
 ) -> None:
-    """数値確定のEnterが更新・揃えるを押さず、入力行を維持する。"""
+    """数値確定のEnterが更新・揃えるを実行せず、入力行を維持する。"""
     dialog = qt.QDialog()
     layout = qt.QVBoxLayout(dialog)
     layout.addWidget(editor)
@@ -168,12 +180,88 @@ def test_bool_input_and_explicit_alignment(
     assert isinstance(row.row.binding, MayaBoolPlugsBinding)
     assert row.editor.currentText() == "on"
     assert cmds.getAttr("channelB.visibility") is False
-    row.align_button.click()
+    row.align_action.trigger()
     assert cmds.getAttr("channelA.visibility") is True
     assert cmds.getAttr("channelB.visibility") is True
     row.editor.setCurrentIndex(0)
     assert cmds.getAttr("channelA.visibility") is False
     assert cmds.getAttr("channelB.visibility") is False
+
+
+@pytest.mark.parametrize("surface", ["attribute", "background"])
+def test_context_menu_refresh_only_reads_values(
+    editor: ChannelEditorWidget, surface: str
+) -> None:
+    """属性名と余白から更新でき、値・Undo・変更済みstepを維持する。"""
+    _value_step(editor, "translateX").setSingleStep(0.01)
+    row = _row(editor, "weight")
+    if surface == "attribute":
+        target = row.name_label
+        menu = row.context_menu
+        action = row.refresh_action
+    else:
+        target = editor.scroll_area.widget()
+        assert target is not None
+        menu = editor.context_menu
+        action = editor.refresh_action
+    _open_context_menu(target)
+    assert menu.isVisible()
+    assert action in menu.actions()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    menu.close()
+    action.trigger()
+    _events()
+    assert _row(editor, "weight") is not row
+    assert _value_step(editor, "translateX").singleStep() == 0.01
+    assert cmds.getAttr("channelA.weight") == 0.25
+    assert cmds.getAttr("channelB.weight") == 0.75
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_context_alignment_preserves_unrounded_value_and_one_undo(
+    editor: ChannelEditorWidget,
+) -> None:
+    """メニューを開くだけでは変更せず、明示操作で未丸めの代表値へ揃える。"""
+    value = 0.123456789
+    _set_value("channelA.weight", value)
+    _events()
+    cmds.flushUndo()
+    row = _row(editor, "weight")
+    assert isinstance(row.editor, FloatSliderSpinBox)
+    row.editor.spin_box.setDecimals(3)
+    _open_context_menu(row.name_label)
+    assert row.context_menu.isVisible()
+    assert row.align_action.isEnabled()
+    assert cmds.getAttr("channelB.weight") == 0.75
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    row.context_menu.close()
+    row.align_action.trigger()
+    _events()
+    assert cmds.getAttr("channelA.weight") == value
+    assert cmds.getAttr("channelB.weight") == value
+    assert not row.align_action.isEnabled()
+    assert not row.name_label.text().startswith("• ")
+    cmds.undo()
+    _events()
+    assert cmds.getAttr("channelA.weight") == value
+    assert cmds.getAttr("channelB.weight") == 0.75
+    assert _row(editor, "weight").name_label.text().startswith("• ")
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_selection_change_closes_attribute_menu(
+    editor: ChannelEditorWidget,
+) -> None:
+    """メニューを開いたまま選択が変わっても、旧対象の操作を残さない。"""
+    row = _row(editor, "weight")
+    menu = row.context_menu
+    _open_context_menu(row.name_label)
+    assert menu.isVisible()
+    cmds.select("channelB", replace=True)
+    _events()
+    assert row.row.binding.is_disposed
+    assert not qt.isValid(menu)
+    assert cmds.getAttr("channelB.weight") == 0.75
 
 
 def test_external_change_does_not_propagate(
@@ -222,13 +310,13 @@ def test_visibility_flag_and_attribute_removal_refresh_rows(
 def test_locked_secondary_is_reported_and_excluded(
     editor: ChannelEditorWidget,
 ) -> None:
-    """編集不可の対象を件数へ反映し、残りの対応属性だけを更新する。"""
+    """編集不可の対象をtooltipへ示し、残りの対応属性だけを更新する。"""
     cmds.setAttr("channelB.weight", lock=True)
     _events()
     row = _row(editor, "weight")
     assert row.row.binding.writable_count == 1
-    assert "1/2" in row.status_label.text()
-    assert row.status_label.toolTip()
+    assert "1/2" in row.name_label.toolTip()
+    assert "channelB" in row.name_label.toolTip()
     binding = row.row.binding
     assert isinstance(binding, MayaFloatPlugsBinding)
     binding.set_value(0.5)
@@ -329,6 +417,7 @@ def test_animated_representative_remains_read_only(
     assert isinstance(binding, MayaFloatPlugsBinding)
     assert isclose(binding.value, 0.8, rel_tol=0, abs_tol=1e-12)
     assert not binding.view_model.set_value_command.can_execute
+    assert not _row(editor, "weight").align_action.isEnabled()
     assert not binding.set_value(0.5)
     assert cmds.getAttr("channelB.weight") == 0.75
 
@@ -347,11 +436,11 @@ def test_missing_and_incompatible_attributes_are_excluded(
     _events()
     row = _row(editor, "weight")
     assert row.row.binding.target_count == 1
-    assert "型・単位" in row.status_label.toolTip()
+    assert "型・単位" in row.name_label.toolTip()
     cmds.deleteAttr("channelB.weight")
     _events()
     row = _row(editor, "weight")
-    assert "対応する属性なし" in row.status_label.toolTip()
+    assert "対応する属性なし" in row.name_label.toolTip()
 
 
 def _value_step(

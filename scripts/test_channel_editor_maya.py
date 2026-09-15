@@ -59,6 +59,7 @@ class _MayaSmokeSession:
             self._setup_scene,
             self._show,
             self._inspect,
+            self._refresh_from_context_menu,
             self._edit_step,
             self._undo_step_value,
             self._edit_bool,
@@ -199,6 +200,27 @@ class _MayaSmokeSession:
             raise AssertionError("min/max属性のSlider Viewが見つかりません")
         self._capture("01-multiple-selection.png")
         self.steps.append("inspect_rendered_views")
+
+    def _refresh_from_context_menu(self) -> None:
+        """属性名の右クリックメニューから更新し、値とUndoを維持する。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+
+        row = self._row("weight")
+        cmds.flushUndo()
+        self._open_context_menu(row.name_label)
+        if not row.context_menu.isVisible():
+            raise AssertionError("属性名からメニューを開けません")
+        row.context_menu.setActiveAction(row.refresh_action)
+        self._key(row.context_menu, qt.Qt.Key.Key_Return)
+        self._flush_gui()
+        if self._row("weight") is row:
+            raise AssertionError("メニューから表示が更新されません")
+        self._assert_values("weight", (0.25, 0.75))
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("メニューの表示更新でUndo履歴が増えました")
+        self.steps.append("context_menu_refresh_only_reads_values")
 
     def _edit_step(self) -> None:
         """stepの実入力は正本を維持し、値欄の増減にだけ反映する。"""
@@ -342,16 +364,24 @@ class _MayaSmokeSession:
         self.steps.append("undo_slider_drag_once")
 
     def _align_bool(self) -> None:
-        """代表値と同じboolを揃えるボタンから全対象へ適用する。"""
+        """属性名の右クリックメニューから、代表値と同じboolへ揃える。"""
         from maya import cmds
 
         from bd_util.ui import qt
 
         row = self._row("enabled")
-        if not row.align_button.isEnabled():
+        if not row.align_action.isEnabled():
             raise AssertionError("混在値を揃える操作が無効になっています")
         cmds.flushUndo()
-        self._key(row.align_button, qt.Qt.Key.Key_Space)
+        self._open_context_menu(row.name_label)
+        if not row.context_menu.isVisible():
+            raise AssertionError("混在行のメニューを開けません")
+        image_path = self.output / "04-attribute-menu.png"
+        if not row.context_menu.grab().save(str(image_path)):
+            raise RuntimeError("属性行のメニュー画像を保存できません")
+        self.screenshots.append(str(image_path))
+        row.context_menu.setActiveAction(row.align_action)
+        self._key(row.context_menu, qt.Qt.Key.Key_Return)
         self._assert_values("enabled", (False, False))
         self.steps.append("align_representative_bool_value")
 
@@ -539,6 +569,19 @@ class _MayaSmokeSession:
             raise AssertionError(
                 f"{name}: expected={expected}, actual={values}"
             )
+
+    @staticmethod
+    def _open_context_menu(widget: qt.QWidget) -> None:
+        """属性名へ右クリック通知を送り、通常のイベント伝播でメニューを開く。"""
+        from bd_util.ui import qt
+
+        position = widget.rect().center()
+        event = qt.QtGui.QContextMenuEvent(
+            qt.QtGui.QContextMenuEvent.Reason.Mouse,
+            position,
+            widget.mapToGlobal(position),
+        )
+        qt.QApplication.sendEvent(widget, event)
 
     @staticmethod
     def _key(

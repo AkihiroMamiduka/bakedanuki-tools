@@ -18,7 +18,7 @@ class ChannelEditorWindow(qt.QDialog):
         super().__init__(parent)
         self.setObjectName("bdToolsChannelEditorWindow")
         self.setWindowTitle("bakedanuki · Channel Editor")
-        self.resize(680, 520)
+        self.resize(420, 360)
         self.widget = ChannelEditorWidget(self)
         layout = qt.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
