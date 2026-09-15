@@ -13,13 +13,16 @@
 
 ## Phase 2: First Tool Vertical Slice
 
-- [ ] 最初のユーザー課題と操作フローを決める
-- [ ] `bd_util` の Window controller を使った UI を実装する
-- [ ] Maya 操作と undo 境界を実装する
-- [ ] unit / Maya / type contract を追加する
-- [ ] reload と callback 破棄を Maya 本体で確認する
+- [x] 最初のユーザー課題と操作フローを決める（Channel Editorの値入力）
+- [x] `bd_util` の Window controller を使った UI を実装する
+- [x] Maya 操作と undo 境界を実装する
+- [x] unit / Maya / type contract を追加する
+- [x] reload と callback 破棄を Maya 本体で確認する
 
 ## Phase 3: Tool Collection Conventions
+
+Channel Editorの次段階では、キー付き属性の入力、ドッキング、Slider操作範囲の
+カスタマイズを実用途に応じて検討します。初版仕様は [Channel Editor](channel_editor.md) を参照します。
 
 - [ ] 個別ツールの命名と package 構成を実例から確定する
 - [ ] 共通の tool discovery / launcher が必要か評価する

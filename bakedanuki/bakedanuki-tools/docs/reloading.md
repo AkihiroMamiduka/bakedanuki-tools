@@ -68,6 +68,10 @@ Maya Script Editor が保持する古い `bd_tools` 変数にも、新しい pac
 
 ## Development Guidance
 
+Channel Editorは `channel_editor.dispose()` を登録します。Window配下の各Bindingを
+明示的に終了してからWindow controllerを破棄し、選択監視・入力・開いたUndoを残しません。
+再表示はreload後に `from bd_tools import channel_editor` を取り直して `show()` を呼びます。
+
 - UI module の import 時に Window を表示しない。
 - controller は module 単位で1つにする。
 - `dispose()` は複数回呼ばれても安全にする。

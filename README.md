@@ -67,6 +67,25 @@ Black 用環境と、pytest / Pyright 用の開発ツールを準備します。
 .\scripts\setup-dev.cmd
 ```
 
+## Channel Editor
+
+Maya の Script Editor で実行します。
+
+```python
+from bd_tools import channel_editor
+
+channel_editor.show()
+```
+
+選択リストの先頭ノードを基準に、Channel Box に表示する bool・float 系属性の
+入力欄を表示します。同名・同種の属性を持つ選択ノードへ、編集時だけ値を一括反映します。
+選択や表示更新では値を揃えません。両側に hard min/max がある属性は Slider 付き、
+bool は off / on の ComboBox です。キー付き・入力接続済み・ロックされた属性は表示専用です。
+
+対応する `bakedanuki-util` の複数属性 Binding と属性列挙 API が必要です。
+本変更の tools と util を組み合わせて配置してください。
+詳細は [Channel Editor](bakedanuki/bakedanuki-tools/docs/channel_editor.md) を参照してください。
+
 ## Verification
 
 日常的な確認です。

@@ -15,7 +15,8 @@ $setupScript = Join-Path $PSScriptRoot "setup-format.ps1"
 $configPath = Join-Path $repoRoot "pyproject.toml"
 $formatTargets = @(
     (Join-Path $repoRoot "bakedanuki"),
-    (Join-Path $repoRoot "tests")
+    (Join-Path $repoRoot "tests"),
+    (Join-Path $repoRoot "scripts")
 )
 
 # format環境のPythonが正常に起動できるか確認する

@@ -57,7 +57,9 @@ bd_tools/
     ...
 ```
 
-これは命名と公開入口の指針であり、現時点で空の directory は作りません。個別ツール同士の
+最初の実装は `bd_tools.channel_editor` です。`ui.py` がWindow、`widget.py` が入力行、
+`controller.py` が選択と対応属性を組み立てます。汎用の属性列挙と一括編集はutilへ配置します。
+空の directory は作りません。個別ツール同士の
 暗黙の import は避け、共有処理は責務に応じた場所へ抽出します。
 
 ## UI Lifecycle
