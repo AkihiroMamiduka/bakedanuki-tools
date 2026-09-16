@@ -204,15 +204,17 @@ class _MayaSmokeSession:
 
     def _inspect(self) -> None:
         """実Windowの描画と対応Viewの存在を確認して画像を保存する。"""
-        from bd_util.ui import BoolComboBox, FloatSliderSpinBox
+        from bd_util.ui import BoolCheckBox, FloatSliderSpinBox
 
         window = self._require_window()
         if not window.isVisible():
             raise AssertionError("Channel Editorが表示されていません")
-        if not window.findChildren(BoolComboBox):
-            raise AssertionError("boolのComboBoxが見つかりません")
+        if not window.findChildren(BoolCheckBox):
+            raise AssertionError("boolのCheckBoxが見つかりません")
         if not window.findChildren(FloatSliderSpinBox):
             raise AssertionError("min/max属性のSlider Viewが見つかりません")
+        if window.widget.scroll_area.horizontalScrollBar().maximum():
+            raise AssertionError("入力欄が縮小後のWindow幅に収まりません")
         self._capture("01-multiple-selection.png")
         self.steps.append("inspect_rendered_views")
 
@@ -350,21 +352,21 @@ class _MayaSmokeSession:
         self.steps.append("undo_value_preserves_step")
 
     def _edit_bool(self) -> None:
-        """ComboBoxのキー操作で複数ノードを同じ値へ変更する。"""
+        """CheckBoxのSpace操作で複数ノードを同じ値へ変更する。"""
         from maya import cmds
 
-        from bd_util.ui import BoolComboBox, qt
+        from bd_util.ui import BoolCheckBox, qt
 
         row = self._row("enabled")
         if (
-            not isinstance(row.editor, BoolComboBox)
+            not isinstance(row.editor, BoolCheckBox)
             or not row.row.binding.is_mixed
         ):
             raise AssertionError("bool行に初期値の混在が表示されていません")
         cmds.flushUndo()
-        self._key(row.editor, qt.Qt.Key.Key_End)
+        self._key(row.editor, qt.Qt.Key.Key_Space)
         self._assert_values("enabled", (True, True))
-        self.steps.append("combobox_key_edit_multiple_nodes")
+        self.steps.append("checkbox_key_edit_multiple_nodes")
 
     def _undo_bool(self) -> None:
         """boolの一括変更が1回のUndoで戻ることを確認する。"""

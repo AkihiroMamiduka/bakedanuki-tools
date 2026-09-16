@@ -11,7 +11,7 @@ from maya import cmds
 
 from bd_util.maya.ui import MayaBoolPlugsBinding, MayaFloatPlugsBinding
 from bd_util.ui import (
-    BoolComboBox,
+    BoolCheckBox,
     FloatSliderSpinBox,
     FloatValueStepSpinBox,
     qt,
@@ -121,7 +121,7 @@ def test_supported_types_flags_and_view_selection(
     names = {w.row.attribute.name for w in editor.row_widgets}
     assert {"translateX", "rotateY", "scaleZ", "visibility", "shown"} <= names
     assert {"hidden", "integer", "translate"}.isdisjoint(names)
-    assert isinstance(_row(editor, "visibility").editor, BoolComboBox)
+    assert isinstance(_row(editor, "visibility").editor, BoolCheckBox)
     value_step = _row(editor, "lowerOnly").editor
     slider = _row(editor, "weight").editor
     assert isinstance(value_step, FloatValueStepSpinBox)
@@ -132,7 +132,7 @@ def test_supported_types_flags_and_view_selection(
     assert (
         value_step.step_spin_box.minimumWidth()
         == value_step.step_spin_box.maximumWidth()
-        == 68
+        == 60
     )
     slider_layout = slider.layout()
     value_step_layout = value_step.layout()
@@ -157,14 +157,18 @@ def test_input_columns_stay_compact_at_right_edge(
         _events()
 
     # 画面を広げてもStep・Sliderや入力後方の余白へ幅を配分しない
-    for width in (360, 520):
+    for width in (280, 360, 520):
         editor.resize(width, 600)
         _events()
+        assert editor.scroll_area.horizontalScrollBar().maximum() == 0
         for row in editor.row_widgets:
             view = row.editor
-            assert view.width() == 164
+            assert view.width() == 156
             assert view.x() + view.width() == row.width()
-            if isinstance(view, BoolComboBox):
+            assert view.x() == row.name_label.x() + row.name_label.width() + 6
+            if isinstance(view, BoolCheckBox):
+                assert view.text() == ""
+                assert not view.isTristate()
                 continue
             auxiliary = (
                 view.slider
@@ -174,7 +178,7 @@ def test_input_columns_stay_compact_at_right_edge(
             assert view.spin_box.x() == 0
             assert view.spin_box.width() == 90
             assert auxiliary.x() == view.spin_box.width() + 6
-            assert auxiliary.width() == 68
+            assert auxiliary.width() == 60
             assert auxiliary.x() + auxiliary.width() == view.width()
 
 
@@ -225,16 +229,31 @@ def test_numeric_input_updates_all_targets_with_one_undo(
 def test_bool_input_and_explicit_alignment(
     editor: ChannelEditorWidget,
 ) -> None:
-    """bool選択と明示的な揃える操作を、表示更新から分離する。"""
+    """チェックの切替と明示的な揃える操作を、表示更新から分離する。"""
     row = _row(editor, "visibility")
-    assert isinstance(row.editor, BoolComboBox)
+    assert isinstance(row.editor, BoolCheckBox)
     assert isinstance(row.row.binding, MayaBoolPlugsBinding)
-    assert row.editor.currentText() == "on"
+    assert row.editor.isChecked()
+    assert row.row.binding.is_mixed
     assert cmds.getAttr("channelB.visibility") is False
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    # 混在表示からのクリックで一括変更し、Undoで元の混在値へ戻す
+    row.editor.click()
+    assert cmds.getAttr("channelA.visibility") is False
+    assert cmds.getAttr("channelB.visibility") is False
+    cmds.undo()
+    _events()
+    row = _row(editor, "visibility")
+    assert isinstance(row.editor, BoolCheckBox)
+    assert row.editor.isChecked()
+    assert cmds.getAttr("channelA.visibility") is True
+    assert cmds.getAttr("channelB.visibility") is False
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
     row.align_action.trigger()
     assert cmds.getAttr("channelA.visibility") is True
     assert cmds.getAttr("channelB.visibility") is True
-    row.editor.setCurrentIndex(0)
+    row.editor.click()
     assert cmds.getAttr("channelA.visibility") is False
     assert cmds.getAttr("channelB.visibility") is False
 

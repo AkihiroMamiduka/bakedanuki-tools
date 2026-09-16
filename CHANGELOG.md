@@ -9,10 +9,17 @@
 
 ### Changed
 
+- Channel Editorのbool入力をutilの`BoolCheckBox`へ変更し、属性名のすぐ右へ左詰めにする。
+  行の`editor`を直接操作するコードは`BoolComboBox`から`BoolCheckBox`へ型判定を移行し、
+  `currentText()` / `setCurrentIndex()`を`isChecked()` / `setChecked()`へ置き換える。
+  初期Window幅を420から320 px、最小幅を360から280 pxへ縮小し、
+  `ui.py`の`_INITIAL_WIDTH`・`_MINIMUM_WIDTH`と`widget.py`の
+  `_NAME_FIELD_MINIMUM_WIDTH`で属性名側の余白を調整できるようにする。
+  sceneの移行は不要。保存配置を縮める場合はパネル幅の変更か`reset_layout()`を使用する。
 - Channel Editorのfloat値欄を110 pxから90 pxへ縮小し、step欄・Sliderを共通の
-  4桁表示用68 pxに固定する。Slider行はutilの`layout_order="value_slider"`を使って
+  60 pxに固定する。Slider行はutilの`layout_order="value_slider"`を使って
   `[Value][Slider]`へ変更し、通常float行の`[Value][Step]`と値欄の位置を揃える。
-  boolを含む入力グループを164 pxで右寄せし、画面を広げても入力後方に余白を作らない。
+  数値入力グループを156 pxで右寄せし、画面を広げても数値入力後方に余白を作らない。
   値、scene、設定ファイルの移行は不要。
 - Channel Editorの値欄・step欄の単位文字（cm / degなど）を非表示にする。
   Slider付きの値欄にも適用する。表示単位への数値換算とstepの扱いは維持し、

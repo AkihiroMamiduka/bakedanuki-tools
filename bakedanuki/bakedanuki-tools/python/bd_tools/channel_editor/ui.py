@@ -16,7 +16,9 @@ from bd_util.ui import qt
 from .._dev.lifecycle import register_reload_disposer
 from .widget import ChannelEditorWidget
 
-_MINIMUM_WIDTH = 360
+# 入力欄の幅を維持したまま、属性名の左側に残る余白を調整する
+_INITIAL_WIDTH = 320
+_MINIMUM_WIDTH = 280
 
 
 class ChannelEditorWindow(MayaDockableWindow):
@@ -27,7 +29,7 @@ class ChannelEditorWindow(MayaDockableWindow):
         super().__init__(parent)
         self.setObjectName("bdToolsChannelEditorWindow")
         self.setWindowTitle("bakedanuki · Channel Editor")
-        self.resize(420, 360)
+        self.resize(_INITIAL_WIDTH, 360)
         # 保存済みの狭いタブ幅で復元されても値欄とstep欄を確保する
         self.setMinimumWidth(_MINIMUM_WIDTH)
         self.widget = ChannelEditorWidget(self)
@@ -54,7 +56,7 @@ _controller = MayaDockableWindowController(
         area=DockArea.RIGHT,
         allowed_area=DockArea.ALL,
         floating=False,
-        initial_width=420,
+        initial_width=_INITIAL_WIDTH,
         initial_height=360,
         minimum_width=_MINIMUM_WIDTH,
         retain=False,

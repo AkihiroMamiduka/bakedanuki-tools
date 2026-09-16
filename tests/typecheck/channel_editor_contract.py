@@ -4,7 +4,7 @@
 from typing import assert_type
 
 from bd_util.ui import (
-    BoolComboBox,
+    BoolCheckBox,
     FloatSliderSpinBox,
     FloatValueStepSpinBox,
     qt,
@@ -17,7 +17,7 @@ assert_type(channel_editor.show(), channel_editor.ChannelEditorWindow)
 assert_type(channel_editor.show().widget, ChannelEditorWidget)
 assert_type(
     channel_editor.show().widget.row_widgets[0].editor,
-    BoolComboBox | FloatSliderSpinBox | FloatValueStepSpinBox,
+    BoolCheckBox | FloatSliderSpinBox | FloatValueStepSpinBox,
 )
 assert_type(channel_editor.dispose(), None)
 assert_type(channel_editor.close(), None)

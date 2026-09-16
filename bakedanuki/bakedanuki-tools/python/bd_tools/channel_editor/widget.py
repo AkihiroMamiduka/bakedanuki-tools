@@ -8,7 +8,7 @@ from typing import Protocol, cast
 
 from bd_util.maya.ui import MayaBoolPlugsBinding, get_channel_box_precision
 from bd_util.ui import (
-    BoolComboBox,
+    BoolCheckBox,
     FloatSliderSpinBox,
     FloatStepMode,
     FloatValueStepSpinBox,
@@ -23,6 +23,7 @@ _VALUE_FIELD_WIDTH = 90
 _AUXILIARY_FIELD_WIDTH = 60
 _FIELD_SPACING = 6
 _EDITOR_WIDTH = _VALUE_FIELD_WIDTH + _FIELD_SPACING + _AUXILIARY_FIELD_WIDTH
+_NAME_FIELD_MINIMUM_WIDTH = 92
 
 
 class _MenuActions(Protocol):
@@ -93,13 +94,12 @@ class AttributeRowWidget(qt.QWidget):
     def _create_editor(
         self,
         single_step: float | None,
-    ) -> BoolComboBox | FloatSliderSpinBox | FloatValueStepSpinBox:
+    ) -> BoolCheckBox | FloatSliderSpinBox | FloatValueStepSpinBox:
         """属性の種類と両側のhard limitから入力Viewを選ぶ。"""
         binding = self.row.binding
         if isinstance(binding, MayaBoolPlugsBinding):
-            return BoolComboBox(
-                binding, false_text="off", true_text="on", parent=self
-            )
+            # ラベルを重複させず、入力列の左端にチェックを表示する
+            return BoolCheckBox(binding, parent=self)
         presentation = binding.view_model.presentation
         minimum, maximum = presentation.minimum, presentation.maximum
         decimals = get_channel_box_precision()
@@ -276,7 +276,7 @@ class ChannelEditorWidget(qt.QWidget):
         self.row_widgets = tuple(widgets)
         # 属性名の共通最小幅を確保し、入力グループの右端を全行で揃える
         name_width = max(
-            [92]
+            [_NAME_FIELD_MINIMUM_WIDTH]
             + [
                 widget.name_label.fontMetrics().horizontalAdvance(
                     "• " + widget.row.attribute.nice_name

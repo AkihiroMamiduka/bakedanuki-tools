@@ -54,12 +54,16 @@ MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中�
   属性名と入力Viewのtooltipへ表示します。属性のないnodeへ属性を追加することはありません。
 
 属性名は共通幅の列で右揃えにし、入力欄の左端を全行で揃えます。
-初期サイズの指定は420×360で、実際の寸法はMayaのドック領域に合わせて調整されます。
-値・step欄が狭いタブへ隠れないよう、最小幅は360です。
+初期サイズの指定は320×360、最小幅は280です。実際の寸法はMayaのドック領域に合わせて調整されます。
+属性名側の余白は`ui.py`の`_INITIAL_WIDTH`・`_MINIMUM_WIDTH`で調整できます。
+名前列の最小幅は`widget.py`の`_NAME_FIELD_MINIMUM_WIDTH`（92 px）で指定し、長い名前には自動で広げます。
+保存済みの広い配置を使っている場合は、パネル幅を縮めるか`reset_layout()`で初期配置へ戻します。
 
 選択・初期表示・外部変更の同期・表示更新では値を書き込みません。
 数値入力はEnterまたはフォーカス移動で確定し、値欄の上下操作・Sliderは操作時に反映します。
-未編集のEnterやフォーカス移動も値を書き込みません。boolはoff/onの選択変更で適用します。
+未編集のEnterやフォーカス移動も値を書き込みません。
+boolはutilの`BoolCheckBox`を使い、属性名のすぐ右、数値入力列の左端にチェックを表示します。
+チェックまたはSpaceキーで切り替えると、対応する編集可能なノードへ一括適用します。
 
 値が異なる場合、基準の値を表示したまま属性名の左へ小さな `•` を添えます。
 印の意味と対象の詳細はtooltipで確認できます。
@@ -74,9 +78,10 @@ MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中�
 両側のhard min/maxが有限で最小値より最大値が大きいfloatには
 `FloatSliderSpinBox`、それ以外には`FloatValueStepSpinBox`を使用します。
 通常float行は`[Value][Step]`、Slider行は`[Value][Slider]`の順に配置します。
-値欄は90 px、Step／Sliderは共通の68 px、欄間は6 pxに固定します。
+値欄は90 px、Step／Sliderは共通の60 px、欄間は6 pxに固定します。
 通常float行はutilの`value_width`・`step_width`を使い、Sliderにも同じ幅を指定します。
-boolを含む入力グループ全体を164 pxで右寄せし、画面を広げた分は属性名側へ配分します。
+数値入力グループ全体を156 pxで右寄せし、画面を広げた分は属性名側へ配分します。
+boolも同じ幅の入力列を確保し、その中でチェックを左詰めにします。
 Sliderの有無によらず、入力欄の左端・右端とStep／Sliderの開始位置が揃います。
 片側のhard limitも数値入力では尊重します。soft limitは初版では使用しません。
 Mayaの表示単位へ追従し、小数桁数は行の生成時にChannel Box設定から取得します。

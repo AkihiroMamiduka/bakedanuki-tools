@@ -83,7 +83,7 @@ channel_editor.show()
 選択リストの先頭ノードを基準に、Channel Box に表示する bool・float 系属性の
 入力欄を表示します。同名・同種の属性を持つ選択ノードへ、編集時だけ値を一括反映します。
 選択や表示更新では値を揃えません。両側に hard min/max がある属性は Slider 付き、
-bool は off / on の ComboBox です。キー付き・入力接続済み・ロックされた属性は表示専用です。
+bool は属性名のすぐ右に置く CheckBox です。キー付き・入力接続済み・ロックされた属性は表示専用です。
 
 対応する `bakedanuki-util` の複数属性 Binding と属性列挙 API が必要です。
 本変更の tools と util を組み合わせて配置してください。
