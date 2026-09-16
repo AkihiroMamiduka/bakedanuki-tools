@@ -9,6 +9,11 @@
 
 ### Changed
 
+- Channel Editorのfloat値欄を110 pxから90 pxへ縮小し、step欄・Sliderを共通の
+  4桁表示用68 pxに固定する。Slider行はutilの`layout_order="value_slider"`を使って
+  `[Value][Slider]`へ変更し、通常float行の`[Value][Step]`と値欄の位置を揃える。
+  boolを含む入力グループを164 pxで右寄せし、画面を広げても入力後方に余白を作らない。
+  値、scene、設定ファイルの移行は不要。
 - Channel Editorの値欄・step欄の単位文字（cm / degなど）を非表示にする。
   Slider付きの値欄にも適用する。表示単位への数値換算とstepの扱いは維持し、
   scene・設定ファイルの移行は不要。
@@ -36,7 +41,7 @@
 - Channel EditorのSlider以外のfloat系入力に、utilの `FloatValueStepSpinBox` を採用。
   距離・通常数値はmultiplicative/1、角度はadditive/15、radiusはmultiplicative/0.1とする。
   stepの変更は値やUndo履歴へ影響せず、選択変更やUndo後もWindow内で属性ごとに保持する。
-  step欄は名称の接頭辞を省略し、4桁程度と単位を表示できるコンパクトな幅とする。
+  step欄は名称の接頭辞を省略し、4桁程度を表示できるコンパクトな幅とする。
   行の公開 `editor` 型が `FloatSpinBox` から複合Viewへ変わるため、利用コードでは
   値欄へのアクセスを `editor.spin_box`、刻み幅の変更を `editor.setSingleStep()` へ移行する。
   対応するutilの更新が必要。既存scene・設定ファイルの移行は不要。

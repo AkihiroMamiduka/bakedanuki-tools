@@ -73,6 +73,11 @@ MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中�
 
 両側のhard min/maxが有限で最小値より最大値が大きいfloatには
 `FloatSliderSpinBox`、それ以外には`FloatValueStepSpinBox`を使用します。
+通常float行は`[Value][Step]`、Slider行は`[Value][Slider]`の順に配置します。
+値欄は90 px、Step／Sliderは共通の68 px、欄間は6 pxに固定します。
+通常float行はutilの`value_width`・`step_width`を使い、Sliderにも同じ幅を指定します。
+boolを含む入力グループ全体を164 pxで右寄せし、画面を広げた分は属性名側へ配分します。
+Sliderの有無によらず、入力欄の左端・右端とStep／Sliderの開始位置が揃います。
 片側のhard limitも数値入力では尊重します。soft limitは初版では使用しません。
 Mayaの表示単位へ追従し、小数桁数は行の生成時にChannel Box設定から取得します。
 値欄・step欄の単位文字（cm / degなど）は、Slider付きの値欄も含めて非表示です。
@@ -88,7 +93,7 @@ Slider以外の行には、値欄の右へ `step` 欄を表示します。
 | その他のfloat / double | multiplicative | 1 | 0.1 ↔ 1 ↔ 10 |
 | 正式属性名がradius | multiplicative | 0.1 | 0.01 ↔ 0.1 ↔ 1 |
 
-radiusは型の設定より優先します。Slider行の構成・操作は変更しません。
+radiusは型の設定より優先します。Slider行にも同じ値欄幅を適用します。
 stepの変更だけでは属性値・Undo履歴を変更せず、次の値欄の上下操作から適用します。
 stepは現在の表示単位で扱い、単位変更時も数値を維持します（例: step 1 cm → 1 m）。
 step欄への直接入力も可能です。ロック等で値が編集不可でも、step設定だけは変更できます。

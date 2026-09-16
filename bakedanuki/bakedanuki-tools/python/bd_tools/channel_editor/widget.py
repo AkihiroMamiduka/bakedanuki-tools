@@ -19,6 +19,11 @@ from .controller import ChannelEditorController, ChannelRow
 
 __all__ = ["AttributeRowWidget", "ChannelEditorWidget"]
 
+_VALUE_FIELD_WIDTH = 90
+_AUXILIARY_FIELD_WIDTH = 60
+_FIELD_SPACING = 6
+_EDITOR_WIDTH = _VALUE_FIELD_WIDTH + _FIELD_SPACING + _AUXILIARY_FIELD_WIDTH
+
 
 class _MenuActions(Protocol):
     """Qt同梱stubの版差を、使用するQActionの追加操作だけで閉じる。"""
@@ -62,6 +67,12 @@ class AttributeRowWidget(qt.QWidget):
         self.context_menu.addSeparator()
         menu_actions.addAction(self.refresh_action)
         self.editor = self._create_editor(single_step)
+        # 入力グループを固定幅にし、余剰幅は属性名側へ配分する
+        self.editor.setFixedWidth(_EDITOR_WIDTH)
+        if isinstance(
+            self.editor, (FloatSliderSpinBox, FloatValueStepSpinBox)
+        ):
+            self.editor.layout().setSpacing(_FIELD_SPACING)
         if isinstance(self.editor, FloatValueStepSpinBox):
             self.editor.settingsChanged.connect(self._notify_step_changed)
 
@@ -70,8 +81,8 @@ class AttributeRowWidget(qt.QWidget):
         layout = qt.QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-        layout.addWidget(self.name_label)
-        layout.addWidget(self.editor, 1)
+        layout.addWidget(self.name_label, 1)
+        layout.addWidget(self.editor)
         self._update_state()
 
     def contextMenuEvent(self, event: qt.QtGui.QContextMenuEvent) -> None:
@@ -99,10 +110,11 @@ class AttributeRowWidget(qt.QWidget):
                 minimum=minimum,
                 maximum=maximum,
                 decimals=decimals,
+                layout_order="value_slider",
             )
             editor.spin_box.setUnitVisible(False)
-            editor.slider.setMinimumWidth(110)
-            editor.spin_box.setMinimumWidth(110)
+            editor.spin_box.setFixedWidth(_VALUE_FIELD_WIDTH)
+            editor.slider.setFixedWidth(_AUXILIARY_FIELD_WIDTH)
             return editor
         # 属性名の特例を型の既定値より優先し、保存済みstepだけを上書きする
         default, mode, increment = self._step_defaults()
@@ -114,10 +126,10 @@ class AttributeRowWidget(qt.QWidget):
             step_mode=mode,
             step_increment=increment,
             step_show_unit=False,
+            value_width=_VALUE_FIELD_WIDTH,
+            step_width=_AUXILIARY_FIELD_WIDTH,
         )
         value_editor.spin_box.setUnitVisible(False)
-        value_editor.spin_box.setMinimumWidth(110)
-        value_editor.step_spin_box.setFixedWidth(72)
         return value_editor
 
     def _step_defaults(self) -> tuple[float, FloatStepMode, float]:
@@ -262,7 +274,7 @@ class ChannelEditorWidget(qt.QWidget):
             self.controller.dispose()
             raise
         self.row_widgets = tuple(widgets)
-        # 混在の印を含む共通幅を確保し、全行の入力欄の左端を揃える
+        # 属性名の共通最小幅を確保し、入力グループの右端を全行で揃える
         name_width = max(
             [92]
             + [
@@ -274,7 +286,7 @@ class ChannelEditorWidget(qt.QWidget):
             ]
         )
         for widget in widgets:
-            widget.name_label.setFixedWidth(name_width)
+            widget.name_label.setMinimumWidth(name_width)
         self.empty_label.setVisible(not widgets)
         self.empty_label.setText(
             "表示対象の bool・float 系属性がありません。"

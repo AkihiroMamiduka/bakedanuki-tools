@@ -122,8 +122,60 @@ def test_supported_types_flags_and_view_selection(
     assert {"translateX", "rotateY", "scaleZ", "visibility", "shown"} <= names
     assert {"hidden", "integer", "translate"}.isdisjoint(names)
     assert isinstance(_row(editor, "visibility").editor, BoolComboBox)
-    assert isinstance(_row(editor, "lowerOnly").editor, FloatValueStepSpinBox)
-    assert isinstance(_row(editor, "weight").editor, FloatSliderSpinBox)
+    value_step = _row(editor, "lowerOnly").editor
+    slider = _row(editor, "weight").editor
+    assert isinstance(value_step, FloatValueStepSpinBox)
+    assert isinstance(slider, FloatSliderSpinBox)
+    assert value_step.width() == slider.width()
+    for spin_box in (value_step.spin_box, slider.spin_box):
+        assert spin_box.minimumWidth() == spin_box.maximumWidth() == 90
+    assert (
+        value_step.step_spin_box.minimumWidth()
+        == value_step.step_spin_box.maximumWidth()
+        == 68
+    )
+    slider_layout = slider.layout()
+    value_step_layout = value_step.layout()
+    assert isinstance(slider_layout, qt.QHBoxLayout)
+    assert isinstance(value_step_layout, qt.QHBoxLayout)
+    assert slider_layout.itemAt(0).widget() is slider.spin_box
+    assert slider_layout.itemAt(1).widget() is slider.slider
+    assert value_step_layout.itemAt(0).widget() is value_step.spin_box
+    assert value_step_layout.itemAt(1).widget() is value_step.step_spin_box
+    assert value_step.step_spin_box.x() == slider.slider.x()
+
+
+@pytest.mark.parametrize("with_slider", [False, True])
+def test_input_columns_stay_compact_at_right_edge(
+    editor: ChannelEditorWidget, with_slider: bool
+) -> None:
+    """Sliderの有無や画面幅によらず補助欄の幅と全入力の右端を揃える。"""
+    if not with_slider:
+        for node in ("channelA", "channelB"):
+            cmds.setAttr(f"{node}.weight", keyable=False, channelBox=False)
+        editor.refresh()
+        _events()
+
+    # 画面を広げてもStep・Sliderや入力後方の余白へ幅を配分しない
+    for width in (360, 520):
+        editor.resize(width, 600)
+        _events()
+        for row in editor.row_widgets:
+            view = row.editor
+            assert view.width() == 164
+            assert view.x() + view.width() == row.width()
+            if isinstance(view, BoolComboBox):
+                continue
+            auxiliary = (
+                view.slider
+                if isinstance(view, FloatSliderSpinBox)
+                else view.step_spin_box
+            )
+            assert view.spin_box.x() == 0
+            assert view.spin_box.width() == 90
+            assert auxiliary.x() == view.spin_box.width() + 6
+            assert auxiliary.width() == 68
+            assert auxiliary.x() + auxiliary.width() == view.width()
 
 
 def test_enter_does_not_activate_context_actions(
