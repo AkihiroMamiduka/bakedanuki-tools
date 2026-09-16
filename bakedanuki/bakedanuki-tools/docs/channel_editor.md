@@ -2,6 +2,12 @@
 
 選択ノードの値入力を支援する、bool・float 系属性のエディタです。
 
+## 開発状態
+
+2026-09-16に、bool・float系の複数選択編集、step操作、表示整理、Mayaへのドッキングまでの
+初回開発を完了し、利用者による動作確認を終えました。今回の範囲に追加必須の機能はありません。
+enum対応などは、実用途で必要になった時点で着手する[今後の候補](roadmap.md#channel-editorの拡張候補)です。
+
 ## 起動と終了
 
 ```python
@@ -16,6 +22,11 @@ channel_editor.close()
 タブ化、floatingへ切り替えられます。移動だけでは入力やstep設定を破棄しません。
 配置はMayaのworkspaceへ保存され、再表示やMaya再起動時の復元に使われます。
 本変更に対応した `bakedanuki-util` と組み合わせて使用してください。
+
+利用するutilには、複数属性用の`MayaBoolPlugsBinding` / `MayaFloatPlugsBinding`、
+属性列挙・選択取得、`BoolCheckBox`、`FloatValueStepSpinBox`の幅指定、
+`FloatSliderSpinBox.layout_order`、ドッキングとreloadの基盤が必要です。
+toolsとutilを配布するときは、組み合わせて動作確認した版を使用してください。
 
 タイトルバーまたは `close()` で、workspaceControl・入力・callbackを破棄します。
 次の `show()` は新しいWindowを生成します。開発時の完全破棄には `dispose()` を使います。
@@ -64,6 +75,7 @@ MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中�
 未編集のEnterやフォーカス移動も値を書き込みません。
 boolはutilの`BoolCheckBox`を使い、属性名のすぐ右、数値入力列の左端にチェックを表示します。
 チェックまたはSpaceキーで切り替えると、対応する編集可能なノードへ一括適用します。
+boolが混在していてもチェックは基準ノードのTrue / Falseを表示し、三状態表示にはしません。
 
 値が異なる場合、基準の値を表示したまま属性名の左へ小さな `•` を添えます。
 印の意味と対象の詳細はtooltipで確認できます。
@@ -72,6 +84,10 @@ boolはutilの`BoolCheckBox`を使い、属性名のすぐ右、数値入力列�
 基準の未丸め実値を他の編集可能な対象へ適用します。メニューを開くだけでは変更しません。
 画面の余白からは「表示を更新」を選べます。値・step欄はQt標準の編集メニューを使用します。
 すべての対象が同値の入力はUndo履歴を増やしません。
+
+たとえばAが1、Bが2なら、選択時には1を表示したままBの2を維持します。
+表示中の1へ揃えるだけなら、属性名のメニューから「この値に揃える」を実行します。
+表示精度によって丸められた文字列ではなく、基準ノードの実値を適用します。
 
 ## 範囲、単位、編集不可
 
@@ -148,6 +164,39 @@ stepの初期値選択とWindow内の設定保持はtools、値とstepの連動�
 値の単位変換・型付き属性列挙・一括書込み・混在状態・Undoはutilを使用します。
 別ツールはこのcontrollerへ暗黙に依存せず、必要な汎用APIをutilから利用します。
 
+### 見た目の調整箇所
+
+以下の定数は`bd_tools/channel_editor`配下で管理します。サイズは全Maya versionで共通です。
+
+| ファイル | 定数 | 現在値 | 調整する内容 |
+| --- | --- | --- | --- |
+| `widget.py` | `_VALUE_FIELD_WIDTH` | 90 | 数値入力欄の固定幅 |
+| `widget.py` | `_AUXILIARY_FIELD_WIDTH` | 60 | StepとSliderの共通固定幅 |
+| `widget.py` | `_FIELD_SPACING` | 6 | ValueとStep / Sliderの間隔 |
+| `widget.py` | `_EDITOR_WIDTH` | 156（上記から算出） | boolも含めて確保する入力列の幅 |
+| `widget.py` | `_NAME_FIELD_MINIMUM_WIDTH` | 92 | 属性名列の最小幅。長い名前では自動拡張 |
+| `ui.py` | `_INITIAL_WIDTH` | 320 | Window / workspaceControlの初期幅 |
+| `ui.py` | `_MINIMUM_WIDTH` | 280 | Window / workspaceControlの最小幅 |
+
+utilの`FloatValueStepSpinBox`のstep既定幅は68ですが、このツールでは60を明示指定しています。
+値・補助欄の幅を変えたら、最小Window幅で入力が隠れないことも確認してください。
+属性名列は余剰幅を受け取るため、名前の最小幅だけを下げても広いパネルの余白は減りません。
+パネル幅と初期・最小Window幅を合わせて調整します。boolは同じ入力列の左端に配置します。
+
+定数を変更した後はtoolsをreloadして`channel_editor`をimportし直し、`show()`で作り直します。
+保存済みworkspaceの幅が優先される場合は、パネルを手動で縮めるか`reset_layout()`を実行します。
+幅・配置を変更した際は`tests/maya/test_channel_editor.py`の配置検証も新しい仕様に合わせ、
+Sliderあり／なし、最小幅／拡大時、ドック／floatingで表示を確認してください。
+
+### 拡張時に維持する仕様
+
+- 選択・表示更新・外部からの値変更は読取りと表示同期だけにし、他ノードへ値を転送しない。
+- 明示的な入力・揃える操作だけを一括編集し、Undoで各ノードの元値を復元する。
+- Stepの変更はViewの操作設定として扱い、sceneとUndoへ書き込まない。
+- 編集不可属性や型・範囲の不一致を尊重し、除外理由や拒否理由を表示する。
+- 選択切替・close・reloadでは古い入力、連続編集、callback、メニューを確実に終了する。
+- 汎用の型・Binding・View・保存基盤はutil、表示対象と各行の組み合わせはtoolsへ置く。
+
 ## 検証
 
 `tests/maya/test_channel_editor.py` は、選択時の無書込み、外部変更の非伝播、
@@ -157,19 +206,20 @@ View選択、混在編集、除外対象、範囲違い、Undo、構成変更を
 公開入口の型は `tests/typecheck/channel_editor_contract.py` で固定します。
 対応Maya全versionでruntime testを行い、本体の操作確認は開発用smoke scriptを利用します。
 
-表示整理時はMaya 2025 / 2026 / 2027でtools runtime test各34件と型検査、
-unit test 8件、Black checkを通過しています。Maya 2025本体で右クリックメニューからの
-更新・揃える・Undoを確認し、Windowとメニューの画像を保存しました。
+実装完了時の最終確認結果（2026-09-16）です。対象のtoolsは`bed114f`、utilは`e8e996dc`です。
 
-step追加時はtools runtime testが各versionで30件成功し、utilの統一検証も通過しています。
-Maya 2025本体でstep欄のキー操作、刻み幅による一括入力、Undo後のstep保持も確認しました。
-検証用Mayaアプリケーションの終了待ちは、下記手順書に記載したタイムアウトが継続しています。
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsのBlack・Pyright | 通過 |
+| unit test | 8件成功 |
+| Maya 2025 / 2026 / 2027のtools runtime test | 各38件成功 |
+| 配置 | 280 / 360 / 520 pxで横スクロールなし、Sliderの有無とCheckBoxの左詰めを確認 |
+| Maya 2025本体の操作 | 24工程成功。CheckBoxのSpace操作、float入力、Sliderドラッグ、Undo、ドック／floating、reloadを含む |
+| Maya 2025本体の終了 | 終了待ちでタイムアウト。操作結果は成功だがrunnerは終了code 1 |
 
-初回実装ではMaya 2025 / 2026 / 2027のtools runtime test各17件と、utilの
-統一検証を通過しています。Maya 2025本体でもキー入力、Sliderドラッグ、Undo、
-close / reopen、選択追従、util / tools reloadとcallback解放を確認しました。
-10ノード・各30追加属性（標準属性込み40行）の単回計測では、行構築を含むWindow生成
-約252 ms、一括入力約11 ms、1ノードへの選択切替約73 msでした。環境依存の参考値です。
-この条件で追加node callbackは1,230本で、対象数・行数に応じて増加します。
+Maya 2026 / 2027の最終UI変更はruntime testによる確認です。最終配置の本体画像確認はMaya 2025で行いました。
+終了待ちの原因調査は未完了です。操作成功とプロセスの正常終了を区別し、runner全体が成功したとは扱いません。
+UIを配布する前には、利用するMaya versionと画面倍率・フォントでも文字切れと操作を確認します。
+大量選択時の性能は、既存runnerの計測を使って必要に応じて再評価します。
 実行コマンド、独立したMaya起動環境、操作内容、画像と計測結果の保存先は
 [Maya本体検証の手順](testing.md#channel-editorのmaya本体検証)を参照してください。

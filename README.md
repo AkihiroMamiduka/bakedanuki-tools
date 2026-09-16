@@ -69,6 +69,9 @@ Black 用環境と、pytest / Pyright 用の開発ツールを準備します。
 
 ## Channel Editor
 
+bool・float系の値入力、step操作、表示整理、Mayaへのドッキングまでの初回開発は完了しています。
+今後の任意の拡張候補は[Roadmap](bakedanuki/bakedanuki-tools/docs/roadmap.md#channel-editorの拡張候補)にまとめています。
+
 Maya の Script Editor で実行します。
 
 ```python
@@ -85,8 +88,8 @@ channel_editor.show()
 選択や表示更新では値を揃えません。両側に hard min/max がある属性は Slider 付き、
 bool は属性名のすぐ右に置く CheckBox です。キー付き・入力接続済み・ロックされた属性は表示専用です。
 
-対応する `bakedanuki-util` の複数属性 Binding と属性列挙 API が必要です。
-本変更の tools と util を組み合わせて配置してください。
+対応する `bakedanuki-util` の複数属性Binding、属性列挙、複合View、ドッキング基盤が必要です。
+toolsとutilは、組み合わせて動作確認した版を配置してください。
 詳細は [Channel Editor](bakedanuki/bakedanuki-tools/docs/channel_editor.md) を参照してください。
 
 ## Verification

@@ -47,7 +47,7 @@ PythonのuserSetupは読み込まず、検証用sceneで操作した後に専用
 時間切れの場合も、runner自身が起動したprocessだけを終了します。
 起動時のdeferred処理が完了した後に検証を開始し、専用sceneのUndoを有効にします。
 
-boolのキー入力、floatの文字入力、Sliderのマウスドラッグ、右クリックメニューからの
+boolのCheckBoxへのSpace入力、floatの文字入力、Sliderのマウスドラッグ、右クリックメニューからの
 表示更新と混在値を揃える操作、
 各操作の1回Undo、選択追従、close / reopen、utilとtoolsのreloadを確認します。
 ドッキングからfloatingへの切替、Mayaへのタブ再配置、Maya側のcloseによる破棄も確認します。
@@ -76,6 +76,23 @@ Mayaアプリケーションの終了待ちが180秒でタイムアウトしま�
 deferred quitでも発生しており、終了待ちの原因は未特定です。runnerはこの場合も
 成功扱いにせず、結果を表示して専用processだけを停止し、終了code 1を返します。
 操作の検証結果とMayaアプリケーションの正常終了は区別して確認してください。
+
+### 次回変更時の回帰確認
+
+初回開発完了時の件数と確認範囲は[Channel Editorの検証記録](channel_editor.md#検証)を参照します。
+変更した仕様に応じて既存testと本体runnerを更新し、次を確認します。
+
+- 入力・対応型: 選択／更新で無書込み、外部変更の非伝播、混在値への一括入力、1回Undo、編集不可対象の扱い。
+- bool: 基準値を二値CheckBoxで表示し、クリック／Spaceで切替、属性名の直後に左詰め。
+- step: 値／Undoを変更しないこと、型別初期値、選択変更／Undo後の保持、close後の初期化。
+- 幅・配置: Sliderあり／なし、最小幅／拡大時、長い属性名、縦スクロール時、ドック／floating。
+  StepとSliderの幅・開始位置、値欄の文字切れ、不要な右余白を保存画像でも確認する。
+- lifecycle: 選択切替・close・reloadで古い入力とcallbackを終了し、再表示で重複させない。
+
+対応version、配布構成、Qt / Maya API互換性の変更では3 versionのruntime testを実行します。
+workspaceControl、再起動復元、実画面配置の変更では対象Maya本体で確認し、
+再起動復元の仕様を変える場合は以下の2段階検証も行います。
+Markdownのみの変更は`git diff --check -- <changed-files>`を実行し、runtime testの再実行は不要です。
 
 ### Maya再起動による配置復元
 

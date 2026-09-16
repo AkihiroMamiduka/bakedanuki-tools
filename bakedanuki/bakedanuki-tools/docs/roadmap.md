@@ -18,12 +18,36 @@
 - [x] Maya 操作と undo 境界を実装する
 - [x] unit / Maya / type contract を追加する
 - [x] reload と callback 破棄を Maya 本体で確認する
+- [x] 属性別step設定と、値・step／sliderの整列・単位非表示
+- [x] boolのCheckBox化、コンパクトな幅、右クリック操作
+- [x] util基盤によるドッキング、floating、配置reset
+- [x] 利用者による動作確認と初回開発の完了（2026-09-16）
+
+### Channel Editorの拡張候補
+
+今回のbool・float値入力ツールは、上記範囲で完了です。
+以下は未着手の任意候補であり、今回の完了条件や実装予定ではありません。
+
+| 候補 | 着手を検討する状況 | 設計時に確認する点 |
+| --- | --- | --- |
+| enumのComboBox入力 | enum属性もこの画面から編集したい | utilの型・Binding・Viewを整備し、項目名と実値の対応、ノード間の定義差、混在、Undoを扱う。boolのCheckBoxと見分けられる表示にする |
+| 属性名検索・表示フィルター | 属性数が多く、目的の行を探しにくい | 基準ノードと編集対象の決定は維持し、表示の絞込みと値の書込みを分離する |
+| step設定の永続化 | Windowを閉じるたびに同じstepを設定し直している | utilの保存基盤を使い、属性path・型・単位、初期値との優先順位、reset時の扱いを決める。sceneへは保存しない |
+
+キー付き属性の入力やSlider操作範囲のカスタマイズも、用途が具体化したときに別途検討します。
+アニメーションの編集を追加する場合は、キー・レイヤー・Undoの仕様を先に定義します。
+
+### 保守上の継続課題
+
+- 検証用Maya 2025の終了待ちタイムアウトを調査する。操作24工程の成功と正常終了は区別する。
+  詳細と再現手順は[Testing](testing.md#channel-editorのmaya本体検証)を参照する。
+- 大量の選択ノードや属性で負荷が問題になった場合は、まず既存runnerで構築・入力・選択切替を計測する。
+  node callbackが対象数・属性数に応じて増えるため、必要ならutil側の監視共有を検討する。
 
 ## Phase 3: Tool Collection Conventions
 
-Channel Editorはutil基盤によるドッキングへ対応しています。
-次段階では、キー付き属性の入力、Slider操作範囲の
-カスタマイズを実用途に応じて検討します。初版仕様は [Channel Editor](channel_editor.md) を参照します。
+次のツールを追加するときに、Channel Editorの実装を参考にして共通規約を整えます。
+完成したツールの仕様と責務分担は[Channel Editor](channel_editor.md)を参照します。
 
 - [ ] 個別ツールの命名と package 構成を実例から確定する
 - [ ] 共通の tool discovery / launcher が必要か評価する
