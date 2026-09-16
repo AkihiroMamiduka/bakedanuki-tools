@@ -466,6 +466,9 @@ def test_radius_override_respects_slider_priority(
         assert isinstance(view, FloatValueStepSpinBox)
         assert view.singleStep() == 0.1
         assert view.step_spin_box.stepMode() == "multiplicative"
+        assert view.step_spin_box.suffix() == ""
+    assert not view.spin_box.isUnitVisible()
+    assert view.spin_box.suffix() == ""
 
 
 def test_step_survives_value_undo_refresh_and_selection(
@@ -523,18 +526,29 @@ def test_step_cache_is_separate_by_kind_and_window(
 def test_step_tracks_display_units_without_converting_numeric_step(
     editor: ChannelEditorWidget,
 ) -> None:
-    """表示単位の変更はstepの数値を維持し、step欄の単位を揃える。"""
+    """単位文字を省略したまま表示値を換算し、stepの数値を維持する。"""
     original = str(cmds.currentUnit(query=True, linear=True))
+    _set_value("channelA.translateX", 100)
+    _events()
     view = _value_step(editor, "translateX")
+    before = view.spin_box.value()
     view.setSingleStep(2.5)
     try:
         cmds.currentUnit(linear="m")
         _events()
         view = _value_step(editor, "translateX")
         assert view.singleStep() == view.step_spin_box.value() == 2.5
-        assert view.step_spin_box.suffix() == view.spin_box.suffix() == " m"
+        assert view.step_spin_box.suffix() == view.spin_box.suffix() == ""
+        assert isclose(
+            view.spin_box.value(),
+            view.view_model.presentation.to_display(
+                view.view_model.value.value
+            ),
+        )
+        assert cmds.getAttr("channelA.translateX") == view.spin_box.value()
         editor.refresh()
         assert _value_step(editor, "translateX").singleStep() == 2.5
     finally:
         cmds.currentUnit(linear=original)
         _events()
+    assert _value_step(editor, "translateX").spin_box.value() == before

@@ -75,9 +75,11 @@ MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中�
 `FloatSliderSpinBox`、それ以外には`FloatValueStepSpinBox`を使用します。
 片側のhard limitも数値入力では尊重します。soft limitは初版では使用しません。
 Mayaの表示単位へ追従し、小数桁数は行の生成時にChannel Box設定から取得します。
+値欄・step欄の単位文字（cm / degなど）は、Slider付きの値欄も含めて非表示です。
+文字を省略しても、現在の表示単位での数値表示・入力と単位変更時の換算は継続します。
 
 Slider以外の行には、値欄の右へ `step` 欄を表示します。
-フィールド内の「step」表記は省略し、4桁程度と単位が収まるコンパクトな幅にします。
+フィールド内の「step」表記は省略し、4桁程度が収まるコンパクトな幅にします。
 
 | 属性 | step変更方式 | 初期値 | step欄の上下操作 |
 | --- | --- | --- | --- |

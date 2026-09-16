@@ -100,6 +100,7 @@ class AttributeRowWidget(qt.QWidget):
                 maximum=maximum,
                 decimals=decimals,
             )
+            editor.spin_box.setUnitVisible(False)
             editor.slider.setMinimumWidth(110)
             editor.spin_box.setMinimumWidth(110)
             return editor
@@ -112,7 +113,9 @@ class AttributeRowWidget(qt.QWidget):
             single_step=default if single_step is None else single_step,
             step_mode=mode,
             step_increment=increment,
+            step_show_unit=False,
         )
+        value_editor.spin_box.setUnitVisible(False)
         value_editor.spin_box.setMinimumWidth(110)
         value_editor.step_spin_box.setFixedWidth(72)
         return value_editor

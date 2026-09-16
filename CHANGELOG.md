@@ -9,6 +9,9 @@
 
 ### Changed
 
+- Channel Editorの値欄・step欄の単位文字（cm / degなど）を非表示にする。
+  Slider付きの値欄にも適用する。表示単位への数値換算とstepの扱いは維持し、
+  scene・設定ファイルの移行は不要。
 - Channel Editorをutilの `MayaDockableWindowController` に移行し、Maya右側へのドッキング、
   タブ化、floating、workspaceControlによる配置復元へ対応。
   `show()` の戻り値は同名の `ChannelEditorWindow` だが、基底は `QDialog` から
