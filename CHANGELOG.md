@@ -45,6 +45,13 @@
 
 ### Added
 
+- Channel Editorのenum入力を追加。utilの`EnumComboBox` / `MayaEnumPlugsBinding`を使用し、
+  同じ正式属性path・整数値と項目名の対応を持つ対象へ、明示操作時だけ一括適用する。
+  飛び番・未定義値・混在・定義不一致の除外、Undo／Redo、選択肢の終了に対応する。
+  対応するutilのenum属性列挙と`read_enum_definition()`が必要なため、両packageを更新する。
+  行の`editor`と`ChannelBinding`のunionにenum型が加わる。数値Viewとしてアクセスする
+  利用コードは`isinstance()`で型を絞ること。既存scene・保存設定の移行は不要。
+
 - Channel EditorのSlider以外のfloat系入力に、utilの `FloatValueStepSpinBox` を採用。
   距離・通常数値はmultiplicative/1、角度はadditive/15、radiusはmultiplicative/0.1とする。
   stepの変更は値やUndo履歴へ影響せず、選択変更やUndo後もWindow内で属性ごとに保持する。

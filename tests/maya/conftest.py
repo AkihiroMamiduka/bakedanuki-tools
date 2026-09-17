@@ -1,6 +1,8 @@
 # coding: utf-8
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -26,6 +28,17 @@ def pytest_configure(config: pytest.Config) -> None:
     if not isinstance(application, qt.QApplication):
         raise RuntimeError("Maya UI testにはQApplicationが必要です")
     _qt_application = application
+
+    # Windowsのoffscreen backendは標準フォントを列挙しない場合がある
+    if (
+        application.platformName() == "offscreen"
+        and not qt.QtGui.QFontDatabase.families()
+    ):
+        font_path = Path(os.environ["WINDIR"]) / "Fonts" / "segoeui.ttf"
+        font_id = qt.QtGui.QFontDatabase.addApplicationFont(str(font_path))
+        if font_id < 0:
+            raise RuntimeError(f"配置検証用フォントを読めません: {font_path}")
+        application.setFont(qt.QtGui.QFont("Segoe UI", 9))
 
     # テストsessionで利用するMaya standaloneを一度だけ初期化する
     maya.standalone.initialize(name="python")

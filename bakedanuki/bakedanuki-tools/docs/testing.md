@@ -47,8 +47,9 @@ PythonのuserSetupは読み込まず、検証用sceneで操作した後に専用
 時間切れの場合も、runner自身が起動したprocessだけを終了します。
 起動時のdeferred処理が完了した後に検証を開始し、専用sceneのUndoを有効にします。
 
-boolのCheckBoxへのSpace入力、floatの文字入力、Sliderのマウスドラッグ、右クリックメニューからの
-表示更新と混在値を揃える操作、
+boolのCheckBoxへのSpace入力、floatの文字入力、Sliderのマウスドラッグ、
+enumの選択肢表示・マウス選択・飛び番入力、右クリックメニューからの
+表示更新とbool・enumの混在値を揃える操作、
 各操作の1回Undo、選択追従、close / reopen、utilとtoolsのreloadを確認します。
 ドッキングからfloatingへの切替、Mayaへのタブ再配置、Maya側のcloseによる破棄も確認します。
 step欄のキー入力が値とUndoを変更しないこと、変更後の刻み幅で値入力できること、
@@ -64,6 +65,7 @@ step欄のキー入力が値とUndoを変更しないこと、変更後の刻み
   QtのWindow描画から保存した確認画像。
 - `04-attribute-menu.png`: 属性名を右クリックして開いた操作メニュー。
 - `05-docked.png`、`06-floating-content.png`: Maya右側へのドッキングとfloatingの表示。
+- `08-enum-popup.png`、`09-enum-selected.png`: enumの選択肢と入力後の表示。
 - `progress.json`: 実行中の段階と完了済みの操作。
 - `maya-initial.log`、`process-initial.log`、`python-stacks-initial.log`: Mayaの出力と、長時間停止した場合の
   Python stack。
@@ -84,6 +86,7 @@ deferred quitでも発生しており、終了待ちの原因は未特定です�
 
 - 入力・対応型: 選択／更新で無書込み、外部変更の非伝播、混在値への一括入力、1回Undo、編集不可対象の扱い。
 - bool: 基準値を二値CheckBoxで表示し、クリック／Spaceで切替、属性名の直後に左詰め。
+- enum: 項目名と実整数、飛び番・未定義値、定義不一致の除外・入力停止、同値揃えと選択肢の終了。
 - step: 値／Undoを変更しないこと、型別初期値、選択変更／Undo後の保持、close後の初期化。
 - 幅・配置: Sliderあり／なし、最小幅／拡大時、長い属性名、縦スクロール時、ドック／floating。
   StepとSliderの幅・開始位置、値欄の文字切れ、不要な右余白を保存画像でも確認する。
@@ -93,6 +96,11 @@ deferred quitでも発生しており、終了待ちの原因は未特定です�
 workspaceControl、再起動復元、実画面配置の変更では対象Maya本体で確認し、
 再起動復元の仕様を変える場合は以下の2段階検証も行います。
 Markdownのみの変更は`git diff --check -- <changed-files>`を実行し、runtime testの再実行は不要です。
+
+Windowsの`QT_QPA_PLATFORM=offscreen`ではQtのフォント一覧が空になる場合があります。
+toolsのMaya testは、その場合だけWindows標準のSegoe UIを読み込み、9 ptで配置を検証します。
+フォントなしの仮の文字幅を製品の配置不具合として扱わないためのtest側の設定です。
+読み込み失敗はtestを停止します。製品UIのフォント・幅設定は変更せず、Maya本体でも確認します。
 
 ### Maya再起動による配置復元
 

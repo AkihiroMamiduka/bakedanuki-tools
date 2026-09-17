@@ -12,6 +12,7 @@ from maya import cmds
 from bd_util.maya.ui import MayaBoolPlugsBinding, MayaFloatPlugsBinding
 from bd_util.ui import (
     BoolCheckBox,
+    EnumComboBox,
     FloatSliderSpinBox,
     FloatValueStepSpinBox,
     qt,
@@ -75,6 +76,13 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelEditorWidget]:
             keyable=True,
         )
         _set_value(f"{name}.weight", value)
+        cmds.addAttr(
+            name,
+            longName="mode",
+            attributeType="enum",
+            enumName="Off:Preview:Final",
+            keyable=True,
+        )
     _set_value("channelB.visibility", False)
     cmds.addAttr("channelA", longName="lowerOnly", minValue=0, keyable=True)
     cmds.addAttr("channelA", longName="shown", attributeType="double")
@@ -169,6 +177,9 @@ def test_input_columns_stay_compact_at_right_edge(
             if isinstance(view, BoolCheckBox):
                 assert view.text() == ""
                 assert not view.isTristate()
+                continue
+            if isinstance(view, EnumComboBox):
+                assert view.count() == 3
                 continue
             auxiliary = (
                 view.slider

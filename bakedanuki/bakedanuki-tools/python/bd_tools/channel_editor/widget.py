@@ -6,9 +6,14 @@ from __future__ import annotations
 from functools import partial
 from typing import Protocol, cast
 
-from bd_util.maya.ui import MayaBoolPlugsBinding, get_channel_box_precision
+from bd_util.maya.ui import (
+    MayaBoolPlugsBinding,
+    MayaEnumPlugsBinding,
+    get_channel_box_precision,
+)
 from bd_util.ui import (
     BoolCheckBox,
+    EnumComboBox,
     FloatSliderSpinBox,
     FloatStepMode,
     FloatValueStepSpinBox,
@@ -94,12 +99,19 @@ class AttributeRowWidget(qt.QWidget):
     def _create_editor(
         self,
         single_step: float | None,
-    ) -> BoolCheckBox | FloatSliderSpinBox | FloatValueStepSpinBox:
+    ) -> (
+        BoolCheckBox
+        | EnumComboBox
+        | FloatSliderSpinBox
+        | FloatValueStepSpinBox
+    ):
         """属性の種類と両側のhard limitから入力Viewを選ぶ。"""
         binding = self.row.binding
         if isinstance(binding, MayaBoolPlugsBinding):
             # ラベルを重複させず、入力列の左端にチェックを表示する
             return BoolCheckBox(binding, parent=self)
+        if isinstance(binding, MayaEnumPlugsBinding):
+            return EnumComboBox(binding, parent=self)
         presentation = binding.view_model.presentation
         minimum, maximum = presentation.minimum, presentation.maximum
         decimals = get_channel_box_precision()
@@ -164,11 +176,23 @@ class AttributeRowWidget(qt.QWidget):
             if target.reason:
                 reasons.append(f"{target.name}: {target.reason}")
         details.extend(reasons)
+        defined = True
+        if isinstance(binding, MayaEnumPlugsBinding):
+            defined = binding.is_value_defined
+            item = binding.definition.item_for_value(binding.value)
+            details.append(
+                f"基準値: {item.name} ({item.value})"
+                if item is not None
+                else f"基準値: 未定義 ({binding.value}) — 揃える操作はできません"
+            )
+            if not binding.definition.items:
+                details.append("enumの選択肢がないため入力できません")
+            details.append("定義変更後の対象の再判定: 表示を更新")
         details.append("属性名を右クリック: この値に揃える / 表示を更新")
         tooltip = "\n".join(details)
         self.name_label.setToolTip(tooltip)
         self.editor.setToolTip(tooltip)
-        self.align_action.setEnabled(editable and binding.is_mixed)
+        self.align_action.setEnabled(editable and binding.is_mixed and defined)
 
     def _align_values(self) -> None:
         """メニューから明示した場合だけ、対象を基準ノードの値へ揃える。"""
@@ -243,6 +267,8 @@ class ChannelEditorWidget(qt.QWidget):
         """古いViewを破棄して、新しい選択の入力行を配置する。"""
         for widget in self.row_widgets:
             widget.context_menu.close()
+            if isinstance(widget.editor, EnumComboBox):
+                widget.editor.hidePopup()
             self._rows_layout.removeWidget(widget)
             widget.hide()
             widget.deleteLater()
@@ -289,7 +315,7 @@ class ChannelEditorWidget(qt.QWidget):
             widget.name_label.setMinimumWidth(name_width)
         self.empty_label.setVisible(not widgets)
         self.empty_label.setText(
-            "表示対象の bool・float 系属性がありません。"
+            "表示対象の bool・float 系・enum 属性がありません。"
             if names
             else "Maya ノードを選択すると、入力可能な種類の属性を表示します。"
         )
@@ -303,4 +329,6 @@ class ChannelEditorWidget(qt.QWidget):
         self.context_menu.close()
         for widget in self.row_widgets:
             widget.context_menu.close()
+            if isinstance(widget.editor, EnumComboBox):
+                widget.editor.hidePopup()
         self.controller.dispose()

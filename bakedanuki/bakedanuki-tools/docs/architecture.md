@@ -105,3 +105,8 @@ reload しないようにします。
 Channel Editorを利用側から開く場合は`bd_tools.channel_editor.show()`を使います。
 別ツールの実装で必要になる属性列挙や一括編集は、Channel Editorのcontrollerを経由せず
 utilを直接利用します。画面寸法の定数はtools内部の調整箇所で、保存設定や公開APIではありません。
+
+enumも同じ責務分担です。実定義の取得と比較用の値型はutilの`read_enum_definition()`と
+`EnumDefinition`を使用します。controllerが代表と定義の一致する対象を選び、
+`MayaEnumPlugsBinding`へ渡します。混在・Undo・定義変更時の入力停止はutil、
+除外理由の表示と「表示を更新」による再選別はtoolsが担当します。

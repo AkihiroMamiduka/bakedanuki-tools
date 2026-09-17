@@ -16,13 +16,18 @@ from bd_util.maya.node.inspection import (
 from bd_util.maya.ui import (
     MayaBoolPlugsBinding,
     MayaCallbackRegistry,
+    MayaEnumPlugsBinding,
     MayaFloatPlugsBinding,
+    read_enum_definition,
     resolve_bool_plug,
+    resolve_enum_plug,
     resolve_float_plug,
 )
 from bd_util.ui import qt
 
-ChannelBinding: TypeAlias = MayaBoolPlugsBinding | MayaFloatPlugsBinding
+ChannelBinding: TypeAlias = (
+    MayaBoolPlugsBinding | MayaFloatPlugsBinding | MayaEnumPlugsBinding
+)
 
 __all__ = ["ChannelBinding", "ChannelRow", "ChannelEditorController"]
 
@@ -197,6 +202,10 @@ class ChannelEditorController(qt.QObject):
                         ],
                         parent=self,
                     )
+                elif attribute.kind == "enum":
+                    binding = self._create_enum_binding(
+                        attribute.path, targets, excluded
+                    )
                 else:
                     binding = MayaFloatPlugsBinding(
                         [
@@ -212,6 +221,21 @@ class ChannelEditorController(qt.QObject):
                 row.binding.dispose()
             raise
         return tuple(rows)
+
+    def _create_enum_binding(
+        self, path: str, targets: list[str], excluded: list[str]
+    ) -> MayaEnumPlugsBinding:
+        """代表と定義が一致するenumだけを、一括編集用Bindingへ渡す。"""
+        representative = resolve_enum_plug(targets[0], path)
+        definition = read_enum_definition(representative)
+        plugs = [representative]
+        for name in targets[1:]:
+            plug = resolve_enum_plug(name, path)
+            if definition.matches(read_enum_definition(plug)):
+                plugs.append(plug)
+            else:
+                excluded.append(f"{name}: enum定義（整数値と項目名）が異なる")
+        return MayaEnumPlugsBinding(plugs, parent=self)
 
     def _dispose_rows(self) -> None:
         """Qtの遅延削除を待たず、すべての入力とMaya監視を終了する。"""

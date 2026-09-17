@@ -72,6 +72,11 @@ class _MayaSmokeSession:
             self._undo_step_value,
             self._edit_bool,
             self._undo_bool,
+            self._inspect_enum_popup,
+            self._select_enum_item,
+            self._undo_enum,
+            self._align_enum,
+            self._undo_enum_alignment,
             self._edit_float,
             self._undo_float,
             self._drag_float,
@@ -190,6 +195,14 @@ class _MayaSmokeSession:
                 keyable=True,
             )
             cmds.setAttr(f"{node}.enabled", bool(index))
+            cmds.addAttr(
+                node,
+                longName="mode",
+                attributeType="enum",
+                enumName="Negative=-2:Off=0:Preview=5:Final=10",
+                keyable=True,
+            )
+            cmds.setAttr(f"{node}.mode", 5 if index == 0 else -2)
             self.nodes.append(node)
         cmds.select(self.nodes, replace=True)
         self.steps.append("create_isolated_scene")
@@ -204,7 +217,7 @@ class _MayaSmokeSession:
 
     def _inspect(self) -> None:
         """実Windowの描画と対応Viewの存在を確認して画像を保存する。"""
-        from bd_util.ui import BoolCheckBox, FloatSliderSpinBox
+        from bd_util.ui import BoolCheckBox, EnumComboBox, FloatSliderSpinBox
 
         window = self._require_window()
         if not window.isVisible():
@@ -213,6 +226,8 @@ class _MayaSmokeSession:
             raise AssertionError("boolのCheckBoxが見つかりません")
         if not window.findChildren(FloatSliderSpinBox):
             raise AssertionError("min/max属性のSlider Viewが見つかりません")
+        if not window.findChildren(EnumComboBox):
+            raise AssertionError("enumのComboBoxが見つかりません")
         if window.widget.scroll_area.horizontalScrollBar().maximum():
             raise AssertionError("入力欄が縮小後のWindow幅に収まりません")
         self._capture("01-multiple-selection.png")
@@ -375,6 +390,84 @@ class _MayaSmokeSession:
         cmds.undo()
         self._assert_values("enabled", (False, True))
         self.steps.append("undo_bool_once")
+
+    def _inspect_enum_popup(self) -> None:
+        """混在したenumの代表値を表示し、選択肢を開いた状態を描画する。"""
+        from maya import cmds
+
+        from bd_util.ui import EnumComboBox
+
+        view = self._row("mode").editor
+        if (
+            not isinstance(view, EnumComboBox)
+            or view.currentText() != "Preview"
+        ):
+            raise AssertionError("enumの代表項目が表示されません")
+        self._assert_values("mode", (5, -2))
+        cmds.flushUndo()
+        view.showPopup()
+        self._flush_gui()
+        if not view.view().isVisible():
+            raise AssertionError("enumの選択肢を開けません")
+        popup_path = self.output / "08-enum-popup.png"
+        if not view.view().window().grab().save(str(popup_path)):
+            raise RuntimeError("enumの選択肢画像を保存できません")
+        self.screenshots.append(str(popup_path))
+        self.steps.append("enum_popup_preserves_mixed_values")
+
+    def _select_enum_item(self) -> None:
+        """開いた選択肢をマウスで選び、飛び番の実値を一括適用する。"""
+        from bd_util.ui import EnumComboBox, qt
+
+        view = self._row("mode").editor
+        if not isinstance(view, EnumComboBox):
+            raise AssertionError("enumのComboBoxがありません")
+        popup = view.view()
+        index = view.model().index(3, 0)
+        position = popup.visualRect(index).center()
+        for event_type in (
+            qt.QEvent.Type.MouseButtonPress,
+            qt.QEvent.Type.MouseButtonRelease,
+        ):
+            self._mouse(popup.viewport(), event_type, position)
+        self._flush_gui()
+        self._assert_values("mode", (10, 10))
+        if view.currentText() != "Final":
+            raise AssertionError("選択したenum項目が表示されません")
+        self._capture("09-enum-selected.png")
+        self.steps.append("enum_popup_mouse_selection_applies_sparse_value")
+
+    def _undo_enum(self) -> None:
+        """enumの一括選択を一回のUndoで各ノードの元値へ戻す。"""
+        from maya import cmds
+
+        cmds.undo()
+        self._flush_gui()
+        self._assert_values("mode", (5, -2))
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("enum入力が一回のUndoにまとまりません")
+        self.steps.append("undo_enum_restores_mixed_values")
+
+    def _align_enum(self) -> None:
+        """属性メニューから、enumの代表項目へ明示的に揃える。"""
+        from bd_util.ui import qt
+
+        row = self._row("mode")
+        self._open_context_menu(row.name_label)
+        row.context_menu.setActiveAction(row.align_action)
+        self._key(row.context_menu, qt.Qt.Key.Key_Return)
+        self._flush_gui()
+        self._assert_values("mode", (5, 5))
+        self.steps.append("enum_context_alignment")
+
+    def _undo_enum_alignment(self) -> None:
+        """enumの揃える操作をUndoし、後続の検証へ元値を引き継ぐ。"""
+        from maya import cmds
+
+        cmds.undo()
+        self._flush_gui()
+        self._assert_values("mode", (5, -2))
+        self.steps.append("undo_enum_alignment")
 
     def _edit_float(self) -> None:
         """SpinBoxへ文字を入力して複数ノードの数値を確定する。"""

@@ -1,12 +1,13 @@
 # Channel Editor
 
-選択ノードの値入力を支援する、bool・float 系属性のエディタです。
+選択ノードの値入力を支援する、bool・float 系・enum属性のエディタです。
 
 ## 開発状態
 
 2026-09-16に、bool・float系の複数選択編集、step操作、表示整理、Mayaへのドッキングまでの
 初回開発を完了し、利用者による動作確認を終えました。今回の範囲に追加必須の機能はありません。
-enum対応などは、実用途で必要になった時点で着手する[今後の候補](roadmap.md#channel-editorの拡張候補)です。
+2026-09-17にenumのComboBox入力を追加しました。その他の拡張は
+[今後の候補](roadmap.md#channel-editorの拡張候補)を参照してください。
 
 ## 起動と終了
 
@@ -24,6 +25,7 @@ channel_editor.close()
 本変更に対応した `bakedanuki-util` と組み合わせて使用してください。
 
 利用するutilには、複数属性用の`MayaBoolPlugsBinding` / `MayaFloatPlugsBinding`、
+`MayaEnumPlugsBinding`、`EnumComboBox`、`read_enum_definition()`、enum対応の属性列挙、
 属性列挙・選択取得、`BoolCheckBox`、`FloatValueStepSpinBox`の幅指定、
 `FloatSliderSpinBox.layout_order`、ドッキングとreloadの基盤が必要です。
 toolsとutilを配布するときは、組み合わせて動作確認した版を使用してください。
@@ -58,8 +60,8 @@ MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中�
 - 基準nodeで `keyable OR channelBox` がTrueの対応scalarを、属性順で表示します。
   XYZは子ごとに表示し、compound親の表示フラグでは子を除外しません。
   標準Channel Boxの表示順への同期は行わず、ノード内部の属性順を維持します。
-- bool、float/double、距離、角度に対応します。boolのcompound子も対象です。
-  整数、enum、time、文字列、配列とその配下、compound全体は対象外です。
+- bool、float/double、距離、角度、enumに対応します。bool・enumのcompound子も対象です。
+  整数、time、文字列、配列とその配下、compound全体は対象外です。
 - 同じ正式属性pathと型・単位種別の属性へ絶対値を一括入力します。
   距離と角度は同名でも対応付けません。編集対象数、対応しないnodeや編集不可の理由は
   属性名と入力Viewのtooltipへ表示します。属性のないnodeへ属性を追加することはありません。
@@ -76,6 +78,24 @@ MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中�
 boolはutilの`BoolCheckBox`を使い、属性名のすぐ右、数値入力列の左端にチェックを表示します。
 チェックまたはSpaceキーで切り替えると、対応する編集可能なノードへ一括適用します。
 boolが混在していてもチェックは基準ノードのTrue / Falseを表示し、三状態表示にはしません。
+
+enumはutilの`EnumComboBox`で項目名を表示します。入力列全体の156 pxを使い、
+Step／Sliderは表示しません。標準属性（rotateOrderなど）も追加属性も同じ扱いですが、
+基準属性の`keyable OR channelBox`がFalseなら表示しません。
+負数・飛び番を扱い、ComboBoxの位置ではなく定義の整数値を入力します。
+tooltipには省略されていない基準の項目名と実整数も表示します。
+
+enumの編集対象は、正式属性pathと型に加えて**整数値と項目名の対応**が一致するノードです。
+定義の表示順だけの違いは許容します。初期表示・選択変更・表示更新時に不一致の対象を
+除外し、tooltipへ理由を表示します。項目名による値の変換や定義の書き換えは行いません。
+Bindingへ登録した対象の定義が使用中に不一致になると、その行の入力を停止します。
+定義が揃えば再開し、「表示を更新」では除外した対象も含めて組み合わせを再判定します。
+除外済みの対象を定義修正後に戻す場合も「表示を更新」を使用してください。
+
+現在値が選択肢に含まれない場合は`未定義 (5)`などと表示し、値を自動修正しません。
+有効な項目への変更は可能ですが、「この値に揃える」は無効になります。
+選択肢が空なら入力も無効です。ComboBoxで同じ項目を選び直すだけでは書き込まず、
+混在した値を表示中の項目へ揃える場合は属性名の「この値に揃える」を使います。
 
 値が異なる場合、基準の値を表示したまま属性名の左へ小さな `•` を添えます。
 印の意味と対象の詳細はtooltipで確認できます。
@@ -134,7 +154,7 @@ sceneへstepを保存しません。
 基準が編集不可なら行全体の値入力を止めます。基準以外の編集不可属性は除外し、
 残る編集可能な対応属性へ適用します。tooltipの編集対象数はその適用対象数です。
 
-一回の数値確定・bool変更は一回のUndoで戻ります。Sliderドラッグは、全対象を含めて
+一回の数値確定・bool変更・enum項目変更は一回のUndoで戻ります。Sliderドラッグは、全対象を含めて
 一回のUndoへまとめます。Undoでは混在していた各ノードの元値が戻ります。
 途中の書込み失敗は同じ操作内で復旧し、復旧にも失敗した場合は両方の理由を報告します。
 
@@ -144,7 +164,7 @@ sceneへstepを保存しません。
 構成を再取得します。通常の値変更では全行を作り直さず、Bindingで表示を同期します。
 選択が変わると古いBindingと連続編集を終了してから、新しい対象へ接続します。
 タイトルバーのclose、`close()`、`dispose()`、tools reloadでもcallbackと入力を終了します。
-選択変更による行の再構築とWindow終了では、開いている属性メニューも閉じます。
+選択変更による行の再構築とWindow終了では、開いている属性メニューとenumの選択肢も閉じます。
 
 ```python
 import bd_tools
@@ -201,12 +221,14 @@ Sliderあり／なし、最小幅／拡大時、ドック／floatingで表示を
 
 `tests/maya/test_channel_editor.py` は、選択時の無書込み、外部変更の非伝播、
 View選択、混在編集、除外対象、範囲違い、Undo、構成変更を検証します。
+`tests/maya/test_channel_editor_enum.py`は、enumの飛び番・定義不一致の除外、使用中の
+定義変更、未定義値、ロック・接続、混在、Undo／Redo、選択肢の終了を検証します。
 `tests/maya/test_channel_editor_dock.py` は、batchで扱えないworkspaceの画面境界を置換し、
 公開show / restore / close / reset、Window重複防止、監視解除とreloadを検証します。
 公開入口の型は `tests/typecheck/channel_editor_contract.py` で固定します。
 対応Maya全versionでruntime testを行い、本体の操作確認は開発用smoke scriptを利用します。
 
-実装完了時の最終確認結果（2026-09-16）です。対象のtoolsは`bed114f`、utilは`e8e996dc`です。
+初回開発完了時の確認結果（2026-09-16）です。対象のtoolsは`bed114f`、utilは`e8e996dc`です。
 
 | 確認対象 | 結果 |
 | --- | --- |
@@ -223,3 +245,19 @@ UIを配布する前には、利用するMaya versionと画面倍率・フォン
 大量選択時の性能は、既存runnerの計測を使って必要に応じて再評価します。
 実行コマンド、独立したMaya起動環境、操作内容、画像と計測結果の保存先は
 [Maya本体検証の手順](testing.md#channel-editorのmaya本体検証)を参照してください。
+
+### enum追加時の確認（2026-09-17）
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsの`check.cmd -IncludeMaya` | Black・Pyright・unit 8件・Maya 2025 runtime 49件が成功 |
+| Maya 2026 / 2027のtools runtime test | 各49件成功 |
+| utilの`verify.cmd` | 成功。3 versionの型・Qt/UI互換性を含む |
+| utilのMaya 2025 full pytest | 4,176 passed / 690 skipped。Qt/UI専用processで790件、Maya UI専用processで309件を各versionで別途検証 |
+| Maya 2025本体の操作 | 29工程成功。enumの選択肢表示・マウス入力・飛び番・代表値へ揃える操作・Undoを含む |
+| Maya 2025本体の終了 | 既知の終了待ちタイムアウトが再現。操作結果は成功、runnerの終了codeは1 |
+
+offscreenで発生していた最小幅の配置testの失敗は、Qtのフォント一覧が空だったためです。
+test環境でSegoe UIを読み込む対応により、enumも含めて280 / 360 / 520 pxの配置検証が成功しました。
+製品のフォント・幅設定は変更していません。Maya 2025本体の保存画像でもComboBoxと選択肢を確認しました。
+Maya 2026 / 2027本体での手動操作は今回実施していません。

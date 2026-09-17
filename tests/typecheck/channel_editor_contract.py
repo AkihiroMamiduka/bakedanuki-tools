@@ -5,6 +5,7 @@ from typing import assert_type
 
 from bd_util.ui import (
     BoolCheckBox,
+    EnumComboBox,
     FloatSliderSpinBox,
     FloatValueStepSpinBox,
     qt,
@@ -17,7 +18,7 @@ assert_type(channel_editor.show(), channel_editor.ChannelEditorWindow)
 assert_type(channel_editor.show().widget, ChannelEditorWidget)
 assert_type(
     channel_editor.show().widget.row_widgets[0].editor,
-    BoolCheckBox | FloatSliderSpinBox | FloatValueStepSpinBox,
+    BoolCheckBox | EnumComboBox | FloatSliderSpinBox | FloatValueStepSpinBox,
 )
 assert_type(channel_editor.dispose(), None)
 assert_type(channel_editor.close(), None)
