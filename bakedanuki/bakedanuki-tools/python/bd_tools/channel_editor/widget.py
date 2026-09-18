@@ -416,6 +416,20 @@ class ChannelEditorWidget(qt.QWidget):
         self.mode_combo.addItem("値編集", "values")
         self.mode_combo.addItem("表示・ロック", "states")
         self.mode_combo.setAccessibleName("表示モード")
+        self.filter_combo = qt.QComboBox(self)
+        for label, value in (
+            ("全て", "all"),
+            ("keyable + channelbox", "visible"),
+            ("keyable", "keyable"),
+            ("channelbox", "channel_box"),
+            ("hide", "hidden"),
+        ):
+            self.filter_combo.addItem(label, value)
+        self.filter_combo.setAccessibleName("属性の表示フィルター")
+        self.filter_combo.setToolTip(
+            "先頭の選択ノードの表示状態で絞り込みます。\n"
+            "channelboxは非keyableでChannel Boxに表示する属性です。"
+        )
         self.header_label = qt.QLabel("ノードを選択してください", self)
         self.header_label.setTextInteractionFlags(
             qt.Qt.TextInteractionFlag.TextSelectableByMouse
@@ -434,9 +448,9 @@ class ChannelEditorWidget(qt.QWidget):
         self.scroll_area = qt.QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(qt.QFrame.Shape.NoFrame)
-        # 行数による縦スクロールバーの出入りで名前列の幅を変えない
+        # 内容が収まるときは縦スクロールバーの領域を名前列へ戻す
         self.scroll_area.setVerticalScrollBarPolicy(
-            qt.Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+            qt.Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
         self._contents = qt.QWidget(self.scroll_area)
         self._rows_layout = qt.QVBoxLayout(self._contents)
@@ -450,6 +464,7 @@ class ChannelEditorWidget(qt.QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
         layout.addWidget(self.mode_combo)
+        layout.addWidget(self.filter_combo)
         layout.addWidget(self.header_label)
         layout.addWidget(self.empty_label)
         layout.addWidget(self.scroll_area, 1)
@@ -460,25 +475,35 @@ class ChannelEditorWidget(qt.QWidget):
         self.controller.rows_changed.connect(self._rebuild_rows)
         self.controller.error_occurred.connect(self._show_error)
         self.controller.mode_changed.connect(self._sync_mode)
+        self.controller.filter_changed.connect(self._sync_filter)
         self.mode_combo.currentIndexChanged.connect(self._change_mode)
+        self.filter_combo.currentIndexChanged.connect(self._change_filter)
+        self._sync_filter()
         self.controller.refresh()
 
     def _change_mode(self, index: int) -> None:
         """編集中の値を通常のフォーカス移動で確定してから表示を切り替える。"""
+        self._prepare_view_change()
+        self.controller.set_mode("states" if index == 1 else "values")
+
+    def _change_filter(self, index: int) -> None:
+        """編集中の値を確定し、現在のモードのフィルターを切り替える。"""
+        value = self.filter_combo.itemData(index)
+        if value in ("all", "visible", "keyable", "channel_box", "hidden"):
+            self._prepare_view_change()
+            self.controller.set_attribute_filter(value)
+
+    def _prepare_view_change(self) -> None:
+        """行の入力を確定し、再構築前のスクロール位置を保持する。"""
         focus_widget = cast(
             Callable[[], qt.QWidget | None],
             getattr(qt.QApplication, "focusWidget"),
         )
         focused = focus_widget()
-        if (
-            focused is not None
-            and focused is not self.mode_combo
-            and self.isAncestorOf(focused)
-        ):
+        if focused is not None and self._contents.isAncestorOf(focused):
             focused.clearFocus()
         self._remember_scroll_anchor()
         self.message_label.hide()
-        self.controller.set_mode("states" if index == 1 else "values")
 
     def _sync_mode(self) -> None:
         """controllerからのモード変更を属性へ入力せず表示へ反映する。"""
@@ -489,6 +514,16 @@ class ChannelEditorWidget(qt.QWidget):
             )
         finally:
             self.mode_combo.blockSignals(blocked)
+
+    def _sync_filter(self) -> None:
+        """モードごとのフィルター選択を再入力せずComboBoxへ反映する。"""
+        blocked = self.filter_combo.blockSignals(True)
+        try:
+            self.filter_combo.setCurrentIndex(
+                self.filter_combo.findData(self.controller.attribute_filter)
+            )
+        finally:
+            self.filter_combo.blockSignals(blocked)
 
     def _remember_scroll_anchor(self) -> None:
         """表示先頭の属性pathを記録して、設定行の増減後も位置を保つ。"""
@@ -577,11 +612,11 @@ class ChannelEditorWidget(qt.QWidget):
             self.controller.dispose()
             raise
         self.row_widgets = tuple(widgets)
-        # 文字数に応じた最小幅を要求せず、両モードで同じ入力列を維持する
+        # 行の配置が確定してから、残っている属性のスクロール位置を復元する
         self._scroll_timer.start(0)
         self.empty_label.setVisible(not widgets)
         self.empty_label.setText(
-            "表示対象の bool・float 系・enum 属性がありません。"
+            "フィルターに一致する bool・float 系・enum 属性がありません。"
             if names
             else "Maya ノードを選択すると、入力可能な種類の属性を表示します。"
         )

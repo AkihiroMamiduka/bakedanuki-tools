@@ -12,7 +12,11 @@ from bd_util.ui import (
 )
 
 from bd_tools import channel_editor
-from bd_tools.channel_editor.controller import ChannelRow, ChannelStateRow
+from bd_tools.channel_editor.controller import (
+    ChannelAttributeFilter,
+    ChannelRow,
+    ChannelStateRow,
+)
 from bd_tools.channel_editor.widget import (
     AttributeRowWidget,
     AttributeStateRowWidget,
@@ -45,6 +49,15 @@ assert_type(channel_editor.reset_layout(), channel_editor.ChannelEditorWindow)
 assert_type(channel_editor.WORKSPACE_CONTROL_NAME, str)
 assert_type(channel_editor.show().widget.refresh_action, qt.QAction)
 assert_type(channel_editor.show().widget.mode_combo, qt.QComboBox)
+assert_type(channel_editor.show().widget.filter_combo, qt.QComboBox)
+assert_type(
+    channel_editor.show().widget.controller.attribute_filter,
+    ChannelAttributeFilter,
+)
+assert_type(
+    channel_editor.show().widget.controller.set_attribute_filter("hidden"),
+    None,
+)
 assert_type(
     channel_editor.show().widget.controller.mode, Literal["values", "states"]
 )

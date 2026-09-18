@@ -12,6 +12,10 @@ from maya import cmds
 from bd_util.maya.ui import MayaFloatPlugsBinding
 from bd_util.ui import FloatValueStepSpinBox, qt
 
+from bd_tools.channel_editor.controller import (
+    ChannelAttributeFilter,
+    ChannelEditorMode,
+)
 from bd_tools.channel_editor.widget import (
     AttributeRowWidget,
     AttributeStateRowWidget,
@@ -92,6 +96,17 @@ def _choose_display(
     _events()
 
 
+def _filter(
+    editor: ChannelEditorWidget, value: ChannelAttributeFilter
+) -> None:
+    """フィルターComboBoxを操作し、絞り込み後の行へ進める。"""
+    index = editor.filter_combo.findData(value)
+    assert index >= 0
+    editor.filter_combo.setCurrentIndex(index)
+    _events()
+    assert editor.controller.attribute_filter == value
+
+
 @pytest.fixture
 def state_editor(
     qt_application: qt.QApplication,
@@ -169,9 +184,9 @@ def test_mode_switch_only_reads_and_preserves_value_step(
 def test_mode_switch_preserves_width_with_long_hidden_name(
     state_editor: ChannelEditorWidget, width: int
 ) -> None:
-    """長いHide属性が増えても、Window幅と共通行の名前列・入力列を維持する。"""
+    """長いHide属性でも入力欄を維持し、必要な場合だけ縦スクロールする。"""
     editor = state_editor
-    editor.resize(width, 360)
+    editor.resize(width, 600)
     _events()
     value_row = _value_row(editor)
     before = (
@@ -179,21 +194,262 @@ def test_mode_switch_preserves_width_with_long_hidden_name(
         value_row.name_label.width(),
         value_row.editor.x(),
     )
+    assert not editor.scroll_area.verticalScrollBar().isVisible()
     _states(editor)
     row = _state_row(editor)
-    assert (editor.width(), row.name_label.width(), row.editor.x()) == before
+    assert editor.width() == before[0]
+    assert editor.scroll_area.verticalScrollBar().isVisible()
+    assert row.name_label.width() < before[1]
+    assert row.editor.x() < before[2]
     assert editor.scroll_area.horizontalScrollBar().maximum() == 0
     for current in editor.row_widgets:
         assert isinstance(current, AttributeStateRowWidget)
         assert current.editor.width() == 156
         assert current.editor.x() + current.editor.width() == current.width()
     _values(editor)
+    assert not editor.scroll_area.verticalScrollBar().isVisible()
     restored = _value_row(editor)
     assert (
         editor.width(),
         restored.name_label.width(),
         restored.editor.x(),
     ) == before
+
+
+@pytest.mark.parametrize("mode", ["values", "states"])
+@pytest.mark.parametrize(
+    ("selected", "expected"),
+    [
+        ("all", {"weight", "mode", "hiddenValue", "longHiddenValue"}),
+        ("visible", {"weight", "mode"}),
+        ("keyable", {"weight"}),
+        ("channel_box", {"mode"}),
+        ("hidden", {"hiddenValue", "longHiddenValue"}),
+    ],
+)
+def test_five_filters_in_both_modes_only_read_representative_state(
+    state_editor: ChannelEditorWidget,
+    mode: ChannelEditorMode,
+    selected: ChannelAttributeFilter,
+    expected: set[str],
+) -> None:
+    """両モードの五種類の絞り込みは、基準属性だけで判定してsceneを変えない。"""
+    editor = state_editor
+    cmds.setAttr("stateA.mode", keyable=False)
+    cmds.setAttr("stateA.mode", channelBox=True)
+    _events()
+    editor.controller.set_mode(mode)
+    attributes = ("weight", "mode", "hiddenValue", "longHiddenValue")
+    before = {
+        f"{node}.{name}": _flags(f"{node}.{name}")
+        for node in _NODES
+        for name in attributes
+    }
+    cmds.flushUndo()
+    _filter(editor, selected)
+    assert _row_names(editor).intersection(attributes) == expected
+    assert {path: _flags(path) for path in before} == before
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_filters_remember_each_mode_through_refresh_and_selection(
+    state_editor: ChannelEditorWidget,
+) -> None:
+    """初期値を維持しつつ、各モードの最終フィルターをWindow内だけに保持する。"""
+    editor = state_editor
+    assert editor.filter_combo.currentData() == "visible"
+    _filter(editor, "keyable")
+    _states(editor)
+    assert editor.filter_combo.currentData() == "all"
+    _filter(editor, "hidden")
+    _values(editor)
+    assert editor.filter_combo.currentData() == "keyable"
+    _states(editor)
+    assert editor.filter_combo.currentData() == "hidden"
+    editor.refresh()
+    cmds.select("stateB", replace=True)
+    _events()
+    assert editor.controller.attribute_filter == "hidden"
+    assert editor.filter_combo.currentData() == "hidden"
+    fresh = ChannelEditorWidget()
+    try:
+        assert fresh.controller.attribute_filter == "visible"
+        fresh.controller.set_mode("states")
+        assert fresh.controller.attribute_filter == "all"
+    finally:
+        fresh.dispose()
+        fresh.deleteLater()
+        _events()
+
+
+def test_filtered_display_edit_completes_all_targets_before_row_removal(
+    state_editor: ChannelEditorWidget,
+) -> None:
+    """状態の一括変更完了後に行を外し、UndoとRedoで該当行が出入りする。"""
+    editor = state_editor
+    _states(editor)
+    _filter(editor, "keyable")
+    binding = _state_row(editor).row.state_binding
+    binding.set_display_state("hidden")
+    assert not binding.is_disposed
+    assert [_flags(name + ".weight") for name in _NODES] == [
+        (False, False, False),
+        (False, False, False),
+    ]
+    _events()
+    assert binding.is_disposed
+    assert "weight" not in _row_names(editor)
+    cmds.undo()
+    _events()
+    assert "weight" in _row_names(editor)
+    assert all(_flags(name + ".weight")[0] for name in _NODES)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    cmds.redo()
+    _events()
+    assert "weight" not in _row_names(editor)
+    _filter(editor, "all")
+    assert _state_row(editor).display_combo.currentData() == "hidden"
+
+
+@pytest.mark.parametrize("mode", ["values", "states"])
+def test_external_channel_box_flag_updates_filter_without_propagation(
+    state_editor: ChannelEditorWidget, mode: ChannelEditorMode
+) -> None:
+    """keyableを変えない外部ChannelBox操作にも追従し、他ノードへ転送しない。"""
+    editor = state_editor
+    editor.controller.set_mode(mode)
+    _filter(editor, "channel_box")
+    assert "hiddenValue" not in _row_names(editor)
+    cmds.setAttr("stateB.hiddenValue", channelBox=True)
+    _events()
+    assert "hiddenValue" not in _row_names(editor)
+    cmds.setAttr("stateA.hiddenValue", channelBox=True)
+    _events()
+    assert "hiddenValue" in _row_names(editor)
+    cmds.setAttr("stateA.hiddenValue", channelBox=False)
+    _events()
+    assert "hiddenValue" not in _row_names(editor)
+    assert _flags("stateB.hiddenValue") == (False, True, False)
+
+
+def test_hidden_value_edit_preserves_flags_and_respects_lock_and_connection(
+    state_editor: ChannelEditorWidget,
+) -> None:
+    """Hide属性も一括で値編集でき、lockと入力接続による操作制限を維持する。"""
+    editor = state_editor
+    _filter(editor, "hidden")
+    binding = _value_row(editor, "hiddenValue").row.binding
+    assert isinstance(binding, MayaFloatPlugsBinding)
+    binding.set_value(0.5)
+    _events()
+    assert [cmds.getAttr(n + ".hiddenValue") for n in _NODES] == [0.5, 0.5]
+    assert [_flags(n + ".hiddenValue") for n in _NODES] == [
+        (False, False, False),
+        (False, False, False),
+    ]
+    cmds.undo()
+    _events()
+    assert [cmds.getAttr(n + ".hiddenValue") for n in _NODES] == [0, 0]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    cmds.setAttr("stateA.hiddenValue", lock=True)
+    _events()
+    assert not _value_row(
+        editor, "hiddenValue"
+    ).row.binding.view_model.set_value_command.can_execute
+    cmds.setAttr("stateA.hiddenValue", lock=False)
+    cmds.connectAttr("stateA.weight", "stateA.hiddenValue")
+    _events()
+    assert not _value_row(
+        editor, "hiddenValue"
+    ).row.binding.view_model.set_value_command.can_execute
+
+
+def test_filter_switch_finishes_drag_and_preserves_step(
+    state_editor: ChannelEditorWidget,
+) -> None:
+    """絞り込みで連続編集のUndoを閉じ、非表示にした値行のstepを維持する。"""
+    editor = state_editor
+    step = _value_row(editor, "translateX").editor
+    assert isinstance(step, FloatValueStepSpinBox)
+    step.setSingleStep(0.01)
+    binding = _value_row(editor).row.binding
+    assert isinstance(binding, MayaFloatPlugsBinding)
+    assert binding.view_model.begin_edit(qt.QObject(editor))
+    binding.set_value(0.4)
+    binding.set_value(0.6)
+    _filter(editor, "hidden")
+    assert binding.is_disposed
+    hidden_binding = _value_row(editor, "hiddenValue").row.binding
+    assert isinstance(hidden_binding, MayaFloatPlugsBinding)
+    hidden_binding.set_value(0.5)
+    cmds.undo()
+    _events()
+    assert [cmds.getAttr(n + ".hiddenValue") for n in _NODES] == [0, 0]
+    assert [cmds.getAttr(n + ".weight") for n in _NODES] == [0.6, 0.6]
+    cmds.undo()
+    _events()
+    assert [cmds.getAttr(n + ".weight") for n in _NODES] == [0.25, 0.75]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    _filter(editor, "visible")
+    restored = _value_row(editor, "translateX").editor
+    assert isinstance(restored, FloatValueStepSpinBox)
+    assert restored.singleStep() == 0.01
+
+
+def test_filter_combo_keeps_keyboard_focus_and_empty_filter_is_recoverable(
+    state_editor: ChannelEditorWidget,
+) -> None:
+    """上下キーで空の絞り込みからも戻れ、フォーカスと表示操作だけを維持する。"""
+    editor = state_editor
+    _filter(editor, "keyable")
+    combo = editor.filter_combo
+    combo.setFocus()
+    _events()
+    for key, expected in (
+        (qt.Qt.Key.Key_Down, "channel_box"),
+        (qt.Qt.Key.Key_Up, "keyable"),
+    ):
+        qt.QApplication.sendEvent(
+            combo,
+            qt.QtGui.QKeyEvent(
+                qt.QEvent.Type.KeyPress,
+                key,
+                qt.Qt.KeyboardModifier.NoModifier,
+            ),
+        )
+        _events()
+        assert editor.controller.attribute_filter == expected
+        assert combo.hasFocus()
+        assert editor.empty_label.isVisible() == (expected == "channel_box")
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_filter_switch_commits_pending_numeric_text_as_value_edit(
+    state_editor: ChannelEditorWidget,
+) -> None:
+    """数値の未確定文字をフィルター変更時に確定し、一回のUndoで戻す。"""
+    view = _value_row(state_editor, "translateX").editor
+    assert isinstance(view, FloatValueStepSpinBox)
+    spin = view.spin_box
+    spin.setFocus()
+    spin.selectAll()
+    _events()
+    qt.QApplication.sendEvent(
+        spin,
+        qt.QtGui.QKeyEvent(
+            qt.QEvent.Type.KeyPress,
+            qt.Qt.Key.Key_4,
+            qt.Qt.KeyboardModifier.NoModifier,
+            "4",
+        ),
+    )
+    assert [cmds.getAttr(n + ".tx") for n in _NODES] == [0, 0]
+    _filter(state_editor, "hidden")
+    assert [cmds.getAttr(n + ".tx") for n in _NODES] == [4, 4]
+    cmds.undo()
+    _events()
+    assert [cmds.getAttr(n + ".tx") for n in _NODES] == [0, 0]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_hidden_attribute_can_be_restored_and_hidden_row_stays_available(

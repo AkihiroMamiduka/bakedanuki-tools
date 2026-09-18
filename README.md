@@ -92,7 +92,9 @@ enumはComboBoxで項目名を表示し、整数値と項目名の対応が一�
 
 上部ComboBoxで「表示・ロック」へ切り替えると、属性名の右側を状態設定へ置き換えます。
 非表示の属性も列挙し、Keyable／ChannelBox／HideとLock／Unlockを独立して一括変更できます。
-モード切替で横幅と列位置を変えず、値編集のstep設定も維持します。
+その下のComboBoxで全て／keyable + channelbox／keyable／channelbox／hideを選び、
+両モードの表示対象を絞り込めます。フィルター選択はモードごとにWindow内で保持します。
+縦スクロールバーは必要時だけ表示し、値編集のstep設定も維持します。
 状態の混在表示とMaya標準Undo／Redoへ対応します。
 
 対応する `bakedanuki-util` の値・状態の複数対象Binding、属性列挙、複合View、ドッキング基盤が必要です。

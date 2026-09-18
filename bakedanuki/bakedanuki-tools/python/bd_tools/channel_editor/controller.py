@@ -31,10 +31,14 @@ ChannelBinding: TypeAlias = (
     MayaBoolPlugsBinding | MayaFloatPlugsBinding | MayaEnumPlugsBinding
 )
 ChannelEditorMode: TypeAlias = Literal["values", "states"]
+ChannelAttributeFilter: TypeAlias = Literal[
+    "all", "visible", "keyable", "channel_box", "hidden"
+]
 
 __all__ = [
     "ChannelBinding",
     "ChannelEditorMode",
+    "ChannelAttributeFilter",
     "ChannelRow",
     "ChannelStateRow",
     "ChannelEditorController",
@@ -65,6 +69,7 @@ class ChannelEditorController(qt.QObject):
     rows_changed = qt.Signal()
     error_occurred = qt.Signal(str)
     mode_changed = qt.Signal()
+    filter_changed = qt.Signal()
 
     def __init__(self, parent: qt.QObject) -> None:
         """表示用状態と、Windowと同じ寿命の監視を初期化する。"""
@@ -72,6 +77,10 @@ class ChannelEditorController(qt.QObject):
         self.rows: tuple[ChannelRow | ChannelStateRow, ...] = ()
         self.node_names: tuple[str, ...] = ()
         self._mode: ChannelEditorMode = "values"
+        self._filters: dict[ChannelEditorMode, ChannelAttributeFilter] = {
+            "values": "visible",
+            "states": "all",
+        }
         self._disposed = False
         self._events = MayaCallbackRegistry(self)
         self._nodes = MayaCallbackRegistry(self)
@@ -123,14 +132,35 @@ class ChannelEditorController(qt.QObject):
             raise ValueError("modeにはvaluesまたはstatesを指定してください")
         if self._disposed or mode == self._mode:
             return
+        self._finish_value_edit()
+        self._mode = mode
+        self.mode_changed.emit()
+        self.filter_changed.emit()
+        self.refresh()
+
+    @property
+    def attribute_filter(self) -> ChannelAttributeFilter:
+        """現在のモードに保持している属性フィルターを返す。"""
+        return self._filters[self._mode]
+
+    def set_attribute_filter(self, value: ChannelAttributeFilter) -> None:
+        """連続編集を終了し、sceneを変更せず表示対象を絞り込む。"""
+        if value not in ("all", "visible", "keyable", "channel_box", "hidden"):
+            raise ValueError("未対応の属性フィルターです")
+        if self._disposed or value == self.attribute_filter:
+            return
+        self._finish_value_edit()
+        self._filters[self._mode] = value
+        self.filter_changed.emit()
+        self.refresh()
+
+    def _finish_value_edit(self) -> None:
+        """行を切り替える前に、値の連続編集とUndoのまとまりを閉じる。"""
         for row in self.rows:
             if isinstance(row, ChannelRow) and isinstance(
                 row.binding, MayaFloatPlugsBinding
             ):
                 row.binding.view_model.end_edit()
-        self._mode = mode
-        self.mode_changed.emit()
-        self.refresh()
 
     @property
     def is_disposed(self) -> bool:
@@ -160,6 +190,8 @@ class ChannelEditorController(qt.QObject):
         *_args: object,
     ) -> None:
         """属性構成と表示フラグの変化をまとめて確認する。"""
+        if self._disposed:
+            return
         structural = (
             om.MNodeMessage.kAttributeAdded
             | om.MNodeMessage.kAttributeRemoved
@@ -167,11 +199,12 @@ class ChannelEditorController(qt.QObject):
         )
         if message & structural:
             self._queue_rebuild()
-        elif self._mode == "values" and message & (
+        elif self.attribute_filter != "all" and message & (
             om.MNodeMessage.kAttributeKeyable
             | om.MNodeMessage.kAttributeUnkeyable
         ):
-            self._queue_rebuild()
+            # 複数対象への状態書込み中はBindingを破棄せず、操作完了後に絞り込む
+            self._timer.start(0)
 
     def _watch_nodes(self) -> None:
         """現在の選択ノードだけに名前・属性構成の監視を登録する。"""
@@ -217,16 +250,14 @@ class ChannelEditorController(qt.QObject):
     def _create_rows(
         self, attributes: tuple[tuple[ScalarAttributeInfo, ...], ...]
     ) -> tuple[ChannelRow | ChannelStateRow, ...]:
-        """モードの表示対象と、各ノードの同名・同種属性を対応付ける。"""
+        """基準ノードを絞り込み、各ノードの同名・同種属性を対応付ける。"""
         if not attributes:
             return ()
         lookup = tuple({a.path: a for a in items} for items in attributes)
         rows: list[ChannelRow | ChannelStateRow] = []
         try:
             for attribute in attributes[0]:
-                if self._mode == "values" and not (
-                    attribute.keyable or attribute.channel_box
-                ):
+                if not self._matches_filter(attribute):
                     continue
                 targets: list[str] = []
                 excluded: list[str] = []
@@ -281,6 +312,19 @@ class ChannelEditorController(qt.QObject):
                 self._dispose_row(row)
             raise
         return tuple(rows)
+
+    def _matches_filter(self, attribute: ScalarAttributeInfo) -> bool:
+        """Keyableを優先する三状態分類で、基準属性の表示可否を返す。"""
+        selected = self.attribute_filter
+        if selected == "all":
+            return True
+        if selected == "visible":
+            return attribute.keyable or attribute.channel_box
+        if selected == "keyable":
+            return attribute.keyable
+        if selected == "channel_box":
+            return not attribute.keyable and attribute.channel_box
+        return not attribute.keyable and not attribute.channel_box
 
     @staticmethod
     def _resolve_state_plug(

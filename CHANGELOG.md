@@ -9,6 +9,9 @@
 
 ### Changed
 
+- Channel Editorの縦スクロールバーを必要時だけ表示する。モードやフィルターにより
+  名前列の幅・入力列の位置が変わることを許容し、入力グループの156 pxは維持する。
+  scene・保存設定の移行は不要。
 - Channel Editorのbool入力をutilの`BoolCheckBox`へ変更し、属性名のすぐ右へ左詰めにする。
   行の`editor`を直接操作するコードは`BoolComboBox`から`BoolCheckBox`へ型判定を移行し、
   `currentText()` / `setCurrentIndex()`を`isChecked()` / `setChecked()`へ置き換える。
@@ -45,9 +48,17 @@
 
 ### Added
 
+- Channel Editorへ両モード共通の表示フィルターComboBoxを追加。
+  全て／keyable + channelbox／keyable／channelbox／hideの5種類を、基準ノードで判定する。
+  channelbox単独は非keyableの表示属性を指す。値編集はkeyable + channelbox、
+  表示・ロックは全てを初期値とし、モードごとの最終選択をWindow内だけで保持する。
+  Hide属性の値入力にも対応し、従来のロック・入力接続による編集制限を維持する。
+  絞り込み中の状態変更は全対象への操作完了後に表示へ反映し、Undo／Redoにも追従する。
+  `controller.attribute_filter`、`set_attribute_filter()`、`ChannelAttributeFilter`、
+  `widget.filter_combo`を追加。scene・保存設定の移行やutilの追加変更は不要。
 - Channel Editorに「値編集／表示・ロック」の切替を追加。表示・ロックでは非表示の
   対応scalarも列挙し、Keyable／ChannelBox／HideとLock／Unlockを独立して一括操作する。
-  混在表示、外部変更、Maya標準Undo／Redoへ対応し、Hideへ変更した行も設定中は維持する。
+  混在表示、外部変更、Maya標準Undo／Redoへ対応し、全てフィルターではHideへ変更した行も維持する。
   属性定義によりkeyableとchannelBoxが両方Trueの属性は、Maya標準Undoで復元できないため
   表示変更だけを不可とし、理由をtooltipへ表示する。基準属性なら行の表示変更を停止し、
   後続の対象だけなら除外する。ロック／解除は通常どおり操作でき、自動修正や移行は行わない。

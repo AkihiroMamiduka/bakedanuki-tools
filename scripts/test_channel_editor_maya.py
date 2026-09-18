@@ -92,6 +92,7 @@ class _MayaSmokeSession:
             self._edit_lock_state,
             self._inspect_mixed_states,
             self._return_to_values,
+            self._inspect_filters,
             self._close,
             self._reopen,
             self._change_selection,
@@ -595,7 +596,7 @@ class _MayaSmokeSession:
         self.steps.append("undo_alignment_once")
 
     def _show_state_mode(self) -> None:
-        """表示モードを実UIで切り替え、無書込みと共通列の位置を確認する。"""
+        """表示モードを実UIで切り替え、無書込みと必要時のスクロールを確認する。"""
         from maya import cmds
 
         window = self._require_window()
@@ -603,6 +604,10 @@ class _MayaSmokeSession:
         self._flush_gui()
         row = self._row("enabled")
         self._value_layout = self._row_layout(row)
+        if widget.scroll_area.verticalScrollBar().isVisible():
+            raise AssertionError(
+                "値行が収まる高さでも縦スクロールバーが残ります"
+            )
         self.measurements["value_mode_rows"] = len(widget.row_widgets)
         if any(
             item.row.attribute.path == "hiddenWeight"
@@ -615,6 +620,10 @@ class _MayaSmokeSession:
         self._select_combo_item(widget.mode_combo, 1)
         state_row = self._state_row("enabled")
         self._assert_state_layout(state_row)
+        if not widget.scroll_area.verticalScrollBar().isVisible():
+            raise AssertionError(
+                "全属性の設定表示で縦スクロールバーが出ません"
+            )
         self._state_row("hiddenWeight")
         self.measurements["state_mode_rows"] = len(widget.row_widgets)
         if (
@@ -628,7 +637,7 @@ class _MayaSmokeSession:
         if not cmds.undoInfo(query=True, undoQueueEmpty=True):
             raise AssertionError("モード切替でUndo履歴が増えました")
         self._capture("11-state-mode-hidden-attributes.png")
-        self.steps.append("mode_switch_preserves_scene_and_column_widths")
+        self.steps.append("mode_switch_preserves_scene_and_scrolls_as_needed")
 
     def _edit_display_state(self) -> None:
         """非表示属性を3状態へ切り替え、行の維持とUndo/Redoを確認する。"""
@@ -793,6 +802,94 @@ class _MayaSmokeSession:
             raise AssertionError("値モードへの切替でUndo履歴が増えました")
         self._capture("14-values-after-mode-switch.png")
         self.steps.append("return_to_values_preserves_width_step_and_scene")
+
+    def _inspect_filters(self) -> None:
+        """両モードの絞り込み、選択保持と状態操作後の行の出入りを実UIで確認する。"""
+        from maya import cmds
+
+        widget = self._require_window().widget
+        custom = {"enabled", "weight", "mode", "hiddenWeight"}
+        initial = self._attribute_states("weight")
+        cmds.flushUndo()
+        for mode_index in (0, 1):
+            self._select_combo_item(widget.mode_combo, mode_index)
+            for value, expected in (
+                ("all", custom),
+                ("visible", custom - {"hiddenWeight"}),
+                ("keyable", custom - {"hiddenWeight"}),
+                ("channel_box", set()),
+                ("hidden", {"hiddenWeight"}),
+            ):
+                self._select_combo_item(
+                    widget.filter_combo, widget.filter_combo.findData(value)
+                )
+                actual = {
+                    row.row.attribute.path for row in widget.row_widgets
+                }.intersection(custom)
+                if actual != expected:
+                    raise AssertionError(
+                        f"フィルター結果が異なります: {mode_index}/{value}: {actual}"
+                    )
+                if widget.scroll_area.horizontalScrollBar().maximum():
+                    raise AssertionError(
+                        "絞り込み後に横スクロールが発生しました"
+                    )
+            if mode_index == 0:
+                self._row("hiddenWeight")
+                self._capture("15-values-hidden-filter.png")
+        self._select_combo_item(widget.mode_combo, 0)
+        if widget.filter_combo.currentData() != "hidden":
+            raise AssertionError("値モードのフィルターが保持されません")
+        self._select_combo_item(widget.mode_combo, 1)
+        if widget.filter_combo.currentData() != "hidden":
+            raise AssertionError("状態モードのフィルターが保持されません")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("フィルター切替でUndo履歴が増えました")
+        self._assert_values("hiddenWeight", (0.2, 0.6))
+        self.steps.append("five_filters_in_both_modes_and_per_mode_memory")
+
+        # 絞り込み対象から外れる操作でも、両ノードへの入力とUndoを完了する
+        self._select_combo_item(
+            widget.filter_combo, widget.filter_combo.findData("keyable")
+        )
+        if widget.scroll_area.verticalScrollBar().isVisible():
+            raise AssertionError(
+                "設定行を絞り込んでも縦スクロールバーが残ります"
+            )
+        self._capture("16-states-keyable-filter.png")
+        row = self._state_row("weight")
+        self._select_combo_item(
+            row.display_combo, row.display_combo.findData("hidden")
+        )
+        if self._attribute_states("weight") != ((False, False, False),) * 2:
+            raise AssertionError(
+                "絞り込み中の表示変更が両対象へ反映されません"
+            )
+        if any(r.row.attribute.path == "weight" for r in widget.row_widgets):
+            raise AssertionError("条件から外れた行が表示に残っています")
+        cmds.undo()
+        self._flush_gui()
+        self._state_row("weight")
+        if self._attribute_states("weight") != initial:
+            raise AssertionError("絞り込み中の表示変更をUndoできません")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("絞り込み中の表示変更が1回のUndoになりません")
+        cmds.redo()
+        self._flush_gui()
+        if any(r.row.attribute.path == "weight" for r in widget.row_widgets):
+            raise AssertionError("Redo後に行が再度絞り込まれません")
+        cmds.undo()
+        self._flush_gui()
+        self.steps.append("filtered_state_edit_removal_undo_redo")
+
+        # 後続のclose・reload確認へ既定の表示を引き継ぐ
+        self._select_combo_item(
+            widget.filter_combo, widget.filter_combo.findData("all")
+        )
+        self._select_combo_item(widget.mode_combo, 0)
+        self._select_combo_item(
+            widget.filter_combo, widget.filter_combo.findData("visible")
+        )
 
     def _close(self) -> None:
         """Maya側のclose操作からworkspaceControlごと完全破棄する。"""
@@ -1081,11 +1178,15 @@ class _MayaSmokeSession:
         )
 
     def _assert_state_layout(self, row: AttributeStateRowWidget) -> None:
-        """設定行の追加で横幅や列位置が変わらないことを確認する。"""
+        """スクロールバーによる列の移動を許容し、Windowと入力幅を維持する。"""
         actual = self._row_layout(row)
-        if actual != self._value_layout:
+        expected = self._value_layout
+        if expected is None or (actual[0], actual[3]) != (
+            expected[0],
+            expected[3],
+        ):
             raise AssertionError(
-                f"モード切替で横幅か列位置が変わりました: "
+                f"モード切替でWindow幅か入力幅が変わりました: "
                 f"{self._value_layout} -> {actual}"
             )
         if (
