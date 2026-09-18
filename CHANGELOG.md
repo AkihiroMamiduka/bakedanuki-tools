@@ -9,6 +9,11 @@
 
 ### Changed
 
+- Channel Editorの先頭10属性をvisibility、translate X/Y/Z、rotate X/Y/Z、
+  scale X/Y/Zへ変更し、残りの相対順を維持。
+  優先順を`bd_tools.channel_editor.config.ATTRIBUTE_PRIORITY_PATHS`へ分離し、
+  `config.py`のtupleを編集してtoolsを再読込みすると変更できるようにした。
+  両モード・全フィルターへ共通適用し、既存呼出し・scene・保存設定の移行は不要。
 - Channel Editorの`lock`へ左ドラッグでのなぞり操作を追加。
   開始時がOFF・混在ならロック、ONなら解除へ通過行を揃え、往復でも再反転しない。
   ラジオボタンと操作対象を分離し、一操作を一回のUndo／Redoにまとめる。

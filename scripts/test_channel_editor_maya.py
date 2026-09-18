@@ -918,12 +918,12 @@ class _MayaSmokeSession:
         expected = ["visibility"]
         for parent, children in (
             ("translate", "XYZ"),
-            ("jointOrient", "XYZ"),
             ("rotate", "XYZ"),
+            ("scale", "XYZ"),
+            ("jointOrient", "XYZ"),
             ("", ("rotateOrder",)),
             ("rotateAxis", "XYZ"),
             ("shear", ("XY", "XZ", "YZ")),
-            ("scale", "XYZ"),
             ("rotatePivot", "XYZ"),
             ("rotatePivotTranslate", "XYZ"),
             ("scalePivot", "XYZ"),

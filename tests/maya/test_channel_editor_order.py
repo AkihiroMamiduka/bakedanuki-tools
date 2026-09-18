@@ -12,6 +12,7 @@ from maya import cmds
 from bd_util.maya.node.inspection import inspect_scalar_attributes
 from bd_util.ui import qt
 
+from bd_tools.channel_editor import config
 from bd_tools.channel_editor.controller import ChannelEditorMode
 from bd_tools.channel_editor.widget import ChannelEditorWidget
 
@@ -20,12 +21,15 @@ _PRIORITY_NAMES = (
     "translateX",
     "translateY",
     "translateZ",
-    "jointOrientX",
-    "jointOrientY",
-    "jointOrientZ",
     "rotateX",
     "rotateY",
     "rotateZ",
+    "scaleX",
+    "scaleY",
+    "scaleZ",
+    "jointOrientX",
+    "jointOrientY",
+    "jointOrientZ",
     "rotateOrder",
     "rotateAxisX",
     "rotateAxisY",
@@ -33,9 +37,6 @@ _PRIORITY_NAMES = (
     "shearXY",
     "shearXZ",
     "shearYZ",
-    "scaleX",
-    "scaleY",
-    "scaleZ",
     "rotatePivotX",
     "rotatePivotY",
     "rotatePivotZ",
@@ -217,3 +218,37 @@ def test_priority_uses_full_paths_without_node_type_restriction(
     assert expected.index("drawOverrideExtra.extraEnabled") > expected.index(
         "drawOverride.earlyA"
     )
+
+
+@pytest.mark.parametrize("mode", ["values", "states"])
+def test_priority_config_is_applied_on_refresh(
+    editor: ChannelEditorWidget,
+    mode: ChannelEditorMode,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """設定で指定した属性だけを前へ移し、残りの相対順とsceneを保つ。"""
+    node = cmds.createNode("joint")
+    cmds.addAttr(node, longName="customWeight", attributeType="double")
+    cmds.select(node, replace=True)
+    editor.controller.set_mode(mode)
+    editor.controller.set_attribute_filter("all")
+    _events()
+    before = [row.row.attribute.path for row in editor.row_widgets]
+    scene_before = inspect_scalar_attributes(node)
+    cmds.flushUndo()
+
+    # 未存在・重複の指定を含めても、先頭へ移した属性以外の順序を維持する
+    promoted = ("customWeight", "scale.scaleZ")
+    monkeypatch.setattr(
+        config,
+        "ATTRIBUTE_PRIORITY_PATHS",
+        (*promoted, "missingAttribute", *config.ATTRIBUTE_PRIORITY_PATHS),
+    )
+    editor.refresh()
+    _events()
+    expected = list(promoted) + [
+        path for path in before if path not in promoted
+    ]
+    assert [row.row.attribute.path for row in editor.row_widgets] == expected
+    assert inspect_scalar_attributes(node) == scene_before
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from typing import Literal, TypeAlias
 
 from maya.api import OpenMaya as om
@@ -28,6 +29,8 @@ from bd_util.maya.ui import (
 )
 from bd_util.ui import qt
 
+from . import config
+
 ChannelBinding: TypeAlias = (
     MayaBoolPlugsBinding | MayaFloatPlugsBinding | MayaEnumPlugsBinding
 )
@@ -45,56 +48,17 @@ __all__ = [
     "ChannelEditorController",
 ]
 
-# 表示順の指定は正式な相対pathで照合し、同名の別compound子を含めない
-_PRIORITY_ATTRIBUTE_PATHS: tuple[str, ...] = (
-    "visibility",
-    "translate.translateX",
-    "translate.translateY",
-    "translate.translateZ",
-    "jointOrient.jointOrientX",
-    "jointOrient.jointOrientY",
-    "jointOrient.jointOrientZ",
-    "rotate.rotateX",
-    "rotate.rotateY",
-    "rotate.rotateZ",
-    "rotateOrder",
-    "rotateAxis.rotateAxisX",
-    "rotateAxis.rotateAxisY",
-    "rotateAxis.rotateAxisZ",
-    "shear.shearXY",
-    "shear.shearXZ",
-    "shear.shearYZ",
-    "scale.scaleX",
-    "scale.scaleY",
-    "scale.scaleZ",
-    "rotatePivot.rotatePivotX",
-    "rotatePivot.rotatePivotY",
-    "rotatePivot.rotatePivotZ",
-    "rotatePivotTranslate.rotatePivotTranslateX",
-    "rotatePivotTranslate.rotatePivotTranslateY",
-    "rotatePivotTranslate.rotatePivotTranslateZ",
-    "scalePivot.scalePivotX",
-    "scalePivot.scalePivotY",
-    "scalePivot.scalePivotZ",
-    "scalePivotTranslate.scalePivotTranslateX",
-    "scalePivotTranslate.scalePivotTranslateY",
-    "scalePivotTranslate.scalePivotTranslateZ",
-    # drawOverride配下では有効化属性を先頭へ配置する
-    "drawOverride.overrideEnabled",
-)
-_ATTRIBUTE_PRIORITIES = {
-    path: index for index, path in enumerate(_PRIORITY_ATTRIBUTE_PATHS)
-}
 
-
-def _attribute_display_priority(attribute: ScalarAttributeInfo) -> int:
+def _attribute_display_priority(
+    attribute: ScalarAttributeInfo, *, priorities: dict[str, int]
+) -> int:
     """指定属性、drawOverride配下、その他の順に表示優先度を返す。"""
-    priority = _ATTRIBUTE_PRIORITIES.get(attribute.path)
+    priority = priorities.get(attribute.path)
     if priority is not None:
         return priority
     if attribute.path.startswith("drawOverride."):
-        return len(_PRIORITY_ATTRIBUTE_PATHS)
-    return len(_PRIORITY_ATTRIBUTE_PATHS) + 1
+        return len(priorities)
+    return len(priorities) + 1
 
 
 @dataclass(frozen=True)
@@ -332,9 +296,19 @@ class ChannelEditorController(qt.QObject):
         lookup = tuple({a.path: a for a in items} for items in attributes)
         rows: list[ChannelRow | ChannelStateRow] = []
         try:
+            # 構築時に現在の設定を読み、重複は最初の指定だけを採用する
+            priorities = {
+                path: index
+                for index, path in enumerate(
+                    dict.fromkeys(config.ATTRIBUTE_PRIORITY_PATHS)
+                )
+            }
             # 同じ優先度では元の属性順を保ち、行の構築時だけ並べ替える
             for attribute in sorted(
-                attributes[0], key=_attribute_display_priority
+                attributes[0],
+                key=partial(
+                    _attribute_display_priority, priorities=priorities
+                ),
             ):
                 if not self._matches_filter(attribute):
                     continue

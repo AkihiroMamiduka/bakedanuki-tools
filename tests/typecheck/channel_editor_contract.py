@@ -27,6 +27,7 @@ from bd_tools.channel_editor.widget import (
 )
 
 assert_type(channel_editor.show(), channel_editor.ChannelEditorWindow)
+assert_type(channel_editor.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
 assert_type(channel_editor.show().widget, ChannelEditorWidget)
 row = channel_editor.show().widget.row_widgets[0]
 assert_type(row, AttributeRowWidget | AttributeStateRowWidget)

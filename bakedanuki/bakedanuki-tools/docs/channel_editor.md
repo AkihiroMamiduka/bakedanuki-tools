@@ -108,12 +108,12 @@ MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中�
 | --- | --- |
 | 1 | visibility |
 | 2–4 | translateX, translateY, translateZ |
-| 5–7 | jointOrientX, jointOrientY, jointOrientZ |
-| 8–10 | rotateX, rotateY, rotateZ |
-| 11 | rotateOrder |
-| 12–14 | rotateAxisX, rotateAxisY, rotateAxisZ |
-| 15–17 | shearXY, shearXZ, shearYZ |
-| 18–20 | scaleX, scaleY, scaleZ |
+| 5–7 | rotateX, rotateY, rotateZ |
+| 8–10 | scaleX, scaleY, scaleZ |
+| 11–13 | jointOrientX, jointOrientY, jointOrientZ |
+| 14 | rotateOrder |
+| 15–17 | rotateAxisX, rotateAxisY, rotateAxisZ |
+| 18–20 | shearXY, shearXZ, shearYZ |
 | 21–23 | rotatePivotX, rotatePivotY, rotatePivotZ |
 | 24–26 | rotatePivotTranslateX, rotatePivotTranslateY, rotatePivotTranslateZ |
 | 27–29 | scalePivotX, scalePivotY, scalePivotZ |
@@ -126,8 +126,27 @@ MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中�
 `overrideColor`は未対応のbyte型のため表示しません。その他の属性も元の相対順を保ちます。
 表示名やleaf名ではなく、`translate.translateX`などの正式な属性pathで照合します。
 別compound内の同名属性は優先対象に含めず、nodeの型による制限は設けません。
-この順序はtoolsの`controller.py`内の`_PRIORITY_ATTRIBUTE_PATHS`へまとめています。
+この順序は[config.py](../python/bd_tools/channel_editor/config.py)の
+`ATTRIBUTE_PRIORITY_PATHS`で調整できます。上から優先したい順に文字列を並べ、
+必要な属性の追加・削除もこのtupleだけで行います。存在しない属性は飛ばし、
+重複したpathは最初の指定を採用します。
+未指定属性は`drawOverride`配下、その他の順に並び、それぞれ元の相対順を保ちます。
+既定の`drawOverride.overrideEnabled`の指定を残すと、同系統の先頭を維持できます。
 並べ替えは行の構築時だけ行い、通常の値変更では再実行しません。
+
+ファイルを編集・保存した後は、次のコードでtoolsを再読込みして開き直します。
+
+```python
+import bd_tools
+bd_tools.reload_package()
+
+from bd_tools import channel_editor
+channel_editor.show()
+```
+
+Pythonから`channel_editor.config.ATTRIBUTE_PRIORITY_PATHS`を一時的に差し替える場合は、
+画面の「表示を更新」で反映できます。再読込み・Maya再起動後はファイル内の設定へ戻ります。
+表示順だけを変更し、sceneの属性順・値・Undo履歴には書き込みません。
 
 属性名は共通幅の列で右揃えにし、表示中の全行で入力欄の左端を揃えます。
 入力グループは値編集が156 px、表示・ロックが200 pxです。
@@ -595,3 +614,20 @@ toolsはlockの明示入力と既存の共有Undoセッションを接続しま�
 結果・画像・util検証ログは`%TEMP%/bd-channel-editor-maya2025-4eg23ktj`へ保存しました。
 操作39工程は成功ですが、本体終了待ちの既知タイムアウトによりrunnerの終了codeは1です。
 検証専用processの停止を確認済みです。Maya 2026 / 2027本体の画面操作は今回実施していません。
+
+### 優先順の調整と設定の分離（2026-09-18）
+
+先頭10属性をvisibility・translate X/Y/Z・rotate X/Y/Z・scale X/Y/Zに変更し、
+残りの相対順を維持しました。優先順を`channel_editor/config.py`の
+`ATTRIBUTE_PRIORITY_PATHS`へ分離し、行構築時に現在の設定を参照します。
+
+- `check.cmd -IncludeMaya`: Black・Pyright・unit 8件・Maya 2025 runtime 121件が成功。
+- 既存の順序検証で、transform・joint、両モード・全5フィルター、
+  drawOverride内のoverrideEnabled先頭、その他の相対順とscene・Undoへの無書込みを確認。
+- 追加2件で、設定変更後の表示更新、カスタム属性の優先表示、未存在・重複指定の処理、
+  優先指定した属性以外の相対順が維持されることを両モードで確認。
+- Maya 2025本体の39工程が成功し、runnerも終了code 0で完了。
+  新しい先頭10属性と後続の順番を両モードの保存画像で確認。
+
+本体検証の結果・画像は`%TEMP%/bd-channel-editor-maya2025-5lf9abq1`へ保存しました。
+今回はtoolsだけの変更で、Maya 2026 / 2027のruntime・本体確認は実施していません。
