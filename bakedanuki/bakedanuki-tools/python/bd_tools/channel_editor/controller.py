@@ -19,6 +19,7 @@ from bd_util.maya.ui import (
     MayaChannelStateBinding,
     MayaChannelStatePlug,
     MayaEnumPlugsBinding,
+    MayaEditSession,
     MayaFloatPlugsBinding,
     read_enum_definition,
     resolve_bool_plug,
@@ -133,6 +134,11 @@ class ChannelEditorController(qt.QObject):
             "states": "all",
         }
         self._disposed = False
+        self.state_edit_session = MayaEditSession(
+            self, chunk_name="SweepChannelStates"
+        )
+        self.state_edit_session.finished.connect(self._finish_state_edit)
+        self._filter_refresh_pending = False
         self._events = MayaCallbackRegistry(self)
         self._nodes = MayaCallbackRegistry(self)
         self._timer = qt.QTimer(self)
@@ -169,6 +175,7 @@ class ChannelEditorController(qt.QObject):
         """現在の選択を読み直し、値を書き込まずに入力行を再構築する。"""
         if self._disposed:
             return
+        self.state_edit_session.finish()
         self._timer.stop()
         self._refresh_pending()
 
@@ -213,6 +220,18 @@ class ChannelEditorController(qt.QObject):
             ):
                 row.binding.view_model.end_edit()
 
+    def begin_state_edit(self) -> None:
+        """行を固定したまま、複数属性の状態編集を一つのUndoへまとめる。"""
+        if self._disposed or self._mode != "states":
+            return
+        self._finish_value_edit()
+        self.state_edit_session.begin()
+
+    def _finish_state_edit(self) -> None:
+        """なぞり操作で保留したフィルターを、操作終了後にまとめて反映する。"""
+        if self._filter_refresh_pending and not self._disposed:
+            self._timer.start(0)
+
     @property
     def is_disposed(self) -> bool:
         """入力と選択監視が終了済みか返す。"""
@@ -254,8 +273,10 @@ class ChannelEditorController(qt.QObject):
             om.MNodeMessage.kAttributeKeyable
             | om.MNodeMessage.kAttributeUnkeyable
         ):
-            # 複数対象への状態書込み中はBindingを破棄せず、操作完了後に絞り込む
-            self._timer.start(0)
+            # なぞり中は行を固定し、単発入力も書込み完了後に絞り込む
+            self._filter_refresh_pending = True
+            if not self.state_edit_session.is_editing:
+                self._timer.start(0)
 
     def _watch_nodes(self) -> None:
         """現在の選択ノードだけに名前・属性構成の監視を登録する。"""
@@ -286,6 +307,10 @@ class ChannelEditorController(qt.QObject):
         """最新の構成を取得し、再構築の失敗は画面へ通知する。"""
         if self._disposed:
             return
+        if self.state_edit_session.is_editing:
+            self._filter_refresh_pending = True
+            return
+        self._filter_refresh_pending = False
         try:
             names = selected_node_names()
             attributes = tuple(inspect_scalar_attributes(n) for n in names)
@@ -408,6 +433,8 @@ class ChannelEditorController(qt.QObject):
 
     def _dispose_rows(self) -> None:
         """Qtの遅延削除を待たず、すべての入力とMaya監視を終了する。"""
+        self._filter_refresh_pending = False
+        self.state_edit_session.finish()
         rows, self.rows = self.rows, ()
         for row in rows:
             self._dispose_row(row)
@@ -430,3 +457,4 @@ class ChannelEditorController(qt.QObject):
         self._dispose_rows()
         self._nodes.dispose()
         self._events.dispose()
+        self.state_edit_session.dispose()

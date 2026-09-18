@@ -9,10 +9,12 @@ import json
 import os
 import statistics
 import subprocess
+import sys
 import tempfile
 import time
 import traceback
 from pathlib import Path
+from types import TracebackType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -46,6 +48,7 @@ class _MayaSmokeSession:
         """結果保存先と各段階で保持するWindowを初期化する。"""
         self.output = output
         self._phase = os.environ.get(_PHASE_VARIABLE, "initial")
+        sys.excepthook = self._record_slot_error
         self._trace_file = (output / f"python-stacks-{self._phase}.log").open(
             "w", encoding="utf-8"
         )
@@ -95,6 +98,7 @@ class _MayaSmokeSession:
             self._return_to_values,
             self._inspect_filters,
             self._inspect_attribute_order,
+            self._inspect_state_sweep,
             self._close,
             self._reopen,
             self._change_selection,
@@ -112,6 +116,20 @@ class _MayaSmokeSession:
                 self._setup_scene,
                 self._edit_after_restart,
                 self._finish,
+            )
+
+    def _record_slot_error(
+        self,
+        error_type: type[BaseException],
+        error: BaseException,
+        trace: TracebackType | None,
+    ) -> None:
+        """Qt signal経由で呼出し元へ戻らない例外も検証資料へ記録する。"""
+        with (self.output / "python-slot-errors.log").open(
+            "a", encoding="utf-8"
+        ) as stream:
+            stream.write(
+                "".join(traceback.format_exception(error_type, error, trace))
             )
 
     def begin_when_idle(self) -> None:
@@ -952,6 +970,81 @@ class _MayaSmokeSession:
             widget.filter_combo, widget.filter_combo.findData("visible")
         )
 
+    def _inspect_state_sweep(self) -> None:
+        """実画面で三行をなぞり、即時反映、絞り込み保留と一回Undoを確認する。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+
+        widget = self._require_window().widget
+        self._select_combo_item(widget.mode_combo, 1)
+        self._select_combo_item(
+            widget.filter_combo, widget.filter_combo.findData("keyable")
+        )
+        first = self._state_row("translate.translateX").display_buttons[
+            "hidden"
+        ]
+        last = self._state_row("translate.translateZ").display_buttons[
+            "hidden"
+        ]
+        self._flush_gui()
+        rows = widget.row_widgets
+        start = qt.QPoint(8, first.height() // 2)
+        end = first.mapFromGlobal(
+            last.mapToGlobal(qt.QPoint(8, last.height() // 2))
+        )
+        cmds.flushUndo()
+        self._mouse(first, qt.QEvent.Type.MouseButtonPress, start)
+        self._mouse(first, qt.QEvent.Type.MouseMove, end)
+        self._flush_gui()
+        if not widget.state_sweep.is_active or widget.row_widgets != rows:
+            raise AssertionError(
+                "なぞり中に操作が終了、または行が再構築されました"
+            )
+        for attribute in ("translateX", "translateY", "translateZ"):
+            if (
+                self._attribute_states(attribute)
+                != ((False, False, False),) * 2
+            ):
+                raise AssertionError(
+                    f"途中の行を含む状態変更に失敗: {attribute}"
+                )
+        self._capture("19-state-sweep-during-drag.png")
+        self._mouse(first, qt.QEvent.Type.MouseButtonRelease, end)
+        self._flush_gui()
+        if widget.state_sweep.is_active or any(
+            row.row.attribute.name.startswith("translate")
+            for row in widget.row_widgets
+        ):
+            raise AssertionError("なぞり終了後の絞り込みが反映されません")
+        self._capture("20-state-sweep-after-release.png")
+        cmds.undo()
+        self._flush_gui()
+        for attribute in ("translateX", "translateY", "translateZ"):
+            if (
+                self._attribute_states(attribute)
+                != ((True, False, False),) * 2
+            ):
+                raise AssertionError(
+                    f"一回のUndoで元に戻りません: {attribute}"
+                )
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("なぞり操作が複数のUndoに分かれています")
+        cmds.redo()
+        self._flush_gui()
+        for attribute in ("translateX", "translateY", "translateZ"):
+            if (
+                self._attribute_states(attribute)
+                != ((False, False, False),) * 2
+            ):
+                raise AssertionError(
+                    f"一回のRedoで再適用できません: {attribute}"
+                )
+        cmds.undo()
+        self._flush_gui()
+        self.steps.append("radio_sweep_filter_deferral_and_single_undo_redo")
+        self._select_combo_item(widget.mode_combo, 0)
+
     def _close(self) -> None:
         """Maya側のclose操作からworkspaceControlごと完全破棄する。"""
         from maya import cmds
@@ -1247,7 +1340,14 @@ class _MayaSmokeSession:
             ):
                 window.widget.scroll_area.ensureWidgetVisible(row)
                 return row
-        raise AssertionError(f"状態行が見つかりません: {attribute_name}")
+        self._capture("failure-state-row.png")
+        raise AssertionError(
+            f"状態行が見つかりません: {attribute_name}; "
+            f"mode={window.widget.controller.mode}, "
+            f"filter={window.widget.controller.attribute_filter}, "
+            f"rows={len(window.widget.row_widgets)}, "
+            f"error={window.widget.message_label.text()}"
+        )
 
     def _row_layout(
         self, row: AttributeRowWidget | AttributeStateRowWidget

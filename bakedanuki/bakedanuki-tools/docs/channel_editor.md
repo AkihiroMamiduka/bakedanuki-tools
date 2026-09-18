@@ -10,6 +10,7 @@
 両モードの表示フィルターと必要時だけの縦スクロールバー表示を追加しました。その他の拡張は
 [今後の候補](roadmap.md#channel-editorの拡張候補)を参照してください。
 同日に値同期を高速化し、transform・jointの属性表示に優先順を追加しました。
+表示状態のラジオボタンは、左ドラッグで複数行をなぞって変更できます。
 
 ## 起動と終了
 
@@ -29,7 +30,8 @@ channel_editor.close()
 利用するutilには、複数属性用の`MayaBoolPlugsBinding` / `MayaFloatPlugsBinding`、
 `MayaEnumPlugsBinding`、`EnumComboBox`、`read_enum_definition()`、enum対応の属性列挙、
 属性列挙・選択取得、`BoolCheckBox`、`FloatValueStepSpinBox`の幅指定、
-`FloatSliderSpinBox.layout_order`、`MayaChannelStateBinding`、
+`FloatSliderSpinBox.layout_order`、`MayaChannelStateBinding`、`MayaEditSession`、
+`RadioButtonSweep`、
 ドッキングとreloadの基盤が必要です。
 toolsとutilを配布するときは、組み合わせて動作確認した版を使用してください。
 
@@ -92,6 +94,7 @@ MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中�
 | hide | keyableもchannelBoxもFalse |
 
 状態を変更してフィルター条件から外れた行は、複数対象への操作が完了してから消えます。
+ラジオボタンをなぞっている間は行を維持し、マウスを離した後にまとめて絞り込みます。
 「全て」を選ぶと再び表示でき、Undo／Redoや外部での状態変更にも表示が追従します。
 フィルター切替だけではscene・Undo履歴を変更しません。
 
@@ -231,6 +234,20 @@ sceneへstepを保存しません。
 
 属性名の右側を、`key / ch / hide`のラジオボタンと`lock`のCheckBoxへ切り替えます。
 表示状態の3つだけを排他的に選択し、ロックは独立して操作できます。
+ラジオボタンから左ドラッグすると、通過したボタンの状態へ順に変更できます。
+例えば`ch`列を縦になぞると、その範囲の属性をChannelBoxへ揃えられます。
+選択済みのボタンからも開始でき、通常クリック・キーボード操作は維持します。
+小さな手ぶれは通常クリックとして扱い、速い移動でも経路上の途中の行を対象にします。
+表示範囲内の有効なラジオボタンだけを対象とし、`lock`と画面外の行は変更しません。
+なぞり中のホイール移動と画面端の自動スクロールには対応しません。
+
+なぞった変更はその場で反映し、一回のUndo／Redoにまとめます。無変更なら履歴は増えません。
+フィルターによる行の除外は操作終了まで保留します。マウス解放、Escape、非表示、
+フォーカス喪失、モード・選択・scene・属性構成の変更、終了・reloadで入力を止めます。
+中断ではそれまでの変更を保持し、戻す場合はUndoを使います。
+書込み失敗時は失敗した行を既存Bindingが復旧し、なぞり全体を終了します。
+それ以前に変更した行は保持し、一回のUndoで元へ戻せます。
+
 設定モードの操作欄は200 pxです。狭いWindowでは属性名の省略が増えますが、
 正式な名前はtooltipで確認できます。各ボタンのtooltipには省略前の意味も表示します。
 
@@ -524,3 +541,28 @@ lockは独立したCheckBoxとし、表示状態の混在時は3ボタンとも�
 終了待ちでは既知のタイムアウトが再現し、runnerの終了codeは1です。
 操作37工程の成功とは区別し、検証専用processの停止を確認しました。
 Maya 2026 / 2027本体の画面操作は今回実施していません。
+
+### 表示状態のなぞり選択（2026-09-18）
+
+`key / ch / hide`の左ドラッグ選択を追加しました。toolsとutilの両方を更新し、
+`bd_tools.reload_package(reload_util=True)`で再読込みしてから開き直してください。
+なぞり操作と共有Undoはutil、対象登録とフィルターの再構築保留はtoolsが所有します。
+
+- `check.cmd -IncludeMaya`: Black・Pyright・unit 8件・Maya 2025 runtime 107件が成功。
+- Maya 2026 / 2027のruntime test: 各107件成功。
+- toolsの追加9件で、高速移動の途中行、複数ノード、一回Undo／Redo、フィルター保留、
+  Escape・非表示・モード・フィルター・更新・選択・破棄・属性削除での終了を確認。
+- utilの`verify.cmd`が成功。Black・3版Pyright、Maya 2025全体4210 passed / 697 skipped、
+  Maya 2025 / 2026 / 2027の専用Qt検証各797件とMaya UI検証各343件が成功。
+  全体実行でskipするWidget検証も、専用UIプロセスではskipなしで確認。
+- utilのQt検証で、単発クリック・Space、選択済みからの開始、無効／未登録の除外、
+  中断後の遅いrelease、viewport差し替えと画面外除外を確認。
+  Maya側で無変更、Undo無効、複数Binding、書込み中の終了要求とowner破棄を確認。
+- Maya 2025本体の38工程が成功。なぞり中と終了後の保存画像を確認し、
+  三軸・両選択ノードへの反映、一回Undo／Redo、reload後の再表示も成功。
+
+Maya本体でviewportの保持参照が無効になる事象を検出し、操作補助のownerを
+ScrollArea本体にして現在のviewportを判定時に取得する形へ修正しました。
+本体検証の結果・画像は`%TEMP%/bd-channel-editor-maya2025-yefskvp6`へ保存しました。
+38工程の操作結果は成功ですが、本体終了待ちの既知タイムアウトによりrunnerの終了codeは1です。
+検証専用processの停止を確認済みです。Maya 2026 / 2027本体の画面操作は今回実施していません。

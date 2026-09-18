@@ -11,6 +11,7 @@ from bd_util.maya.ui import (
     ChannelDisplayState,
     MayaBoolPlugsBinding,
     MayaEnumPlugsBinding,
+    MayaEditSession,
     get_channel_box_precision,
 )
 from bd_util.ui import (
@@ -19,6 +20,7 @@ from bd_util.ui import (
     FloatSliderSpinBox,
     FloatStepMode,
     FloatValueStepSpinBox,
+    RadioButtonSweep,
     qt,
 )
 
@@ -267,9 +269,12 @@ class AttributeStateRowWidget(qt.QWidget):
         row: ChannelStateRow,
         selection_count: int,
         parent: qt.QWidget,
+        *,
+        edit_session: MayaEditSession | None = None,
     ) -> None:
         """状態の読取りと、ユーザーが明示した入力だけを接続する。"""
         super().__init__(parent)
+        self._edit_session = edit_session
         self.row = row
         self.selection_count = selection_count
         self.setObjectName(f"channel_state_{row.attribute.path}")
@@ -388,7 +393,9 @@ class AttributeStateRowWidget(qt.QWidget):
         tooltip = "\n".join(details)
         self.name_label.setToolTip(tooltip)
         for value, _label, description in _DISPLAY_OPTIONS:
-            self.display_buttons[value].setToolTip(f"{description}\n{tooltip}")
+            self.display_buttons[value].setToolTip(
+                f"{description}\n左ドラッグで複数行をなぞって選択\n{tooltip}"
+            )
         self.lock_check_box.setToolTip(
             f"Lock: 属性自身のロック／解除\n{tooltip}"
         )
@@ -398,7 +405,15 @@ class AttributeStateRowWidget(qt.QWidget):
     ) -> None:
         """明示選択した表示状態だけを、一括変更する。"""
         try:
-            self.row.state_binding.set_display_state(value)
+            session = self._edit_session
+            self.row.state_binding.set_display_state(
+                value,
+                edit_session=(
+                    session
+                    if session is not None and session.is_editing
+                    else None
+                ),
+            )
         except (ValueError, RuntimeError, ExceptionGroup):
             # Bindingの通知で理由を表示し、操作後は正本の選択へ戻す
             pass
@@ -506,6 +521,14 @@ class ChannelEditorWidget(qt.QWidget):
 
         # 選択・表示更新と、ユーザーによる値変更の経路を分離する
         self.controller = ChannelEditorController(self)
+        self.state_sweep = RadioButtonSweep(self.scroll_area)
+        self.state_sweep.started.connect(self.controller.begin_state_edit)
+        self.state_sweep.finished.connect(
+            self.controller.state_edit_session.finish
+        )
+        self.controller.state_edit_session.finished.connect(
+            self.state_sweep.finish
+        )
         self.controller.rows_changed.connect(self._rebuild_rows)
         self.controller.error_occurred.connect(self._show_error)
         self.controller.mode_changed.connect(self._sync_mode)
@@ -529,6 +552,7 @@ class ChannelEditorWidget(qt.QWidget):
 
     def _prepare_view_change(self) -> None:
         """行の入力を確定し、再構築前のスクロール位置を保持する。"""
+        self.state_sweep.finish()
         focus_widget = cast(
             Callable[[], qt.QWidget | None],
             getattr(qt.QApplication, "focusWidget"),
@@ -591,16 +615,19 @@ class ChannelEditorWidget(qt.QWidget):
 
     def refresh(self) -> None:
         """値を変更せず、現在のノードと属性を再取得する。"""
+        self.state_sweep.finish()
         self.message_label.hide()
         self.controller.refresh()
 
     def _show_error(self, message: str) -> None:
         """入力拒否や再構築失敗を、操作対象の画面へ表示する。"""
+        self.state_sweep.finish()
         self.message_label.setText(f"変更できませんでした: {message}")
         self.message_label.show()
 
     def _rebuild_rows(self) -> None:
         """古いViewを破棄して、新しい選択の入力行を配置する。"""
+        self.state_sweep.clear()
         for widget in self.row_widgets:
             widget.context_menu.close()
             if isinstance(widget.editor, EnumComboBox):
@@ -624,8 +651,13 @@ class ChannelEditorWidget(qt.QWidget):
                 widget: AttributeRowWidget | AttributeStateRowWidget
                 if isinstance(row, ChannelStateRow):
                     widget = AttributeStateRowWidget(
-                        row, len(names), self._contents
+                        row,
+                        len(names),
+                        self._contents,
+                        edit_session=self.controller.state_edit_session,
                     )
+                    for button in widget.display_buttons.values():
+                        self.state_sweep.add_button(button)
                 else:
                     key = (row.attribute.path, row.attribute.kind)
                     widget = AttributeRowWidget(
@@ -659,6 +691,7 @@ class ChannelEditorWidget(qt.QWidget):
 
     def dispose(self) -> None:
         """画面の入力と監視を即時に終了する。"""
+        self.state_sweep.dispose()
         self._scroll_timer.stop()
         self.context_menu.close()
         for widget in self.row_widgets:

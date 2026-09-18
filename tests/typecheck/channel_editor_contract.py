@@ -3,12 +3,13 @@
 
 from typing import Literal, assert_type
 
-from bd_util.maya.ui import ChannelDisplayState
+from bd_util.maya.ui import ChannelDisplayState, MayaEditSession
 from bd_util.ui import (
     BoolCheckBox,
     EnumComboBox,
     FloatSliderSpinBox,
     FloatValueStepSpinBox,
+    RadioButtonSweep,
     qt,
 )
 
@@ -55,6 +56,12 @@ assert_type(channel_editor.show().widget.mode_combo, qt.QComboBox)
 assert_type(channel_editor.show().widget.filter_combo, qt.QComboBox)
 assert_type(channel_editor.show().widget.mode_label, qt.QLabel)
 assert_type(channel_editor.show().widget.filter_label, qt.QLabel)
+assert_type(channel_editor.show().widget.state_sweep, RadioButtonSweep)
+assert_type(
+    channel_editor.show().widget.controller.state_edit_session,
+    MayaEditSession,
+)
+assert_type(channel_editor.show().widget.controller.begin_state_edit(), None)
 assert_type(
     channel_editor.show().widget.controller.attribute_filter,
     ChannelAttributeFilter,
