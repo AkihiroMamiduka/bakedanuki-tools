@@ -184,10 +184,23 @@ def test_mode_switch_only_reads_and_preserves_value_step(
 def test_mode_switch_preserves_width_with_long_hidden_name(
     state_editor: ChannelEditorWidget, width: int
 ) -> None:
-    """長いHide属性でも入力欄を維持し、必要な場合だけ縦スクロールする。"""
+    """上部の説明と長いHide属性がある場合も、指定幅に収まる配置を維持する。"""
     editor = state_editor
     editor.resize(width, 600)
     _events()
+    assert editor.width() == width
+    assert editor.mode_combo.x() == editor.filter_combo.x()
+    assert editor.mode_combo.width() == editor.filter_combo.width()
+    for label, combo in (
+        (editor.mode_label, editor.mode_combo),
+        (editor.filter_label, editor.filter_combo),
+    ):
+        assert label.x() + label.width() < combo.x()
+        assert label.width() >= label.fontMetrics().horizontalAdvance(
+            label.text()
+        )
+        assert combo.width() >= combo.minimumSizeHint().width()
+        assert combo.x() + combo.width() <= width
     value_row = _value_row(editor)
     before = (
         editor.width(),

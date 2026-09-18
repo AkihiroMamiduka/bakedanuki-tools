@@ -50,6 +50,8 @@ assert_type(channel_editor.WORKSPACE_CONTROL_NAME, str)
 assert_type(channel_editor.show().widget.refresh_action, qt.QAction)
 assert_type(channel_editor.show().widget.mode_combo, qt.QComboBox)
 assert_type(channel_editor.show().widget.filter_combo, qt.QComboBox)
+assert_type(channel_editor.show().widget.mode_label, qt.QLabel)
+assert_type(channel_editor.show().widget.filter_label, qt.QLabel)
 assert_type(
     channel_editor.show().widget.controller.attribute_filter,
     ChannelAttributeFilter,

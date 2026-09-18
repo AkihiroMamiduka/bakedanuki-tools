@@ -9,6 +9,9 @@
 
 ### Changed
 
+- Channel Editor上部のComboBoxへ`Mode:`と`Attribute Filter:`のラベルを追加。
+  ラベルは右揃えの共通列へ配置し、選択欄の左端と幅を揃える。
+  操作・scene・保存設定の変更や移行は不要。
 - Channel Editorの属性表示を、visibilityからtransform・jointの指定32属性、
   drawOverride配下、その他の順へ変更。存在し、フィルターに一致する属性だけを
   両モード共通の順で表示し、drawOverride内はoverrideEnabledを先頭にする。

@@ -430,6 +430,26 @@ class ChannelEditorWidget(qt.QWidget):
             "先頭の選択ノードの表示状態で絞り込みます。\n"
             "channelboxは非keyableでChannel Boxに表示する属性です。"
         )
+        self.mode_label = qt.QLabel("Mode:", self)
+        self.filter_label = qt.QLabel("Attribute Filter:", self)
+        # 説明を右揃えの共通列に置き、残りの幅を選択欄へ配分する
+        controls_layout = qt.QGridLayout()
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(6)
+        controls_layout.setColumnStretch(1, 1)
+        for index, (label, combo) in enumerate(
+            (
+                (self.mode_label, self.mode_combo),
+                (self.filter_label, self.filter_combo),
+            )
+        ):
+            label.setAlignment(
+                qt.Qt.AlignmentFlag.AlignRight
+                | qt.Qt.AlignmentFlag.AlignVCenter
+            )
+            label.setBuddy(combo)
+            controls_layout.addWidget(label, index, 0)
+            controls_layout.addWidget(combo, index, 1)
         self.header_label = qt.QLabel("ノードを選択してください", self)
         self.header_label.setTextInteractionFlags(
             qt.Qt.TextInteractionFlag.TextSelectableByMouse
@@ -463,8 +483,7 @@ class ChannelEditorWidget(qt.QWidget):
         layout = qt.QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
-        layout.addWidget(self.mode_combo)
-        layout.addWidget(self.filter_combo)
+        layout.addLayout(controls_layout)
         layout.addWidget(self.header_label)
         layout.addWidget(self.empty_label)
         layout.addWidget(self.scroll_area, 1)
