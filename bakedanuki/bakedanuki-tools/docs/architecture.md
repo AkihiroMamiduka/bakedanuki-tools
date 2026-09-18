@@ -67,8 +67,13 @@ Channel Editorが所有します。step設定はsceneの値・Undo履歴へ含�
 属性名の整列、混在の印、対象情報のtooltip、更新・揃えるための右クリックメニューも
 Channel Editorが所有し、値欄のQt標準編集メニューとは独立して提供します。
 boolにはutilの`BoolCheckBox`、両側hard limit付きfloatには`FloatSliderSpinBox`、
-それ以外のfloatには`FloatValueStepSpinBox`を使います。並び順の機能はutil、
+それ以外のfloatには`FloatValueStepSpinBox`を使います。値欄とSliderの並び順の機能はutil、
 Value先行の選択、単位の非表示、固定幅と右寄せはtoolsの表示方針です。
+属性行の優先順もtoolsの表示方針です。controllerで正式pathを照合し、指定32属性、
+drawOverride配下、その他の順に安定ソートしてから行を構築します。
+drawOverride内ではoverrideEnabledを先頭にし、残りの相対順を維持します。
+両モードと全フィルターで共有し、utilの列挙順とscene内の属性順は変更しません。
+通常の値変更では並べ替えや行の再構築を行いません。
 今後enumなどの型を追加するときも、toolsで汎用BindingやViewを複製せずutilを拡張します。
 空の directory は作りません。個別ツール同士の
 暗黙の import は避け、共有処理は責務に応じた場所へ抽出します。

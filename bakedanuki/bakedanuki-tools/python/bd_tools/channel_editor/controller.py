@@ -44,6 +44,57 @@ __all__ = [
     "ChannelEditorController",
 ]
 
+# 表示順の指定は正式な相対pathで照合し、同名の別compound子を含めない
+_PRIORITY_ATTRIBUTE_PATHS: tuple[str, ...] = (
+    "visibility",
+    "translate.translateX",
+    "translate.translateY",
+    "translate.translateZ",
+    "jointOrient.jointOrientX",
+    "jointOrient.jointOrientY",
+    "jointOrient.jointOrientZ",
+    "rotate.rotateX",
+    "rotate.rotateY",
+    "rotate.rotateZ",
+    "rotateOrder",
+    "rotateAxis.rotateAxisX",
+    "rotateAxis.rotateAxisY",
+    "rotateAxis.rotateAxisZ",
+    "shear.shearXY",
+    "shear.shearXZ",
+    "shear.shearYZ",
+    "scale.scaleX",
+    "scale.scaleY",
+    "scale.scaleZ",
+    "rotatePivot.rotatePivotX",
+    "rotatePivot.rotatePivotY",
+    "rotatePivot.rotatePivotZ",
+    "rotatePivotTranslate.rotatePivotTranslateX",
+    "rotatePivotTranslate.rotatePivotTranslateY",
+    "rotatePivotTranslate.rotatePivotTranslateZ",
+    "scalePivot.scalePivotX",
+    "scalePivot.scalePivotY",
+    "scalePivot.scalePivotZ",
+    "scalePivotTranslate.scalePivotTranslateX",
+    "scalePivotTranslate.scalePivotTranslateY",
+    "scalePivotTranslate.scalePivotTranslateZ",
+    # drawOverride配下では有効化属性を先頭へ配置する
+    "drawOverride.overrideEnabled",
+)
+_ATTRIBUTE_PRIORITIES = {
+    path: index for index, path in enumerate(_PRIORITY_ATTRIBUTE_PATHS)
+}
+
+
+def _attribute_display_priority(attribute: ScalarAttributeInfo) -> int:
+    """指定属性、drawOverride配下、その他の順に表示優先度を返す。"""
+    priority = _ATTRIBUTE_PRIORITIES.get(attribute.path)
+    if priority is not None:
+        return priority
+    if attribute.path.startswith("drawOverride."):
+        return len(_PRIORITY_ATTRIBUTE_PATHS)
+    return len(_PRIORITY_ATTRIBUTE_PATHS) + 1
+
 
 @dataclass(frozen=True)
 class ChannelRow:
@@ -250,13 +301,16 @@ class ChannelEditorController(qt.QObject):
     def _create_rows(
         self, attributes: tuple[tuple[ScalarAttributeInfo, ...], ...]
     ) -> tuple[ChannelRow | ChannelStateRow, ...]:
-        """基準ノードを絞り込み、各ノードの同名・同種属性を対応付ける。"""
+        """基準属性を表示順に絞り込み、同名・同種属性を対応付ける。"""
         if not attributes:
             return ()
         lookup = tuple({a.path: a for a in items} for items in attributes)
         rows: list[ChannelRow | ChannelStateRow] = []
         try:
-            for attribute in attributes[0]:
+            # 同じ優先度では元の属性順を保ち、行の構築時だけ並べ替える
+            for attribute in sorted(
+                attributes[0], key=_attribute_display_priority
+            ):
                 if not self._matches_filter(attribute):
                     continue
                 targets: list[str] = []

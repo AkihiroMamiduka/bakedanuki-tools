@@ -31,6 +31,12 @@ QWidgetも同じ入口で検証できるよう、Maya初期化前にQt facadeか
 workspaceControl の実表示や Maya 再起動後の復元は `mayapy` だけでは完結しないため、対象
 Maya 本体でも操作確認します。
 
+`test_channel_editor_order.py`はtransform・jointの優先順、drawOverrideのRGB子、
+残りの属性の相対順、両モードと5フィルターの組合せを検証します。
+drawOverride内ではoverrideEnabledが先頭になることも確認します。
+表示切替でsceneの属性順・値・フラグ・Undoを変更しないことと、別compound内の同名属性や
+類似した名前を誤って優先しないことも確認します。
+
 ## Channel EditorのMaya本体検証
 
 リポジトリ直下から専用runnerを実行します。`--maya-version` は2025 / 2026 / 2027を
@@ -61,6 +67,8 @@ Window幅・入力グループ幅が変わらないことを確認します。
 表示とロックの混在・独立操作・Undo／Redo、値とstepの維持も確認します。
 両モードで5種類のフィルターを実ComboBoxから選び、モードごとの選択保持、無書込み、
 絞り込み中の状態変更による行の除去・Undo／Redoでの再評価を確認します。
+jointを選択して両モードの指定32属性とdrawOverrideの配置を確認します。
+drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです。
 さらに10ノード・各30個の追加float属性を用いて、Window生成、一括入力、選択切替を
 1回ずつ計測します。「keyable」「全て」では同じ属性を2回warm-up後に9回入力し、
 遅延同期・描画を含む時間の中央値を`edit_keyable_median_ms`／`edit_all_median_ms`へ保存します。
@@ -82,6 +90,9 @@ Window幅・入力グループ幅が変わらないことを確認します。
   `13-state-mode-mixed.png`: 非表示属性の設定行、ロック中、混在状態の表示。
 - `15-values-hidden-filter.png`、`16-states-keyable-filter.png`:
   非表示属性の値編集と、Keyableだけに絞り込んだ状態編集の配置。
+- `17-attribute-order-mode-0.png`、`17-attribute-order-mode-1.png`、
+  `18-draw-override-mode-0.png`、`18-draw-override-mode-1.png`:
+  jointの値編集／表示・ロックでの優先属性とdrawOverrideの配置。
 - `progress.json`: 実行中の段階と完了済みの操作。
 - `maya-initial.log`、`process-initial.log`、`python-stacks-initial.log`: Mayaの出力と、長時間停止した場合の
   Python stack。
@@ -103,6 +114,8 @@ deferred quitでも発生しており、終了待ちの原因は未特定です�
 - 入力・対応型: 選択／更新で無書込み、外部変更の非伝播、混在値への一括入力、1回Undo、編集不可対象の扱い。
 - 値同期の負荷: 表示フィルターや入力経路に関わらず、無関係な行の再読取りを発生させない。
   接続・親属性・アニメーションによるdirtyの同期はutilの通知回帰testでも検証する。
+- 属性順: transform・jointの指定属性、drawOverride配下、残りの安定順を保ち、
+  モード・フィルター・表示更新で順序を揃える。並べ替えでsceneやUndoを変更しない。
 - bool: 基準値を二値CheckBoxで表示し、クリック／Spaceで切替、属性名の直後に左詰め。
 - enum: 項目名と実整数、飛び番・未定義値、定義不一致の除外・入力停止、同値揃えと選択肢の終了。
 - step: 値／Undoを変更しないこと、型別初期値、選択変更／Undo後の保持、close後の初期化。

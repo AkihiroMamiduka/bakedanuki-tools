@@ -9,6 +9,7 @@
 2026-09-17にenumのComboBox入力、2026-09-18に値入力／表示・ロックのモード切替、
 両モードの表示フィルターと必要時だけの縦スクロールバー表示を追加しました。その他の拡張は
 [今後の候補](roadmap.md#channel-editorの拡張候補)を参照してください。
+同日に値同期を高速化し、transform・jointの属性表示に優先順を追加しました。
 
 ## 起動と終了
 
@@ -66,9 +67,9 @@ MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中�
   クリック履歴を記録するMayaの設定は変更しません。
 - Maya nodeのobject選択が対象です。componentとplug選択は除外し、Shapeや履歴を
   自動で追加しません。DAG instanceの重複選択は同じnodeへまとめます。
-- 基準nodeでフィルターに一致する対応scalarを、属性順で表示します。
+- 基準nodeでフィルターに一致する対応scalarを、下記の優先順で表示します。
   XYZは子ごとに表示し、compound親の表示フラグでは子を除外しません。
-  標準Channel Boxの表示順への同期は行わず、ノード内部の属性順を維持します。
+  標準Channel Boxの表示順とは独立し、scene内の属性順は変更しません。
 - 「全て」では非表示の属性も含めて列挙します。
   以前の操作や別ツールでHideにした属性も復帰できます。標準nodeの内部属性も含むため、
   表示される行数が増えます。値編集でも「全て」「hide」を選べば非表示属性へ入力できます。
@@ -93,6 +94,34 @@ MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中�
 状態を変更してフィルター条件から外れた行は、複数対象への操作が完了してから消えます。
 「全て」を選ぶと再び表示でき、Undo／Redoや外部での状態変更にも表示が追従します。
 フィルター切替だけではscene・Undo履歴を変更しません。
+
+属性の表示優先順は、両モード・全フィルターで共通です。
+存在し、フィルターに一致する属性を次の順で先頭へ配置します。
+
+| 優先位置 | 属性（各行の左から順） |
+| --- | --- |
+| 1 | visibility |
+| 2–4 | translateX, translateY, translateZ |
+| 5–7 | jointOrientX, jointOrientY, jointOrientZ |
+| 8–10 | rotateX, rotateY, rotateZ |
+| 11 | rotateOrder |
+| 12–14 | rotateAxisX, rotateAxisY, rotateAxisZ |
+| 15–17 | shearXY, shearXZ, shearYZ |
+| 18–20 | scaleX, scaleY, scaleZ |
+| 21–23 | rotatePivotX, rotatePivotY, rotatePivotZ |
+| 24–26 | rotatePivotTranslateX, rotatePivotTranslateY, rotatePivotTranslateZ |
+| 27–29 | scalePivotX, scalePivotY, scalePivotZ |
+| 30–32 | scalePivotTranslateX, scalePivotTranslateY, scalePivotTranslateZ |
+| その後 | drawOverride配下の対応scalar |
+| 最後 | その他の対応scalar |
+
+`drawOverride`配下は有効化を操作する`overrideEnabled`を先頭にします。
+残りは`overrideColorRGB`のR/G/B子も含め、元の相対順を保ちます。
+`overrideColor`は未対応のbyte型のため表示しません。その他の属性も元の相対順を保ちます。
+表示名やleaf名ではなく、`translate.translateX`などの正式な属性pathで照合します。
+別compound内の同名属性は優先対象に含めず、nodeの型による制限は設けません。
+この順序はtoolsの`controller.py`内の`_PRIORITY_ATTRIBUTE_PATHS`へまとめています。
+並べ替えは行の構築時だけ行い、通常の値変更では再実行しません。
 
 属性名は共通幅の列で右揃えにし、表示中の全行で入力欄の左端を揃えます。
 両モードの入力グループは156 pxを共用します。
@@ -432,3 +461,29 @@ Maya本体の操作結果・画像は検証実行環境の
 本体終了時は既知の終了待ちタイムアウトが再現し、runnerの終了codeは1です。
 36工程の操作成功とプロセスの正常終了は区別しています。
 Maya 2026 / 2027はruntimeとUI互換性の自動検証で確認し、本体の画面操作は未実施です。
+
+### 属性の表示優先順（2026-09-18）
+
+指定32属性、drawOverride配下、その他の順に、行の構築時だけ並べ替えます。
+通常の値変更では行を作り直さず、関係する行だけを再同期する従来の処理を維持します。
+toolsだけの変更です。反映には`bd_tools.reload_package()`で再読込みしてから開き直します。
+
+- `check.cmd -IncludeMaya`: Black・Pyright・unit 8件・Maya 2025 runtime 96件が成功。
+- Maya 2026 / 2027のruntime test: 各96件成功。
+- 追加した順序検証6件: transform・joint、両モード・5フィルター、RGB子と残りの相対順、
+  正式pathの照合、node型に依存しない優先表示、scene・Undoへの無書込みを確認。
+- 既存の値同期test: 独立した値の変更で無関係な行を再読取りせず、行Widgetを維持することを確認。
+- Maya 2025本体: 37工程成功。jointの両モードで指定32属性とdrawOverrideの配置を確認。
+  保存画像で優先順と入力欄の配置を確認し、close／reload後のcallback解放も成功。
+
+本体検証の結果・画像は検証実行環境の
+`%TEMP%/bd-channel-editor-maya2025-p3febnx8`へ保存しました。
+本体終了時は既知の終了待ちタイムアウトが再現し、runnerの終了codeは1です。
+37工程の操作成功とは区別し、検証専用processの停止を確認しました。
+Maya 2026 / 2027本体の画面操作は今回実施していません。
+
+同日の追加調整で、drawOverride内の先頭をoverrideEnabledへ変更しました。
+残りの相対順は維持し、関連Maya 2025 test 10件、Pyright、Black checkが成功しました。
+Maya 2025本体も37工程成功し、両モードの保存画像でoverrideEnabledが先頭になることを確認しました。
+追加調整の結果・画像は`%TEMP%/bd-channel-editor-maya2025-1nuu7kke`へ保存しました。
+追加調整でも本体終了待ちの既知タイムアウトが再現し、runnerの終了codeは1です。

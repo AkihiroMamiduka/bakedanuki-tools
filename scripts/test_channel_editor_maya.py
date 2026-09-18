@@ -94,6 +94,7 @@ class _MayaSmokeSession:
             self._inspect_mixed_states,
             self._return_to_values,
             self._inspect_filters,
+            self._inspect_attribute_order,
             self._close,
             self._reopen,
             self._change_selection,
@@ -887,6 +888,70 @@ class _MayaSmokeSession:
         self._select_combo_item(
             widget.filter_combo, widget.filter_combo.findData("all")
         )
+        self._select_combo_item(widget.mode_combo, 0)
+        self._select_combo_item(
+            widget.filter_combo, widget.filter_combo.findData("visible")
+        )
+
+    def _inspect_attribute_order(self) -> None:
+        """jointの優先順を両モードの実画面で確認し、通常の選択へ戻す。"""
+        from maya import cmds
+
+        widget = self._require_window().widget
+        joint = cmds.createNode("joint", name="channelEditorOrderQA")
+        cmds.select(joint, replace=True)
+        self._flush_gui()
+        expected = ["visibility"]
+        for parent, children in (
+            ("translate", "XYZ"),
+            ("jointOrient", "XYZ"),
+            ("rotate", "XYZ"),
+            ("", ("rotateOrder",)),
+            ("rotateAxis", "XYZ"),
+            ("shear", ("XY", "XZ", "YZ")),
+            ("scale", "XYZ"),
+            ("rotatePivot", "XYZ"),
+            ("rotatePivotTranslate", "XYZ"),
+            ("scalePivot", "XYZ"),
+            ("scalePivotTranslate", "XYZ"),
+        ):
+            expected.extend(
+                f"{parent}.{parent}{child}" if parent else child
+                for child in children
+            )
+        cmds.flushUndo()
+        for mode_index in (0, 1):
+            self._select_combo_item(widget.mode_combo, mode_index)
+            self._select_combo_item(
+                widget.filter_combo, widget.filter_combo.findData("all")
+            )
+            paths = [r.row.attribute.path for r in widget.row_widgets]
+            if paths[:32] != expected:
+                raise AssertionError(
+                    f"jointの優先順が異なります: {paths[:32]}"
+                )
+            if paths[32:34] != [
+                "drawOverride.overrideEnabled",
+                "drawOverride.overrideDisplayType",
+            ]:
+                raise AssertionError(
+                    "drawOverrideの先頭がoverrideEnabledになっていません"
+                )
+            widget.scroll_area.verticalScrollBar().setValue(0)
+            self._flush_gui()
+            self._capture(f"17-attribute-order-mode-{mode_index}.png")
+            target = widget.row_widgets[32]
+            widget.scroll_area.verticalScrollBar().setValue(target.y())
+            self._flush_gui()
+            self._capture(f"18-draw-override-mode-{mode_index}.png")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("表示順の確認でUndo履歴が増えました")
+        self.steps.append("joint_priority_order_in_both_modes")
+
+        # 検証用jointを除き、後続のclose・reload検証の選択と表示へ戻す
+        cmds.select(self.nodes, replace=True)
+        self._flush_gui()
+        cmds.delete(joint)
         self._select_combo_item(widget.mode_combo, 0)
         self._select_combo_item(
             widget.filter_combo, widget.filter_combo.findData("visible")

@@ -9,6 +9,12 @@
 
 ### Changed
 
+- Channel Editorの属性表示を、visibilityからtransform・jointの指定32属性、
+  drawOverride配下、その他の順へ変更。存在し、フィルターに一致する属性だけを
+  両モード共通の順で表示し、drawOverride内はoverrideEnabledを先頭にする。
+  残りのdrawOverride内とその他の属性は元の相対順を維持する。
+  tools内の表示方針だけを変更し、sceneの属性順・値・状態は変更しない。
+  scene・保存設定の移行やutilの追加変更は不要。
 - Channel Editorの値同期を高速化したutilに対応。bool・float・enumの一括Bindingは
   変更に関係する属性だけを再同期し、複数選択時も通知nodeの対象だけを照合する。
   「全て」表示時の無関係な行の再読取りを抑える。UIの操作方法・公開APIは変更しない。
