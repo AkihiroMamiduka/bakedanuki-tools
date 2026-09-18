@@ -6,6 +6,7 @@ from typing import Literal, assert_type
 from bd_util.maya.ui import ChannelDisplayState, MayaEditSession
 from bd_util.ui import (
     BoolCheckBox,
+    CheckBoxSweep,
     EnumComboBox,
     FloatSliderSpinBox,
     FloatValueStepSpinBox,
@@ -46,6 +47,7 @@ else:
         row.display_buttons, dict[ChannelDisplayState, qt.QRadioButton]
     )
     assert_type(row.lock_check_box, qt.QCheckBox)
+    assert_type(row.set_locked(True), None)
 assert_type(channel_editor.dispose(), None)
 assert_type(channel_editor.close(), None)
 assert_type(channel_editor.restore(), channel_editor.ChannelEditorWindow)
@@ -57,6 +59,7 @@ assert_type(channel_editor.show().widget.filter_combo, qt.QComboBox)
 assert_type(channel_editor.show().widget.mode_label, qt.QLabel)
 assert_type(channel_editor.show().widget.filter_label, qt.QLabel)
 assert_type(channel_editor.show().widget.state_sweep, RadioButtonSweep)
+assert_type(channel_editor.show().widget.lock_sweep, CheckBoxSweep)
 assert_type(
     channel_editor.show().widget.controller.state_edit_session,
     MayaEditSession,

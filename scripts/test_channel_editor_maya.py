@@ -99,6 +99,7 @@ class _MayaSmokeSession:
             self._inspect_filters,
             self._inspect_attribute_order,
             self._inspect_state_sweep,
+            self._inspect_lock_sweep,
             self._close,
             self._reopen,
             self._change_selection,
@@ -1043,6 +1044,61 @@ class _MayaSmokeSession:
         cmds.undo()
         self._flush_gui()
         self.steps.append("radio_sweep_filter_deferral_and_single_undo_redo")
+        self._select_combo_item(widget.mode_combo, 0)
+
+    def _inspect_lock_sweep(self) -> None:
+        """実画面でlock列を往復し、複数行のロック・解除とUndoを確認する。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+
+        widget = self._require_window().widget
+        self._select_combo_item(widget.mode_combo, 1)
+        for locked in (True, False):
+            first = self._state_row("translate.translateX").lock_check_box
+            last = self._state_row("translate.translateZ").lock_check_box
+            start = qt.QPoint(8, first.height() // 2)
+            end = first.mapFromGlobal(
+                last.mapToGlobal(qt.QPoint(8, last.height() // 2))
+            )
+            cmds.flushUndo()
+            self._mouse(first, qt.QEvent.Type.MouseButtonPress, start)
+            self._mouse(first, qt.QEvent.Type.MouseMove, end)
+            self._mouse(first, qt.QEvent.Type.MouseMove, start)
+            self._flush_gui()
+            if not widget.lock_sweep.is_active:
+                raise AssertionError("lockなぞりが途中で終了しました")
+            for attribute in ("translateX", "translateY", "translateZ"):
+                if (
+                    self._attribute_states(attribute)
+                    != ((True, False, locked),) * 2
+                ):
+                    raise AssertionError(
+                        f"lockなぞりの反映に失敗: {attribute}"
+                    )
+            self._capture(f"21-lock-sweep-{locked}.png")
+            self._mouse(first, qt.QEvent.Type.MouseButtonRelease, start)
+            if widget.controller.state_edit_session.is_editing:
+                raise AssertionError("lockなぞりのUndoが終了していません")
+            cmds.undo()
+            self._flush_gui()
+            for attribute in ("translateX", "translateY", "translateZ"):
+                if (
+                    self._attribute_states(attribute)
+                    != ((True, False, not locked),) * 2
+                ):
+                    raise AssertionError(f"lockの一回Undoに失敗: {attribute}")
+            if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+                raise AssertionError("lockなぞりが複数のUndoに分かれています")
+            cmds.redo()
+            self._flush_gui()
+            for attribute in ("translateX", "translateY", "translateZ"):
+                if (
+                    self._attribute_states(attribute)
+                    != ((True, False, locked),) * 2
+                ):
+                    raise AssertionError(f"lockの一回Redoに失敗: {attribute}")
+        self.steps.append("lock_sweep_round_trip_and_single_undo_redo")
         self._select_combo_item(widget.mode_combo, 0)
 
     def _close(self) -> None:

@@ -16,6 +16,7 @@ from bd_util.maya.ui import (
 )
 from bd_util.ui import (
     BoolCheckBox,
+    CheckBoxSweep,
     EnumComboBox,
     FloatSliderSpinBox,
     FloatStepMode,
@@ -318,7 +319,7 @@ class AttributeStateRowWidget(qt.QWidget):
         layout.addWidget(self.editor)
 
         # 初期同期や外部変更は書き込まず、明示選択とクリックだけを入力にする
-        self.lock_check_box.clicked.connect(self._set_locked)
+        self.lock_check_box.clicked.connect(self.set_locked)
         row.state_binding.state_changed.connect(self._update_state)
         self._update_state()
 
@@ -397,7 +398,9 @@ class AttributeStateRowWidget(qt.QWidget):
                 f"{description}\n左ドラッグで複数行をなぞって選択\n{tooltip}"
             )
         self.lock_check_box.setToolTip(
-            f"Lock: 属性自身のロック／解除\n{tooltip}"
+            "Lock: 属性自身のロック／解除\n"
+            "左ドラッグで開始時の操作を複数行へ適用\n"
+            f"{tooltip}"
         )
 
     def _set_display_state(
@@ -420,11 +423,22 @@ class AttributeStateRowWidget(qt.QWidget):
         finally:
             self._update_state()
 
-    def _set_locked(self, locked: bool) -> None:
+    def set_locked(self, locked: bool) -> None:
         """属性自身のロックだけを変更し、親のロックには触れない。"""
         try:
-            self.row.state_binding.set_locked(locked)
+            session = self._edit_session
+            self.row.state_binding.set_locked(
+                locked,
+                edit_session=(
+                    session
+                    if session is not None and session.is_editing
+                    else None
+                ),
+            )
         except (ValueError, RuntimeError, ExceptionGroup):
+            # Bindingの通知で理由を表示し、操作後は正本の状態へ戻す
+            pass
+        finally:
             self._update_state()
 
 
@@ -522,13 +536,11 @@ class ChannelEditorWidget(qt.QWidget):
         # 選択・表示更新と、ユーザーによる値変更の経路を分離する
         self.controller = ChannelEditorController(self)
         self.state_sweep = RadioButtonSweep(self.scroll_area)
-        self.state_sweep.started.connect(self.controller.begin_state_edit)
-        self.state_sweep.finished.connect(
-            self.controller.state_edit_session.finish
-        )
-        self.controller.state_edit_session.finished.connect(
-            self.state_sweep.finish
-        )
+        self.lock_sweep = CheckBoxSweep(self.scroll_area)
+        for sweep in (self.state_sweep, self.lock_sweep):
+            sweep.started.connect(self.controller.begin_state_edit)
+            sweep.finished.connect(self.controller.state_edit_session.finish)
+            self.controller.state_edit_session.finished.connect(sweep.finish)
         self.controller.rows_changed.connect(self._rebuild_rows)
         self.controller.error_occurred.connect(self._show_error)
         self.controller.mode_changed.connect(self._sync_mode)
@@ -553,6 +565,7 @@ class ChannelEditorWidget(qt.QWidget):
     def _prepare_view_change(self) -> None:
         """行の入力を確定し、再構築前のスクロール位置を保持する。"""
         self.state_sweep.finish()
+        self.lock_sweep.finish()
         focus_widget = cast(
             Callable[[], qt.QWidget | None],
             getattr(qt.QApplication, "focusWidget"),
@@ -616,18 +629,21 @@ class ChannelEditorWidget(qt.QWidget):
     def refresh(self) -> None:
         """値を変更せず、現在のノードと属性を再取得する。"""
         self.state_sweep.finish()
+        self.lock_sweep.finish()
         self.message_label.hide()
         self.controller.refresh()
 
     def _show_error(self, message: str) -> None:
         """入力拒否や再構築失敗を、操作対象の画面へ表示する。"""
         self.state_sweep.finish()
+        self.lock_sweep.finish()
         self.message_label.setText(f"変更できませんでした: {message}")
         self.message_label.show()
 
     def _rebuild_rows(self) -> None:
         """古いViewを破棄して、新しい選択の入力行を配置する。"""
         self.state_sweep.clear()
+        self.lock_sweep.clear()
         for widget in self.row_widgets:
             widget.context_menu.close()
             if isinstance(widget.editor, EnumComboBox):
@@ -658,6 +674,9 @@ class ChannelEditorWidget(qt.QWidget):
                     )
                     for button in widget.display_buttons.values():
                         self.state_sweep.add_button(button)
+                    self.lock_sweep.add_button(
+                        widget.lock_check_box, on_change=widget.set_locked
+                    )
                 else:
                     key = (row.attribute.path, row.attribute.kind)
                     widget = AttributeRowWidget(
@@ -692,6 +711,7 @@ class ChannelEditorWidget(qt.QWidget):
     def dispose(self) -> None:
         """画面の入力と監視を即時に終了する。"""
         self.state_sweep.dispose()
+        self.lock_sweep.dispose()
         self._scroll_timer.stop()
         self.context_menu.close()
         for widget in self.row_widgets:
