@@ -127,7 +127,8 @@ MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中�
 並べ替えは行の構築時だけ行い、通常の値変更では再実行しません。
 
 属性名は共通幅の列で右揃えにし、表示中の全行で入力欄の左端を揃えます。
-両モードの入力グループは156 pxを共用します。
+入力グループは値編集が156 px、表示・ロックが200 pxです。
+モード切替ではWindow幅を保ち、設定モードでは名前列を縮めて操作欄を確保します。
 初期サイズの指定は320×360、最小幅は280です。実際の寸法はMayaのドック領域に合わせて調整されます。
 属性名側の余白は`ui.py`の`_INITIAL_WIDTH`・`_MINIMUM_WIDTH`で調整できます。
 名前列の推奨幅は`widget.py`の`_NAME_FIELD_PREFERRED_WIDTH`（92 px）で指定します。
@@ -228,14 +229,16 @@ sceneへstepを保存しません。
 
 ## 表示・ロック
 
-属性名の右側を、表示状態のComboBoxとロックのCheckBoxへ切り替えます。
-入力グループ全体は値編集と同じ156 pxで、追加の列は作りません。
+属性名の右側を、`key / ch / hide`のラジオボタンと`lock`のCheckBoxへ切り替えます。
+表示状態の3つだけを排他的に選択し、ロックは独立して操作できます。
+設定モードの操作欄は200 pxです。狭いWindowでは属性名の省略が増えますが、
+正式な名前はtooltipで確認できます。各ボタンのtooltipには省略前の意味も表示します。
 
 | 表示状態 | keyable | channelBox |
 | --- | --- | --- |
-| Keyable | True | False |
-| ChannelBox | False | True |
-| Hide | False | False |
+| key（Keyable） | True | False |
+| ch（ChannelBox） | False | True |
+| hide（Hide） | False | False |
 
 Keyableはキー設定可能、ChannelBoxはキー設定不可でChannel Boxへ表示、
 Hideはキー設定不可でChannel Boxから非表示の状態です。
@@ -252,8 +255,10 @@ Maya標準Undoで元の組合せを復元できないため、表示状態の変
 
 複数選択の対象は、値編集と同じ正式属性path・型区分の属性です。
 enumの項目定義は変更しないため、定義が異なるenumも状態編集の対象になります。
-表示状態が異なる場合はComboBoxへ「混在」、ロックが異なる場合はCheckBoxへ三状態の印を表示します。
+表示状態が異なる場合はラジオボタンを3つとも未選択にし、属性名の「•」とtooltipで混在を示します。
+ロックが異なる場合はCheckBoxへ三状態の印を表示します。
 表示同期だけでは揃えず、表示状態を選択したときやロックを操作したときに、その項目だけ一括適用します。
+ラジオボタンはクリック・Space・矢印キーで選択できます。同じ状態の再選択はUndo履歴を増やしません。
 ロック混在のクリック／Spaceはロックする操作です。次の操作で解除します。
 属性名と入力欄のtooltipで、各操作の対象数や操作できない理由を確認できます。
 
@@ -311,7 +316,8 @@ stepの初期値選択とWindow内の設定保持はtools、値とstepの連動�
 | `widget.py` | `_VALUE_FIELD_WIDTH` | 90 | 数値入力欄の固定幅 |
 | `widget.py` | `_AUXILIARY_FIELD_WIDTH` | 60 | StepとSliderの共通固定幅 |
 | `widget.py` | `_FIELD_SPACING` | 6 | ValueとStep / Sliderの間隔 |
-| `widget.py` | `_EDITOR_WIDTH` | 156（上記から算出） | 値・表示・ロックで共用する入力列の幅 |
+| `widget.py` | `_EDITOR_WIDTH` | 156（上記から算出） | 値編集の入力列の幅 |
+| `widget.py` | `_STATE_EDITOR_WIDTH` | 200 | 表示・ロックの操作列の幅 |
 | `widget.py` | `_NAME_FIELD_PREFERRED_WIDTH` | 92 | 属性名列の推奨幅。長い名前は省略表示 |
 | `ui.py` | `_INITIAL_WIDTH` | 320 | Window / workspaceControlの初期幅 |
 | `ui.py` | `_MINIMUM_WIDTH` | 280 | Window / workspaceControlの最小幅 |
@@ -500,3 +506,21 @@ Maya 2025本体も37工程成功し、保存画像で両モードの文字と配
 本体検証の結果・画像は`%TEMP%/bd-channel-editor-maya2025-za269o96`へ保存しました。
 終了待ちでは既知のタイムアウトが再現し、runnerの終了codeは1です。
 操作37工程の成功とは区別し、検証専用processの停止を確認しました。
+
+### 表示状態のラジオボタン化（2026-09-18）
+
+表示状態をkey／ch／hideのラジオボタンに変更し、設定モードの操作幅を200 pxにしました。
+lockは独立したCheckBoxとし、表示状態の混在時は3ボタンとも未選択にします。
+既存のMayaChannelStateBindingを利用するtoolsだけの変更です。
+
+- `check.cmd -IncludeMaya`: Black・Pyright・unit 8件・Maya 2025 runtime 98件が成功。
+- Maya 2026 / 2027のruntime test: 各98件成功。
+- 280 / 360 / 520 pxの配置、クリック・矢印・Space、混在、一括入力、Undo／Redo、
+  編集不可状態での無書込み、フィルターによる行の除去・再表示を確認。
+- Maya 2025本体: 37工程成功。実マウス入力とSpaceで状態を変更し、
+  保存画像で200 pxの操作欄・文字・混在表示を確認。
+
+本体検証の結果・画像は`%TEMP%/bd-channel-editor-maya2025-wv4li987`へ保存しました。
+終了待ちでは既知のタイムアウトが再現し、runnerの終了codeは1です。
+操作37工程の成功とは区別し、検証専用processの停止を確認しました。
+Maya 2026 / 2027本体の画面操作は今回実施していません。

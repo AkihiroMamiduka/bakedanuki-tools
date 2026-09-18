@@ -9,6 +9,13 @@
 
 ### Changed
 
+- Channel Editorの表示状態入力を`key / ch / hide`のラジオボタンへ変更し、
+  ロックの表記を`lock`へ変更。設定モードの操作欄を200 pxに広げる。
+  混在時は3つとも未選択にし、既存の印とtooltipで示す。一括操作・Undo／Redoは維持する。
+  Viewを参照するコードは`display_combo`から`display_buttons`へ移行し、
+  状態名（`"keyable"`、`"channel_box"`、`"hidden"`）をキーにしたボタンの
+  `isChecked()`／`click()`を使う。
+  値編集は156 pxを維持し、scene・保存設定の移行やutilの追加変更は不要。
 - Channel Editor上部のComboBoxへ`Mode:`と`Attribute Filter:`のラベルを追加。
   ラベルは右揃えの共通列へ配置し、選択欄の左端と幅を揃える。
   操作・scene・保存設定の変更や移行は不要。

@@ -8,6 +8,7 @@ from typing import Literal, cast
 
 import pytest
 from maya import cmds
+from maya.api import OpenMaya as om
 
 from bd_util.maya.ui import MayaFloatPlugsBinding
 from bd_util.ui import FloatValueStepSpinBox, qt
@@ -87,13 +88,20 @@ def _values(editor: ChannelEditorWidget) -> None:
 def _choose_display(
     editor: ChannelEditorWidget, display: _Display, name: str = "weight"
 ) -> None:
-    """表示状態の項目を明示選択し、同じ項目の選び直しも通知する。"""
-    combo = _state_row(editor, name).display_combo
-    index = combo.findData(display)
-    assert index >= 0
-    combo.setCurrentIndex(index)
-    combo.activated.emit(index)
+    """表示状態のラジオボタンをクリックして明示入力する。"""
+    _state_row(editor, name).display_buttons[display].click()
     _events()
+
+
+def _checked_display(
+    editor: ChannelEditorWidget, name: str = "weight"
+) -> tuple[_Display, ...]:
+    """画面で選択中の表示状態を返し、混在時は空のtupleにする。"""
+    return tuple(
+        value
+        for value, button in _state_row(editor, name).display_buttons.items()
+        if button.isChecked()
+    )
 
 
 def _filter(
@@ -217,8 +225,15 @@ def test_mode_switch_preserves_width_with_long_hidden_name(
     assert editor.scroll_area.horizontalScrollBar().maximum() == 0
     for current in editor.row_widgets:
         assert isinstance(current, AttributeStateRowWidget)
-        assert current.editor.width() == 156
+        assert current.editor.width() == 200
         assert current.editor.x() + current.editor.width() == current.width()
+        buttons = (*current.display_buttons.values(), current.lock_check_box)
+        for button in buttons:
+            assert button.width() >= button.sizeHint().width()
+            assert 0 <= button.x()
+            assert button.x() + button.width() <= current.editor.width()
+        for left, right in zip(buttons, buttons[1:]):
+            assert left.x() + left.width() < right.x()
     _values(editor)
     assert not editor.scroll_area.verticalScrollBar().isVisible()
     restored = _value_row(editor)
@@ -321,7 +336,7 @@ def test_filtered_display_edit_completes_all_targets_before_row_removal(
     _events()
     assert "weight" not in _row_names(editor)
     _filter(editor, "all")
-    assert _state_row(editor).display_combo.currentData() == "hidden"
+    assert _checked_display(editor) == ("hidden",)
 
 
 @pytest.mark.parametrize("mode", ["values", "states"])
@@ -481,10 +496,7 @@ def test_hidden_attribute_can_be_restored_and_hidden_row_stays_available(
     _states(editor)
     _choose_display(editor, "hidden", "hiddenValue")
     assert "hiddenValue" in _row_names(editor)
-    assert (
-        _state_row(editor, "hiddenValue").display_combo.currentData()
-        == "hidden"
-    )
+    assert _checked_display(editor, "hiddenValue") == ("hidden",)
     cmds.select(clear=True)
     _events()
     cmds.select(*_NODES, replace=True)
@@ -519,7 +531,7 @@ def test_display_change_has_one_undo_and_redo(
         expected,
         expected,
     ]
-    assert _state_row(editor).display_combo.currentData() == display
+    assert _checked_display(editor) == (display,)
 
 
 def test_mixed_display_is_explicit_and_undo_restores_each_node(
@@ -530,7 +542,8 @@ def test_mixed_display_is_explicit_and_undo_restores_each_node(
     _events()
     _states(state_editor)
     row = _state_row(state_editor)
-    assert "混在" in row.display_combo.currentText()
+    assert _checked_display(state_editor) == ()
+    assert all("混在" in b.toolTip() for b in row.display_buttons.values())
     assert row.name_label.text().startswith("• ")
     before = [_flags(name + ".weight") for name in _NODES]
     cmds.flushUndo()
@@ -539,7 +552,7 @@ def test_mixed_display_is_explicit_and_undo_restores_each_node(
     cmds.undo()
     _events()
     assert [_flags(name + ".weight") for name in _NODES] == before
-    assert "混在" in _state_row(state_editor).display_combo.currentText()
+    assert _checked_display(state_editor) == ()
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
@@ -550,7 +563,7 @@ def test_value_mixed_marker_does_not_leak_into_state_mode(
     assert _value_row(state_editor).name_label.text().startswith("• ")
     _states(state_editor)
     assert not _state_row(state_editor).name_label.text().startswith("• ")
-    assert "混在" not in _state_row(state_editor).display_combo.currentText()
+    assert _checked_display(state_editor) == ("keyable",)
 
 
 def test_lock_and_unlock_representative_do_not_depend_on_value_writability(
@@ -628,7 +641,7 @@ def test_external_state_change_does_not_propagate(
     cmds.setAttr("stateA.weight", lock=True)
     _events()
     row = _state_row(state_editor)
-    assert "混在" in row.display_combo.currentText()
+    assert _checked_display(state_editor) == ()
     assert row.lock_check_box.checkState() == qt.Qt.CheckState.PartiallyChecked
     assert _flags("stateB.weight") == (True, False, False)
 
@@ -670,7 +683,7 @@ def test_parent_lock_is_never_implicitly_removed(
         _events()
     assert bool(cmds.getAttr("stateA.translate", lock=True))
     row = _state_row(state_editor, "translateX")
-    if row.display_combo.isEnabled():
+    if row.display_buttons["hidden"].isEnabled():
         _choose_display(state_editor, "hidden", "translateX")
     assert bool(cmds.getAttr("stateA.translate", lock=True))
 
@@ -699,6 +712,83 @@ def test_display_noop_does_not_add_undo(
     """同じ表示状態の明示選択はUndo履歴を増やさない。"""
     _states(state_editor)
     _choose_display(state_editor, "keyable")
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_display_radio_keyboard_stays_independent_of_lock_and_other_rows(
+    state_editor: ChannelEditorWidget,
+) -> None:
+    """矢印とSpaceで表示状態だけを変更し、ロックや別行の選択へ影響させない。"""
+    editor = state_editor
+    _states(editor)
+    row = _state_row(editor)
+    editor.scroll_area.ensureWidgetVisible(row)
+    _events()
+    row.display_buttons["keyable"].setFocus()
+    for key, expected in (
+        (qt.Qt.Key.Key_Right, "channel_box"),
+        (qt.Qt.Key.Key_Right, "hidden"),
+        (qt.Qt.Key.Key_Left, "channel_box"),
+    ):
+        focused = next(b for b in row.display_buttons.values() if b.hasFocus())
+        cmds.flushUndo()
+        for event_type in (qt.QEvent.Type.KeyPress, qt.QEvent.Type.KeyRelease):
+            qt.QApplication.sendEvent(
+                focused,
+                qt.QtGui.QKeyEvent(
+                    event_type, key, qt.Qt.KeyboardModifier.NoModifier
+                ),
+            )
+        _events()
+        assert _checked_display(editor) == (expected,)
+        assert [_flags(n + ".weight") for n in _NODES] == [
+            (False, expected == "channel_box", False),
+        ] * 2
+        assert _checked_display(editor, "hiddenValue") == ("hidden",)
+    row.display_buttons["keyable"].setFocus()
+    for event_type in (qt.QEvent.Type.KeyPress, qt.QEvent.Type.KeyRelease):
+        qt.QApplication.sendEvent(
+            row.display_buttons["keyable"],
+            qt.QtGui.QKeyEvent(
+                event_type,
+                qt.Qt.Key.Key_Space,
+                qt.Qt.KeyboardModifier.NoModifier,
+            ),
+        )
+    _events()
+    assert _checked_display(editor) == ("keyable",)
+    assert [_flags(n + ".weight") for n in _NODES] == [
+        (True, False, False)
+    ] * 2
+
+
+def test_disabled_display_radios_do_not_write(
+    state_editor: ChannelEditorWidget,
+) -> None:
+    """編集不可の行では3つとも無効にし、クリックで状態やUndoを変更しない。"""
+    # 両フラグが属性定義で有効な状態は標準Undoで復元できず、表示変更だけ不可になる
+    cmds.deleteAttr("stateA.weight")
+    definition = om.MFnNumericAttribute()
+    attribute = definition.create(
+        "weight", "weight", om.MFnNumericData.kDouble
+    )
+    definition.keyable = True
+    definition.channelBox = True
+    selection = om.MSelectionList()
+    selection.add("stateA")
+    om.MFnDependencyNode(selection.getDependNode(0)).addAttribute(attribute)
+    _events()
+    _states(state_editor)
+    row = _state_row(state_editor)
+    before = [_flags(n + ".weight") for n in _NODES]
+    assert row.lock_check_box.isEnabled()
+    cmds.flushUndo()
+    for button in row.display_buttons.values():
+        assert not button.isEnabled()
+        button.click()
+    _events()
+    assert [_flags(n + ".weight") for n in _NODES] == before
+    assert _checked_display(state_editor) == ("keyable",)
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 

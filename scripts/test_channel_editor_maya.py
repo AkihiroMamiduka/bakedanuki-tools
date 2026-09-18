@@ -652,9 +652,7 @@ class _MayaSmokeSession:
         ):
             cmds.flushUndo()
             row = self._state_row("hiddenWeight")
-            self._select_combo_item(
-                row.display_combo, row.display_combo.findData(mode)
-            )
+            self._select_radio_button(row.display_buttons[mode])
             if self._attribute_states("hiddenWeight") != (expected,) * 2:
                 raise AssertionError(f"非表示属性を{mode}へ変更できません")
             self._assert_values("hiddenWeight", (0.2, 0.6))
@@ -675,9 +673,7 @@ class _MayaSmokeSession:
         # 表示されていた属性を隠しても設定行は維持する
         cmds.flushUndo()
         row = self._state_row("enabled")
-        self._select_combo_item(
-            row.display_combo, row.display_combo.findData("hidden")
-        )
+        self._select_radio_button(row.display_buttons["hidden"])
         self._state_row("enabled")
         if self._attribute_states("enabled") != initial:
             raise AssertionError("Hideの設定または状態行の維持に失敗しました")
@@ -735,14 +731,15 @@ class _MayaSmokeSession:
             != qt.Qt.CheckState.PartiallyChecked
         ):
             raise AssertionError("ロックの混在が三状態で表示されません")
-        if "混在" not in row.display_combo.currentText():
-            raise AssertionError("表示状態の混在が表示されません")
+        if any(button.isChecked() for button in row.display_buttons.values()):
+            raise AssertionError("混在時に表示状態が未選択になっていません")
+        if "混在" not in row.display_buttons["keyable"].toolTip():
+            raise AssertionError("表示状態の混在が説明されません")
         initial = self._attribute_states("enabled")
         self._capture("13-state-mode-mixed.png")
         cmds.flushUndo()
-        self._select_combo_item(
-            row.display_combo, row.display_combo.findData("keyable")
-        )
+        self._key(row.display_buttons["keyable"], qt.Qt.Key.Key_Space)
+        self._flush_gui()
         if self._attribute_states("enabled") != (
             (True, False, False),
             (True, False, True),
@@ -860,9 +857,7 @@ class _MayaSmokeSession:
             )
         self._capture("16-states-keyable-filter.png")
         row = self._state_row("weight")
-        self._select_combo_item(
-            row.display_combo, row.display_combo.findData("hidden")
-        )
+        self._select_radio_button(row.display_buttons["hidden"])
         if self._attribute_states("weight") != ((False, False, False),) * 2:
             raise AssertionError(
                 "絞り込み中の表示変更が両対象へ反映されません"
@@ -1269,15 +1264,15 @@ class _MayaSmokeSession:
         )
 
     def _assert_state_layout(self, row: AttributeStateRowWidget) -> None:
-        """スクロールバーによる列の移動を許容し、Windowと入力幅を維持する。"""
+        """Window幅を維持し、200pxの操作欄へ全ボタンが収まることを確認する。"""
         actual = self._row_layout(row)
         expected = self._value_layout
         if expected is None or (actual[0], actual[3]) != (
             expected[0],
-            expected[3],
+            200,
         ):
             raise AssertionError(
-                f"モード切替でWindow幅か入力幅が変わりました: "
+                f"Window幅または設定モードの200px幅が異なります: "
                 f"{self._value_layout} -> {actual}"
             )
         if (
@@ -1286,6 +1281,12 @@ class _MayaSmokeSession:
             .maximum()
         ):
             raise AssertionError("状態入力欄がWindow幅に収まりません")
+        for button in (*row.display_buttons.values(), row.lock_check_box):
+            if (
+                button.width() < button.sizeHint().width()
+                or button.x() + button.width() > row.editor.width()
+            ):
+                raise AssertionError("状態ボタンが200pxの操作欄に収まりません")
 
     def _attribute_states(
         self, name: str
@@ -1301,6 +1302,18 @@ class _MayaSmokeSession:
             )
             for node in self.nodes
         )
+
+    def _select_radio_button(self, button: qt.QRadioButton) -> None:
+        """ラジオボタンを実マウス入力で選択し、遅延同期まで処理する。"""
+        from bd_util.ui import qt
+
+        self._flush_gui()
+        for event_type in (
+            qt.QEvent.Type.MouseButtonPress,
+            qt.QEvent.Type.MouseButtonRelease,
+        ):
+            self._mouse(button, event_type, button.rect().center())
+        self._flush_gui()
 
     def _select_combo_item(self, combo: qt.QComboBox, index: int) -> None:
         """ComboBoxを開いて項目をマウスで選び、通常の選択通知を通す。"""

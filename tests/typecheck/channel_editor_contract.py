@@ -3,6 +3,7 @@
 
 from typing import Literal, assert_type
 
+from bd_util.maya.ui import ChannelDisplayState
 from bd_util.ui import (
     BoolCheckBox,
     EnumComboBox,
@@ -40,7 +41,9 @@ if isinstance(row, AttributeRowWidget):
 else:
     assert_type(row.row, ChannelStateRow)
     assert_type(row.editor, qt.QWidget)
-    assert_type(row.display_combo, qt.QComboBox)
+    assert_type(
+        row.display_buttons, dict[ChannelDisplayState, qt.QRadioButton]
+    )
     assert_type(row.lock_check_box, qt.QCheckBox)
 assert_type(channel_editor.dispose(), None)
 assert_type(channel_editor.close(), None)

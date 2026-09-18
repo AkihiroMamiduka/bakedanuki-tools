@@ -8,6 +8,7 @@ from functools import partial
 from typing import Protocol, cast
 
 from bd_util.maya.ui import (
+    ChannelDisplayState,
     MayaBoolPlugsBinding,
     MayaEnumPlugsBinding,
     get_channel_box_precision,
@@ -33,7 +34,13 @@ _VALUE_FIELD_WIDTH = 90
 _AUXILIARY_FIELD_WIDTH = 60
 _FIELD_SPACING = 6
 _EDITOR_WIDTH = _VALUE_FIELD_WIDTH + _FIELD_SPACING + _AUXILIARY_FIELD_WIDTH
+_STATE_EDITOR_WIDTH = 200
 _NAME_FIELD_PREFERRED_WIDTH = 92
+_DISPLAY_OPTIONS: tuple[tuple[ChannelDisplayState, str, str], ...] = (
+    ("keyable", "key", "Keyable: キー設定可能"),
+    ("channel_box", "ch", "ChannelBox: キー設定不可・Channel Boxに表示"),
+    ("hidden", "hide", "Hide: キー設定不可・Channel Boxから非表示"),
+)
 
 
 class _MenuActions(Protocol):
@@ -251,7 +258,7 @@ class AttributeRowWidget(qt.QWidget):
 
 
 class AttributeStateRowWidget(qt.QWidget):
-    """値入力と同じ幅へ表示状態とロックの操作を配置する。"""
+    """200pxの操作欄へ表示状態のラジオボタンとロックを配置する。"""
 
     refresh_requested = qt.Signal()
 
@@ -275,24 +282,29 @@ class AttributeStateRowWidget(qt.QWidget):
         self.refresh_action.triggered.connect(self.refresh_requested.emit)
         cast(_MenuActions, self.context_menu).addAction(self.refresh_action)
         self.editor = qt.QWidget(self)
-        self.editor.setFixedWidth(_EDITOR_WIDTH)
-        self.display_combo = qt.QComboBox(self.editor)
-        self.display_combo.setFixedWidth(_VALUE_FIELD_WIDTH)
-        self.display_combo.setAccessibleName(
-            f"{row.attribute.nice_name} 表示状態"
-        )
-        self.lock_check_box: qt.QCheckBox = _LockCheckBox(
-            "ロック", self.editor
-        )
-        self.lock_check_box.setTristate(True)
-        self.lock_check_box.setFixedWidth(_AUXILIARY_FIELD_WIDTH)
-        self.lock_check_box.setAccessibleName(
-            f"{row.attribute.nice_name} ロック"
-        )
+        self.editor.setFixedWidth(_STATE_EDITOR_WIDTH)
+        self.display_buttons: dict[ChannelDisplayState, qt.QRadioButton] = {}
+        self._display_group = qt.QtWidgets.QButtonGroup(self.editor)
+        self._display_group.setExclusive(True)
         controls = qt.QHBoxLayout(self.editor)
         controls.setContentsMargins(0, 0, 0, 0)
         controls.setSpacing(_FIELD_SPACING)
-        controls.addWidget(self.display_combo)
+        for value, label, description in _DISPLAY_OPTIONS:
+            button = qt.QRadioButton(label, self.editor)
+            button.setAutoExclusive(False)
+            button.setAccessibleName(
+                f"{row.attribute.nice_name} {description}"
+            )
+            self._display_group.addButton(button)
+            self.display_buttons[value] = button
+            controls.addWidget(button)
+            button.clicked.connect(partial(self._set_display_state, value))
+        self.lock_check_box: qt.QCheckBox = _LockCheckBox("lock", self.editor)
+        self.lock_check_box.setTristate(True)
+        self.lock_check_box.setAccessibleName(
+            f"{row.attribute.nice_name} ロック"
+        )
+        controls.addStretch(1)
         controls.addWidget(self.lock_check_box)
         layout = qt.QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -301,7 +313,6 @@ class AttributeStateRowWidget(qt.QWidget):
         layout.addWidget(self.editor)
 
         # 初期同期や外部変更は書き込まず、明示選択とクリックだけを入力にする
-        self.display_combo.activated.connect(self._set_display_state)
         self.lock_check_box.clicked.connect(self._set_locked)
         row.state_binding.state_changed.connect(self._update_state)
         self._update_state()
@@ -314,24 +325,20 @@ class AttributeStateRowWidget(qt.QWidget):
     def _update_state(self) -> None:
         """表示とロックの混在を独立して表示し、操作可否を同期する。"""
         state = self.row.state_binding.state
-        old_display = self.display_combo.blockSignals(True)
+        available = not self.row.state_binding.is_disposed
+        old_display = tuple(
+            button.blockSignals(True)
+            for button in self.display_buttons.values()
+        )
         old_lock = self.lock_check_box.blockSignals(True)
+        # 混在時には排他制御を一時解除し、3つとも未選択へ同期する
+        self._display_group.setExclusive(False)
         try:
-            self.display_combo.clear()
-            if state.display_mixed:
-                self.display_combo.addItem("混在", None)
-            for label, value in (
-                ("Keyable", "keyable"),
-                ("ChannelBox", "channel_box"),
-                ("Hide", "hidden"),
-            ):
-                self.display_combo.addItem(label, value)
-            self.display_combo.setCurrentIndex(
-                0
-                if state.display_mixed
-                else self.display_combo.findData(state.display_state)
-            )
-            self.display_combo.setEnabled(state.can_set_display)
+            for value, button in self.display_buttons.items():
+                button.setChecked(
+                    not state.display_mixed and value == state.display_state
+                )
+                button.setEnabled(available and state.can_set_display)
             self.lock_check_box.setCheckState(
                 qt.Qt.CheckState.PartiallyChecked
                 if state.lock_mixed
@@ -341,9 +348,13 @@ class AttributeStateRowWidget(qt.QWidget):
                     else qt.Qt.CheckState.Unchecked
                 )
             )
-            self.lock_check_box.setEnabled(state.can_set_locked)
+            self.lock_check_box.setEnabled(available and state.can_set_locked)
         finally:
-            self.display_combo.blockSignals(old_display)
+            self._display_group.setExclusive(True)
+            for button, blocked in zip(
+                self.display_buttons.values(), old_display, strict=True
+            ):
+                button.blockSignals(blocked)
             self.lock_check_box.blockSignals(old_lock)
 
         mixed = state.display_mixed or state.lock_mixed
@@ -376,18 +387,22 @@ class AttributeStateRowWidget(qt.QWidget):
                 details.append(f"{target.plug_name}: {' / '.join(reasons)}")
         tooltip = "\n".join(details)
         self.name_label.setToolTip(tooltip)
-        self.display_combo.setToolTip(tooltip)
-        self.lock_check_box.setToolTip(tooltip)
+        for value, _label, description in _DISPLAY_OPTIONS:
+            self.display_buttons[value].setToolTip(f"{description}\n{tooltip}")
+        self.lock_check_box.setToolTip(
+            f"Lock: 属性自身のロック／解除\n{tooltip}"
+        )
 
-    def _set_display_state(self, index: int) -> None:
+    def _set_display_state(
+        self, value: ChannelDisplayState, _checked: bool = False
+    ) -> None:
         """明示選択した表示状態だけを、一括変更する。"""
-        value = self.display_combo.itemData(index)
-        if value not in ("keyable", "channel_box", "hidden"):
-            return
         try:
             self.row.state_binding.set_display_state(value)
         except (ValueError, RuntimeError, ExceptionGroup):
-            # Bindingの通知で理由を表示し、失敗前の正本へUIを戻す
+            # Bindingの通知で理由を表示し、操作後は正本の選択へ戻す
+            pass
+        finally:
             self._update_state()
 
     def _set_locked(self, locked: bool) -> None:
@@ -590,8 +605,6 @@ class ChannelEditorWidget(qt.QWidget):
             widget.context_menu.close()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
-            if isinstance(widget, AttributeStateRowWidget):
-                widget.display_combo.hidePopup()
             self._rows_layout.removeWidget(widget)
             widget.hide()
             widget.deleteLater()
@@ -652,6 +665,4 @@ class ChannelEditorWidget(qt.QWidget):
             widget.context_menu.close()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
-            if isinstance(widget, AttributeStateRowWidget):
-                widget.display_combo.hidePopup()
         self.controller.dispose()
