@@ -8,9 +8,9 @@ import pytest
 from maya import cmds
 
 from bd_util.ui import qt
-from bd_tools.channel_editor.widget import (
+from bd_tools.bd_channel_box.widget import (
     AttributeStateRowWidget,
-    ChannelEditorWidget,
+    ChannelBoxWidget,
 )
 
 
@@ -22,14 +22,14 @@ def _events() -> None:
 
 
 @pytest.fixture
-def editor(qt_application: qt.QApplication) -> Iterator[ChannelEditorWidget]:
+def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     """複数transformのKeyable属性を、上位の行が見える大きさで表示する。"""
     del qt_application
     cast(Callable[..., str], cmds.file)(new=True, force=True)
     for name in ("sweepA", "sweepB"):
         cmds.createNode("transform", name=name)
     cmds.select("sweepA", "sweepB", replace=True)
-    widget = ChannelEditorWidget()
+    widget = ChannelBoxWidget()
     widget.resize(380, 460)
     widget.mode_combo.setCurrentIndex(1)
     widget.filter_combo.setCurrentIndex(
@@ -46,7 +46,7 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelEditorWidget]:
     cast(Callable[..., str], cmds.file)(new=True, force=True)
 
 
-def _button(editor: ChannelEditorWidget, name: str) -> qt.QRadioButton:
+def _button(editor: ChannelBoxWidget, name: str) -> qt.QRadioButton:
     """対象行のHideボタンを取得する。"""
     row = next(w for w in editor.row_widgets if w.row.attribute.name == name)
     assert isinstance(row, AttributeStateRowWidget)
@@ -80,7 +80,7 @@ def _mouse(
 
 
 def _start(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> tuple[qt.QRadioButton, qt.QRadioButton]:
     """Translate XからZまで高速になぞり、Yを含む三行を変更する。"""
     first, last = _button(editor, "translateX"), _button(editor, "translateZ")
@@ -102,7 +102,7 @@ def _assert_keyable(value: bool) -> None:
 
 
 def test_sweep_freezes_filtered_rows_and_groups_undo(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """変更は即時に反映し、絞り込みはrelease後、Undoは全行一回にする。"""
     before = editor.row_widgets
@@ -127,7 +127,7 @@ def test_sweep_freezes_filtered_rows_and_groups_undo(
     _assert_keyable(False)
 
 
-def _lock(editor: ChannelEditorWidget, name: str) -> qt.QCheckBox:
+def _lock(editor: ChannelBoxWidget, name: str) -> qt.QCheckBox:
     """指定行のlock入力を取得する。"""
     row = next(w for w in editor.row_widgets if w.row.attribute.name == name)
     assert isinstance(row, AttributeStateRowWidget)
@@ -146,7 +146,7 @@ def _assert_locked(value: bool) -> None:
 
 
 def _start_lock(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> tuple[qt.QCheckBox, qt.QCheckBox]:
     """Translate三軸を一度の移動でなぞり、操作中の状態を返す。"""
     first, last = _lock(editor, "translateX"), _lock(editor, "translateZ")
@@ -158,7 +158,7 @@ def _start_lock(
 
 @pytest.mark.parametrize("initial", ["unlocked", "locked", "mixed"])
 def test_lock_sweep_normalizes_mixed_rows_and_groups_undo(
-    editor: ChannelEditorWidget, initial: str
+    editor: ChannelBoxWidget, initial: str
 ) -> None:
     """開始元で決めた状態へ混在行を揃え、往復しても一回でUndoする。"""
     if initial in ("locked", "mixed"):
@@ -207,7 +207,7 @@ def test_lock_sweep_normalizes_mixed_rows_and_groups_undo(
     ["escape", "hide", "mode", "filter", "refresh", "selection", "dispose"],
 )
 def test_lock_sweep_interruption_closes_undo(
-    editor: ChannelEditorWidget, action: str
+    editor: ChannelBoxWidget, action: str
 ) -> None:
     """中断経路でlock操作を終了し、次の値変更を同じUndoへ含めない。"""
     first, last = _start_lock(editor)
@@ -249,7 +249,7 @@ def test_lock_sweep_interruption_closes_undo(
     ["escape", "hide", "mode", "filter", "refresh", "selection", "dispose"],
 )
 def test_interruption_commits_and_closes_undo(
-    editor: ChannelEditorWidget, action: str
+    editor: ChannelBoxWidget, action: str
 ) -> None:
     """各中断経路で入力を終了し、後続の値変更を同じUndoへ混ぜない。"""
     first, last = _start(editor)
@@ -287,7 +287,7 @@ def test_interruption_commits_and_closes_undo(
 
 
 def test_attribute_removal_interrupts_without_deferring_structure(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """属性構成の変更はなぞりを中断し、古いBindingへの入力を止める。"""
     cmds.addAttr("sweepA", longName="temporary", attributeType="double")
@@ -301,7 +301,7 @@ def test_attribute_removal_interrupts_without_deferring_structure(
 
 
 def test_lock_failure_restores_current_row_and_stops_sweep(
-    editor: ChannelEditorWidget, monkeypatch: pytest.MonkeyPatch
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """途中行の失敗ではその行を復旧し、先行行だけを一回Undoで戻す。"""
     original = cast(Callable[..., None], cmds.setAttr)
@@ -338,7 +338,7 @@ def test_lock_failure_restores_current_row_and_stops_sweep(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
-def test_lock_sweep_skips_disabled_rows(editor: ChannelEditorWidget) -> None:
+def test_lock_sweep_skips_disabled_rows(editor: ChannelBoxWidget) -> None:
     """親lockで操作不可の行を飛ばし、前後の属性だけへ適用する。"""
     cmds.setAttr("sweepA.translate", lock=True)
     _events()

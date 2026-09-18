@@ -1,5 +1,5 @@
 # coding: utf-8
-"""Channel Editorのenum入力・定義差・表示同期・寿命を検証する。"""
+"""bdChannelBoxのenum入力・定義差・表示同期・寿命を検証する。"""
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ from maya import cmds
 from bd_util.maya.ui import MayaEnumPlugsBinding
 from bd_util.ui import EnumComboBox, EnumItem, qt
 
-from bd_tools.channel_editor.widget import (
+from bd_tools.bd_channel_box.widget import (
     AttributeRowWidget,
-    ChannelEditorWidget,
+    ChannelBoxWidget,
 )
 
 _NODES = ("enumA", "enumB", "enumC")
@@ -38,16 +38,14 @@ def _values() -> list[int]:
     return [cast(int, cmds.getAttr(name + ".mode")) for name in _NODES]
 
 
-def _row(
-    editor: ChannelEditorWidget, path: str = "mode"
-) -> AttributeRowWidget:
+def _row(editor: ChannelBoxWidget, path: str = "mode") -> AttributeRowWidget:
     """正式pathに対応する、再構築後の最新の行を取得する。"""
     row = next(w for w in editor.row_widgets if w.row.attribute.path == path)
     assert isinstance(row, AttributeRowWidget)
     return row
 
 
-def _combo(editor: ChannelEditorWidget) -> EnumComboBox:
+def _combo(editor: ChannelBoxWidget) -> EnumComboBox:
     """enum行が専用Viewへ接続されていることを確認する。"""
     row = _row(editor)
     assert isinstance(row.editor, EnumComboBox)
@@ -58,7 +56,7 @@ def _combo(editor: ChannelEditorWidget) -> EnumComboBox:
 @pytest.fixture
 def enum_editor(
     qt_application: qt.QApplication,
-) -> Iterator[ChannelEditorWidget]:
+) -> Iterator[ChannelBoxWidget]:
     """同じ定義で異なる現在値を持つ3ノードを表示する。"""
     assert qt_application is not None
     file_command = cast(Callable[..., str], cmds.file)
@@ -75,7 +73,7 @@ def enum_editor(
         _set(name + ".mode", value)
     cmds.select(*_NODES, replace=True)
     cmds.flushUndo()
-    widget = ChannelEditorWidget()
+    widget = ChannelBoxWidget()
     widget.show()
     _events()
     yield widget
@@ -87,7 +85,7 @@ def enum_editor(
 
 
 def test_enum_initial_refresh_and_same_index_only_read(
-    enum_editor: ChannelEditorWidget,
+    enum_editor: ChannelBoxWidget,
 ) -> None:
     """表示・更新・同一index選択は、混在したsceneとUndoを維持する。"""
     combo = _combo(enum_editor)
@@ -106,7 +104,7 @@ def test_enum_initial_refresh_and_same_index_only_read(
 
 
 def test_enum_selection_writes_sparse_value_and_undo_restores_each_target(
-    enum_editor: ChannelEditorWidget,
+    enum_editor: ChannelBoxWidget,
 ) -> None:
     """項目位置ではなく実整数を一括適用し、一回のUndoで混在へ戻す。"""
     _combo(enum_editor).setCurrentIndex(3)
@@ -123,7 +121,7 @@ def test_enum_selection_writes_sparse_value_and_undo_restores_each_target(
 
 
 def test_enum_explicit_alignment_and_noop_do_not_duplicate_undo(
-    enum_editor: ChannelEditorWidget,
+    enum_editor: ChannelBoxWidget,
 ) -> None:
     """代表と同じ値への明示入力だけを適用し、同値入力は履歴を増やさない。"""
     _row(enum_editor).align_action.trigger()
@@ -137,7 +135,7 @@ def test_enum_explicit_alignment_and_noop_do_not_duplicate_undo(
 
 
 def test_enum_external_value_changes_do_not_rebuild_or_propagate(
-    enum_editor: ChannelEditorWidget,
+    enum_editor: ChannelBoxWidget,
 ) -> None:
     """外部の値変更ではViewを保ち、他対象へ書き戻さない。"""
     combo = _combo(enum_editor)
@@ -159,7 +157,7 @@ def test_enum_external_value_changes_do_not_rebuild_or_propagate(
     ],
 )
 def test_enum_mismatched_definitions_are_excluded_before_binding(
-    enum_editor: ChannelEditorWidget, definition: str
+    enum_editor: ChannelBoxWidget, definition: str
 ) -> None:
     """名前や整数対応が異なる対象を除外し、他の入力行も維持する。"""
     cmds.addAttr("enumB.mode", edit=True, enumName=definition)
@@ -175,7 +173,7 @@ def test_enum_mismatched_definitions_are_excluded_before_binding(
 
 
 def test_enum_definition_changes_block_until_regrouped_without_writing(
-    enum_editor: ChannelEditorWidget,
+    enum_editor: ChannelBoxWidget,
 ) -> None:
     """使用中の不一致で入力を止め、更新時に対象を再判定する。"""
     combo = _combo(enum_editor)
@@ -200,7 +198,7 @@ def test_enum_definition_changes_block_until_regrouped_without_writing(
 
 
 def test_enum_undefined_representative_can_be_replaced_but_not_aligned(
-    enum_editor: ChannelEditorWidget,
+    enum_editor: ChannelBoxWidget,
 ) -> None:
     """未定義整数を表示したまま保持し、有効項目の入力とUndoを許可する。"""
     _set("enumA.mode", 2)
@@ -221,7 +219,7 @@ def test_enum_undefined_representative_can_be_replaced_but_not_aligned(
 
 
 def test_enum_lock_and_animation_respect_representative_policy(
-    enum_editor: ChannelEditorWidget,
+    enum_editor: ChannelBoxWidget,
 ) -> None:
     """後続lockを除外し、基準へのアニメーション接続で行を停止する。"""
     cmds.setAttr("enumB.mode", lock=True)
@@ -237,7 +235,7 @@ def test_enum_lock_and_animation_respect_representative_policy(
 
 
 def test_enum_display_flags_builtin_compound_and_array_scope(
-    enum_editor: ChannelEditorWidget,
+    enum_editor: ChannelBoxWidget,
 ) -> None:
     """標準enumと表示対象のcompound子を返し、非表示と配列を除く。"""
     cmds.setAttr("enumA.rotateOrder", channelBox=True)
@@ -273,7 +271,7 @@ def test_enum_display_flags_builtin_compound_and_array_scope(
 
 
 def test_enum_selection_and_dispose_close_popup_and_stop_old_input(
-    enum_editor: ChannelEditorWidget,
+    enum_editor: ChannelBoxWidget,
 ) -> None:
     """選択変更と終了は開いた選択肢と古いBindingからの入力を終了する。"""
     combo = _combo(enum_editor)

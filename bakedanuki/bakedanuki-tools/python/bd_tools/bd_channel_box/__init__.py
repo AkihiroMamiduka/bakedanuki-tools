@@ -3,7 +3,7 @@
 
 from . import config
 from .ui import (
-    ChannelEditorWindow,
+    ChannelBoxWindow,
     WORKSPACE_CONTROL_NAME,
     close,
     dispose,
@@ -14,7 +14,7 @@ from .ui import (
 
 __all__ = [
     "config",
-    "ChannelEditorWindow",
+    "ChannelBoxWindow",
     "WORKSPACE_CONTROL_NAME",
     "close",
     "dispose",

@@ -53,7 +53,7 @@ def dock_host(
     tmp_path: Path,
 ) -> Iterator[_WorkspaceHost]:
     """実controller・入力UIを使い、Mayaの画面操作だけを置き換える。"""
-    from bd_tools import channel_editor
+    from bd_tools import bd_channel_box
     from bd_util.maya.ui import settings as maya_settings
 
     assert qt_application is not None
@@ -83,10 +83,10 @@ def dock_host(
         maya_settings, "get_ui_settings_root", lambda: tmp_path
     )
     cmds.select(clear=True)
-    channel_editor.dispose()
+    bd_channel_box.dispose()
     yield host
     # reloadした場合も最新moduleのcontrollerを終了する
-    from bd_tools import channel_editor as current
+    from bd_tools import bd_channel_box as current
 
     current.dispose()
     _events()
@@ -97,15 +97,21 @@ def test_dock_show_close_and_reload_release_bindings(
 ) -> None:
     """重複表示せず、公開closeとreloadで入力controllerを即時に終了する。"""
     import bd_tools
-    from bd_tools import channel_editor
+    from bd_tools import bd_channel_box
 
-    first = channel_editor.show()
+    first = bd_channel_box.show()
     assert first is dock_host.window
-    assert channel_editor.show() is first
-    channel_editor.close()
+    assert first.objectName() == "bdChannelBoxWindow"
+    assert first.windowTitle() == "bdChannelBox"
+    assert (
+        bd_channel_box.WORKSPACE_CONTROL_NAME
+        == "bdChannelBoxWindowWorkspaceControl"
+    )
+    assert bd_channel_box.show() is first
+    bd_channel_box.close()
     assert first.widget.controller.is_disposed
     assert dock_host.window is None
-    second = channel_editor.show()
+    second = bd_channel_box.show()
     assert second is not first
     old_controller = second.widget.controller
     bd_tools.reload_package()
@@ -120,14 +126,14 @@ def test_maya_dock_close_signal_stops_selection_watch(
     dock_host: _WorkspaceHost,
 ) -> None:
     """Mayaのタイトルバーclose通知だけでも選択監視と入力を終了する。"""
-    from bd_tools import channel_editor
+    from bd_tools import bd_channel_box
 
-    window = channel_editor.show()
+    window = bd_channel_box.show()
     window.dock_closed.emit()
     assert window.widget.controller.is_disposed
     assert not window.widget.controller.rows
     # Qt削除より先に再表示しても、終了済みの入力UIを再利用しない
-    replacement = channel_editor.show()
+    replacement = bd_channel_box.show()
     assert replacement is not window
     assert replacement is dock_host.window
     assert not replacement.widget.controller.is_disposed
@@ -135,18 +141,18 @@ def test_maya_dock_close_signal_stops_selection_watch(
 
 def test_ui_script_restore_and_layout_reset(dock_host: _WorkspaceHost) -> None:
     """復元入口の同一Window再利用と、統合resetによる再生成を確認する。"""
-    from bd_tools import channel_editor
+    from bd_tools import bd_channel_box
     from bd_util.maya.ui import restore_dockable
 
-    window = restore_dockable("bd_tools.channel_editor.ui", "restore")
-    assert isinstance(window, channel_editor.ChannelEditorWindow)
+    window = restore_dockable("bd_tools.bd_channel_box.ui", "restore")
+    assert isinstance(window, bd_channel_box.ChannelBoxWindow)
     assert window is dock_host.window
-    assert channel_editor.show() is window
+    assert bd_channel_box.show() is window
     assert (
         window.objectName() + "WorkspaceControl"
-        == channel_editor.WORKSPACE_CONTROL_NAME
+        == bd_channel_box.WORKSPACE_CONTROL_NAME
     )
-    new_window = channel_editor.reset_layout()
+    new_window = bd_channel_box.reset_layout()
     assert dock_host.state_removed
     assert window.widget.controller.is_disposed
     assert new_window is not window

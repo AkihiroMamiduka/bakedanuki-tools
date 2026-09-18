@@ -1,5 +1,5 @@
 # coding: utf-8
-"""Channel Editorの表示・ロック操作とモード切替のMaya統合検証。"""
+"""bdChannelBoxの表示・ロック操作とモード切替のMaya統合検証。"""
 
 from __future__ import annotations
 
@@ -13,14 +13,14 @@ from maya.api import OpenMaya as om
 from bd_util.maya.ui import MayaFloatPlugsBinding
 from bd_util.ui import FloatValueStepSpinBox, qt
 
-from bd_tools.channel_editor.controller import (
+from bd_tools.bd_channel_box.controller import (
     ChannelAttributeFilter,
-    ChannelEditorMode,
+    ChannelBoxMode,
 )
-from bd_tools.channel_editor.widget import (
+from bd_tools.bd_channel_box.widget import (
     AttributeRowWidget,
     AttributeStateRowWidget,
-    ChannelEditorWidget,
+    ChannelBoxWidget,
 )
 
 _NODES = ("stateA", "stateB")
@@ -48,13 +48,13 @@ def _flags(path: str) -> tuple[bool, bool, bool]:
     )
 
 
-def _row_names(editor: ChannelEditorWidget) -> set[str]:
+def _row_names(editor: ChannelBoxWidget) -> set[str]:
     """現在のモードで表示される正式属性名を返す。"""
     return {row.row.attribute.name for row in editor.row_widgets}
 
 
 def _value_row(
-    editor: ChannelEditorWidget, name: str = "weight"
+    editor: ChannelBoxWidget, name: str = "weight"
 ) -> AttributeRowWidget:
     """正式属性名から最新の値入力行を取得する。"""
     row = next(w for w in editor.row_widgets if w.row.attribute.name == name)
@@ -63,7 +63,7 @@ def _value_row(
 
 
 def _state_row(
-    editor: ChannelEditorWidget, name: str = "weight"
+    editor: ChannelBoxWidget, name: str = "weight"
 ) -> AttributeStateRowWidget:
     """正式属性名から最新の表示・ロック行を取得する。"""
     row = next(w for w in editor.row_widgets if w.row.attribute.name == name)
@@ -71,14 +71,14 @@ def _state_row(
     return row
 
 
-def _states(editor: ChannelEditorWidget) -> None:
+def _states(editor: ChannelBoxWidget) -> None:
     """上部ComboBoxから表示・ロックモードへ切り替える。"""
     editor.mode_combo.setCurrentIndex(1)
     _events()
     assert editor.controller.mode == "states"
 
 
-def _values(editor: ChannelEditorWidget) -> None:
+def _values(editor: ChannelBoxWidget) -> None:
     """上部ComboBoxから値編集モードへ切り替える。"""
     editor.mode_combo.setCurrentIndex(0)
     _events()
@@ -86,7 +86,7 @@ def _values(editor: ChannelEditorWidget) -> None:
 
 
 def _choose_display(
-    editor: ChannelEditorWidget, display: _Display, name: str = "weight"
+    editor: ChannelBoxWidget, display: _Display, name: str = "weight"
 ) -> None:
     """表示状態のラジオボタンをクリックして明示入力する。"""
     _state_row(editor, name).display_buttons[display].click()
@@ -94,7 +94,7 @@ def _choose_display(
 
 
 def _checked_display(
-    editor: ChannelEditorWidget, name: str = "weight"
+    editor: ChannelBoxWidget, name: str = "weight"
 ) -> tuple[_Display, ...]:
     """画面で選択中の表示状態を返し、混在時は空のtupleにする。"""
     return tuple(
@@ -104,9 +104,7 @@ def _checked_display(
     )
 
 
-def _filter(
-    editor: ChannelEditorWidget, value: ChannelAttributeFilter
-) -> None:
+def _filter(editor: ChannelBoxWidget, value: ChannelAttributeFilter) -> None:
     """フィルターComboBoxを操作し、絞り込み後の行へ進める。"""
     index = editor.filter_combo.findData(value)
     assert index >= 0
@@ -118,7 +116,7 @@ def _filter(
 @pytest.fixture
 def state_editor(
     qt_application: qt.QApplication,
-) -> Iterator[ChannelEditorWidget]:
+) -> Iterator[ChannelBoxWidget]:
     """既存のHide属性と異なる値を持つ2ノードを値モードで表示する。"""
     assert qt_application is not None
     file_command = cast(Callable[..., str], cmds.file)
@@ -150,7 +148,7 @@ def state_editor(
         )
     cmds.select(*_NODES, replace=True)
     cmds.flushUndo()
-    widget = ChannelEditorWidget()
+    widget = ChannelBoxWidget()
     widget.show()
     _events()
     yield widget
@@ -162,7 +160,7 @@ def state_editor(
 
 
 def test_mode_switch_only_reads_and_preserves_value_step(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """モード切替・表示更新は値とフラグとUndoを維持し、stepも失わない。"""
     editor = state_editor
@@ -190,7 +188,7 @@ def test_mode_switch_only_reads_and_preserves_value_step(
 
 @pytest.mark.parametrize("width", [280, 360, 520])
 def test_mode_switch_preserves_width_with_long_hidden_name(
-    state_editor: ChannelEditorWidget, width: int
+    state_editor: ChannelBoxWidget, width: int
 ) -> None:
     """上部の説明と長いHide属性がある場合も、指定幅に収まる配置を維持する。"""
     editor = state_editor
@@ -256,8 +254,8 @@ def test_mode_switch_preserves_width_with_long_hidden_name(
     ],
 )
 def test_five_filters_in_both_modes_only_read_representative_state(
-    state_editor: ChannelEditorWidget,
-    mode: ChannelEditorMode,
+    state_editor: ChannelBoxWidget,
+    mode: ChannelBoxMode,
     selected: ChannelAttributeFilter,
     expected: set[str],
 ) -> None:
@@ -281,7 +279,7 @@ def test_five_filters_in_both_modes_only_read_representative_state(
 
 
 def test_filters_remember_each_mode_through_refresh_and_selection(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """初期値を維持しつつ、各モードの最終フィルターをWindow内だけに保持する。"""
     editor = state_editor
@@ -299,7 +297,7 @@ def test_filters_remember_each_mode_through_refresh_and_selection(
     _events()
     assert editor.controller.attribute_filter == "hidden"
     assert editor.filter_combo.currentData() == "hidden"
-    fresh = ChannelEditorWidget()
+    fresh = ChannelBoxWidget()
     try:
         assert fresh.controller.attribute_filter == "visible"
         fresh.controller.set_mode("states")
@@ -311,7 +309,7 @@ def test_filters_remember_each_mode_through_refresh_and_selection(
 
 
 def test_filtered_display_edit_completes_all_targets_before_row_removal(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """状態の一括変更完了後に行を外し、UndoとRedoで該当行が出入りする。"""
     editor = state_editor
@@ -341,7 +339,7 @@ def test_filtered_display_edit_completes_all_targets_before_row_removal(
 
 @pytest.mark.parametrize("mode", ["values", "states"])
 def test_external_channel_box_flag_updates_filter_without_propagation(
-    state_editor: ChannelEditorWidget, mode: ChannelEditorMode
+    state_editor: ChannelBoxWidget, mode: ChannelBoxMode
 ) -> None:
     """keyableを変えない外部ChannelBox操作にも追従し、他ノードへ転送しない。"""
     editor = state_editor
@@ -361,7 +359,7 @@ def test_external_channel_box_flag_updates_filter_without_propagation(
 
 
 def test_hidden_value_edit_preserves_flags_and_respects_lock_and_connection(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """Hide属性も一括で値編集でき、lockと入力接続による操作制限を維持する。"""
     editor = state_editor
@@ -393,7 +391,7 @@ def test_hidden_value_edit_preserves_flags_and_respects_lock_and_connection(
 
 
 def test_filter_switch_finishes_drag_and_preserves_step(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """絞り込みで連続編集のUndoを閉じ、非表示にした値行のstepを維持する。"""
     editor = state_editor
@@ -425,7 +423,7 @@ def test_filter_switch_finishes_drag_and_preserves_step(
 
 
 def test_filter_combo_keeps_keyboard_focus_and_empty_filter_is_recoverable(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """上下キーで空の絞り込みからも戻れ、フォーカスと表示操作だけを維持する。"""
     editor = state_editor
@@ -453,7 +451,7 @@ def test_filter_combo_keeps_keyboard_focus_and_empty_filter_is_recoverable(
 
 
 def test_filter_switch_commits_pending_numeric_text_as_value_edit(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """数値の未確定文字をフィルター変更時に確定し、一回のUndoで戻す。"""
     view = _value_row(state_editor, "translateX").editor
@@ -481,7 +479,7 @@ def test_filter_switch_commits_pending_numeric_text_as_value_edit(
 
 
 def test_hidden_attribute_can_be_restored_and_hidden_row_stays_available(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """既存Hideを復帰でき、Hideへ変更した行も設定中と再選択後に操作できる。"""
     editor = state_editor
@@ -509,7 +507,7 @@ def test_hidden_attribute_can_be_restored_and_hidden_row_stays_available(
 
 @pytest.mark.parametrize("display", ["channel_box", "hidden"])
 def test_display_change_has_one_undo_and_redo(
-    state_editor: ChannelEditorWidget, display: _Display
+    state_editor: ChannelBoxWidget, display: _Display
 ) -> None:
     """表示変更を一回のUndoで両対象の元フラグへ戻し、Redoで再適用する。"""
     editor = state_editor
@@ -535,7 +533,7 @@ def test_display_change_has_one_undo_and_redo(
 
 
 def test_mixed_display_is_explicit_and_undo_restores_each_node(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """表示状態の混在を示し、同じ代表状態の選択でも全対象へ揃えられる。"""
     cmds.setAttr("stateB.weight", keyable=False, channelBox=True)
@@ -557,7 +555,7 @@ def test_mixed_display_is_explicit_and_undo_restores_each_node(
 
 
 def test_value_mixed_marker_does_not_leak_into_state_mode(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """値だけが混在している行を、表示・ロックの混在として示さない。"""
     assert _value_row(state_editor).name_label.text().startswith("• ")
@@ -567,7 +565,7 @@ def test_value_mixed_marker_does_not_leak_into_state_mode(
 
 
 def test_lock_and_unlock_representative_do_not_depend_on_value_writability(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """代表がロック中でも解除でき、値入力へ戻ると編集可能状態を反映する。"""
     editor = state_editor
@@ -592,7 +590,7 @@ def test_lock_and_unlock_representative_do_not_depend_on_value_writability(
 
 
 def test_mixed_lock_user_clicks_only_choose_locked_or_unlocked(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """混在lockは三状態で表示し、ユーザー操作ではTrueとFalseだけへ揃える。"""
     cmds.setAttr("stateB.weight", lock=True)
@@ -615,7 +613,7 @@ def test_mixed_lock_user_clicks_only_choose_locked_or_unlocked(
 
 
 def test_enum_definition_difference_does_not_exclude_state_editing(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """値入力から除外されるenum定義違いも表示・ロック操作には含める。"""
     cmds.addAttr("stateB.mode", edit=True, enumName="Other=5:Different=10")
@@ -633,7 +631,7 @@ def test_enum_definition_difference_does_not_exclude_state_editing(
 
 
 def test_external_state_change_does_not_propagate(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """外部で変更した状態は混在表示へ同期し、別ノードへ転送しない。"""
     _states(state_editor)
@@ -647,7 +645,7 @@ def test_external_state_change_does_not_propagate(
 
 
 def test_mode_switch_finishes_drag_before_lock_undo(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """モード切替でSliderの連続Undoを閉じ、続くlock操作と分離する。"""
     binding = _value_row(state_editor).row.binding
@@ -671,7 +669,7 @@ def test_mode_switch_finishes_drag_before_lock_undo(
 
 
 def test_parent_lock_is_never_implicitly_removed(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """子行のlock操作と表示変更でcompound親のlockを勝手に解除しない。"""
     cmds.setAttr("stateA.translate", lock=True)
@@ -689,7 +687,7 @@ def test_parent_lock_is_never_implicitly_removed(
 
 
 def test_state_binding_stops_on_selection_and_dispose(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """選択切替と終了で古い状態Bindingを破棄し、監視を再生成しない。"""
     _states(state_editor)
@@ -707,7 +705,7 @@ def test_state_binding_stops_on_selection_and_dispose(
 
 
 def test_display_noop_does_not_add_undo(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """同じ表示状態の明示選択はUndo履歴を増やさない。"""
     _states(state_editor)
@@ -716,7 +714,7 @@ def test_display_noop_does_not_add_undo(
 
 
 def test_display_radio_keyboard_stays_independent_of_lock_and_other_rows(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """矢印とSpaceで表示状態だけを変更し、ロックや別行の選択へ影響させない。"""
     editor = state_editor
@@ -763,7 +761,7 @@ def test_display_radio_keyboard_stays_independent_of_lock_and_other_rows(
 
 
 def test_disabled_display_radios_do_not_write(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """編集不可の行では3つとも無効にし、クリックで状態やUndoを変更しない。"""
     # 両フラグが属性定義で有効な状態は標準Undoで復元できず、表示変更だけ不可になる
@@ -793,7 +791,7 @@ def test_disabled_display_radios_do_not_write(
 
 
 def test_mode_combo_keeps_keyboard_focus_for_round_trip(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """上部ComboBoxの上下キーだけで両モードを往復できる。"""
     combo = state_editor.mode_combo
@@ -814,7 +812,7 @@ def test_mode_combo_keeps_keyboard_focus_for_round_trip(
 
 
 def test_mode_switch_commits_pending_numeric_text_as_value_edit(
-    state_editor: ChannelEditorWidget,
+    state_editor: ChannelBoxWidget,
 ) -> None:
     """未確定の数値は切替時のフォーカス移動で確定し、一回のUndoで戻る。"""
     view = _value_row(state_editor, "translateX").editor

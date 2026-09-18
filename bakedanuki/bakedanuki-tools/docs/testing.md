@@ -31,20 +31,20 @@ QWidgetも同じ入口で検証できるよう、Maya初期化前にQt facadeか
 workspaceControl の実表示や Maya 再起動後の復元は `mayapy` だけでは完結しないため、対象
 Maya 本体でも操作確認します。
 
-`test_channel_editor_order.py`はtransform・jointの優先順、drawOverrideのRGB子、
+`test_bd_channel_box_order.py`はtransform・jointの優先順、drawOverrideのRGB子、
 残りの属性の相対順、両モードと5フィルターの組合せを検証します。
 drawOverride内ではoverrideEnabledが先頭になることも確認します。
 表示切替でsceneの属性順・値・フラグ・Undoを変更しないことと、別compound内の同名属性や
 類似した名前を誤って優先しないことも確認します。
 
-## Channel EditorのMaya本体検証
+## bdChannelBoxのMaya本体検証
 
 リポジトリ直下から専用runnerを実行します。`--maya-version` は2025 / 2026 / 2027を
 指定でき、`--util-root` を省略すると環境変数またはsiblingのutilを使用します。
 
 ```powershell
 & "C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe" -B `
-    scripts/test_channel_editor_maya.py --maya-version 2025 --timeout 180
+    scripts/test_bd_channel_box_maya.py --maya-version 2025 --timeout 180
 ```
 
 runnerは別の `maya.exe` を起動し、一時ディレクトリの `MAYA_APP_DIR`、Maya.env探索先、
@@ -108,7 +108,7 @@ deferred quitでも発生しており、終了待ちの原因は未特定です�
 
 ### 次回変更時の回帰確認
 
-初回開発完了時の件数と確認範囲は[Channel Editorの検証記録](channel_editor.md#検証)を参照します。
+初回開発完了時の件数と確認範囲は[bdChannelBoxの検証記録](bd_channel_box.md#検証)を参照します。
 変更した仕様に応じて既存testと本体runnerを更新し、次を確認します。
 
 - 入力・対応型: 選択／更新で無書込み、外部変更の非伝播、混在値への一括入力、1回Undo、編集不可対象の扱い。
@@ -152,7 +152,7 @@ floatingにしてworkspaceとpreferencesを専用profileへ保存します。
 
 ```powershell
 & "C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe" -B `
-    scripts/test_channel_editor_maya.py --maya-version 2025 --prepare-restart --timeout 180
+    scripts/test_bd_channel_box_maya.py --maya-version 2025 --prepare-restart --timeout 180
 ```
 
 一度目のprocessが終了したことと `result.json` の成功、`prepared-restart.json` の存在を確認し、
@@ -161,7 +161,7 @@ floatingにしてworkspaceとpreferencesを専用profileへ保存します。
 
 ```powershell
 & "C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe" -B `
-    scripts/test_channel_editor_maya.py --maya-version 2025 --restart-from <output> --timeout 180
+    scripts/test_bd_channel_box_maya.py --maya-version 2025 --restart-from <output> --timeout 180
 ```
 
 二度目は同じprofileの別processを起動し、`show()` を呼ぶ前にworkspaceControlと入力UIが

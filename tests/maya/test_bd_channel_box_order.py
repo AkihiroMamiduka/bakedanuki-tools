@@ -1,5 +1,5 @@
 # coding: utf-8
-"""Channel Editorの属性優先順とフィルターを組み合わせたMaya統合検証。"""
+"""bdChannelBoxの属性優先順とフィルターを組み合わせたMaya統合検証。"""
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ from maya import cmds
 from bd_util.maya.node.inspection import inspect_scalar_attributes
 from bd_util.ui import qt
 
-from bd_tools.channel_editor import config
-from bd_tools.channel_editor.controller import ChannelEditorMode
-from bd_tools.channel_editor.widget import ChannelEditorWidget
+from bd_tools.bd_channel_box import config
+from bd_tools.bd_channel_box.controller import ChannelBoxMode
+from bd_tools.bd_channel_box.widget import ChannelBoxWidget
 
 _PRIORITY_NAMES = (
     "visibility",
@@ -60,12 +60,12 @@ def _events() -> None:
 
 
 @pytest.fixture
-def editor(qt_application: qt.QApplication) -> Iterator[ChannelEditorWidget]:
+def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     """空の専用sceneでWidgetを表示し、検証後に監視ごと解放する。"""
     assert qt_application is not None
     file_command = cast(Callable[..., str], cmds.file)
     file_command(new=True, force=True)
-    widget = ChannelEditorWidget()
+    widget = ChannelBoxWidget()
     widget.show()
     _events()
     try:
@@ -81,7 +81,7 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelEditorWidget]:
 @pytest.mark.parametrize("node_type", ["transform", "joint"])
 @pytest.mark.parametrize("mode", ["values", "states"])
 def test_transform_order_in_each_mode_and_filter(
-    editor: ChannelEditorWidget, node_type: str, mode: ChannelEditorMode
+    editor: ChannelBoxWidget, node_type: str, mode: ChannelBoxMode
 ) -> None:
     """指定順・RGB子・残りの安定順を全フィルターで保ち、sceneを変更しない。"""
     node = cmds.createNode(node_type)
@@ -147,7 +147,7 @@ def test_transform_order_in_each_mode_and_filter(
 
 @pytest.mark.parametrize("mode", ["values", "states"])
 def test_priority_uses_full_paths_without_node_type_restriction(
-    editor: ChannelEditorWidget, mode: ChannelEditorMode
+    editor: ChannelBoxWidget, mode: ChannelBoxMode
 ) -> None:
     """通常nodeでも正式pathだけを優先し、類似名と別compound子を巻き込まない。"""
     node = cmds.createNode("network")
@@ -222,8 +222,8 @@ def test_priority_uses_full_paths_without_node_type_restriction(
 
 @pytest.mark.parametrize("mode", ["values", "states"])
 def test_priority_config_is_applied_on_refresh(
-    editor: ChannelEditorWidget,
-    mode: ChannelEditorMode,
+    editor: ChannelBoxWidget,
+    mode: ChannelBoxMode,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """設定で指定した属性だけを前へ移し、残りの相対順とsceneを保つ。"""

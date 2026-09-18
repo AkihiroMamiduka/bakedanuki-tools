@@ -13,7 +13,7 @@
 
 ## Phase 2: First Tool Vertical Slice
 
-- [x] 最初のユーザー課題と操作フローを決める（Channel Editorの値入力）
+- [x] 最初のユーザー課題と操作フローを決める（bdChannelBoxの値入力）
 - [x] `bd_util` の Window controller を使った UI を実装する
 - [x] Maya 操作と undo 境界を実装する
 - [x] unit / Maya / type contract を追加する
@@ -26,7 +26,7 @@
 - [x] 値編集／表示・ロックのモード切替、非表示属性の復帰、状態の一括操作
 - [x] transform・jointの指定32属性とdrawOverride配下の優先表示（2026-09-18）
 
-### Channel Editorの拡張候補
+### bdChannelBoxの拡張候補
 
 現在のbool・float・enumの値入力と表示・ロック操作は、上記範囲が対象です。
 以下は未着手の任意候補であり、今回の完了条件や実装予定ではありません。
@@ -42,14 +42,14 @@
 ### 保守上の継続課題
 
 - 検証用Maya 2025の終了待ちタイムアウトを調査する。操作24工程の成功と正常終了は区別する。
-  詳細と再現手順は[Testing](testing.md#channel-editorのmaya本体検証)を参照する。
+  詳細と再現手順は[Testing](testing.md#bdchannelboxのmaya本体検証)を参照する。
 - 大量の選択ノードや属性で負荷が問題になった場合は、まず既存runnerで構築・入力・選択切替を計測する。
   node callbackが対象数・属性数に応じて増えるため、必要ならutil側の監視共有を検討する。
 
 ## Phase 3: Tool Collection Conventions
 
-次のツールを追加するときに、Channel Editorの実装を参考にして共通規約を整えます。
-完成したツールの仕様と責務分担は[Channel Editor](channel_editor.md)を参照します。
+次のツールを追加するときに、bdChannelBoxの実装を参考にして共通規約を整えます。
+完成したツールの仕様と責務分担は[bdChannelBox](bd_channel_box.md)を参照します。
 
 - [ ] 個別ツールの命名と package 構成を実例から確定する
 - [ ] 共通の tool discovery / launcher が必要か評価する

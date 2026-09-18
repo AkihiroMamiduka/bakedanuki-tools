@@ -68,10 +68,10 @@ Maya Script Editor が保持する古い `bd_tools` 変数にも、新しい pac
 
 ## Development Guidance
 
-Channel Editorは `channel_editor.dispose()` を登録します。dock controllerの
+bdChannelBoxは `bd_channel_box.dispose()` を登録します。dock controllerの
 `dock_about_to_dispose` で各Binding・選択監視・開いたUndoを終了してから
 workspaceControlとWindowを破棄します。Maya側のcloseも `dock_closed` で同じ終了処理へ接続します。
-再表示はreload後に `from bd_tools import channel_editor` を取り直して `show()` を呼びます。
+再表示はreload後に `from bd_tools import bd_channel_box` を取り直して `show()` を呼びます。
 
 - UI module の import 時に Window を表示しない。
 - controller は module 単位で1つにする。

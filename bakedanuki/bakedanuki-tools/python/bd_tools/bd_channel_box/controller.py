@@ -1,5 +1,5 @@
 # coding: utf-8
-"""選択ノードと入力行を結び付けるChannel Editorの制御。"""
+"""選択ノードと入力行を結び付けるbdChannelBoxの制御。"""
 
 from __future__ import annotations
 
@@ -34,18 +34,18 @@ from . import config
 ChannelBinding: TypeAlias = (
     MayaBoolPlugsBinding | MayaFloatPlugsBinding | MayaEnumPlugsBinding
 )
-ChannelEditorMode: TypeAlias = Literal["values", "states"]
+ChannelBoxMode: TypeAlias = Literal["values", "states"]
 ChannelAttributeFilter: TypeAlias = Literal[
     "all", "visible", "keyable", "channel_box", "hidden"
 ]
 
 __all__ = [
     "ChannelBinding",
-    "ChannelEditorMode",
+    "ChannelBoxMode",
     "ChannelAttributeFilter",
     "ChannelRow",
     "ChannelStateRow",
-    "ChannelEditorController",
+    "ChannelBoxController",
 ]
 
 
@@ -79,7 +79,7 @@ class ChannelStateRow:
     excluded: tuple[str, ...]
 
 
-class ChannelEditorController(qt.QObject):
+class ChannelBoxController(qt.QObject):
     """選択・属性構成の変更時だけ入力行を組み直す。"""
 
     rows_changed = qt.Signal()
@@ -92,8 +92,8 @@ class ChannelEditorController(qt.QObject):
         super().__init__(parent)
         self.rows: tuple[ChannelRow | ChannelStateRow, ...] = ()
         self.node_names: tuple[str, ...] = ()
-        self._mode: ChannelEditorMode = "values"
-        self._filters: dict[ChannelEditorMode, ChannelAttributeFilter] = {
+        self._mode: ChannelBoxMode = "values"
+        self._filters: dict[ChannelBoxMode, ChannelAttributeFilter] = {
             "values": "visible",
             "states": "all",
         }
@@ -144,11 +144,11 @@ class ChannelEditorController(qt.QObject):
         self._refresh_pending()
 
     @property
-    def mode(self) -> ChannelEditorMode:
+    def mode(self) -> ChannelBoxMode:
         """値入力または表示・ロック設定の表示モードを返す。"""
         return self._mode
 
-    def set_mode(self, mode: ChannelEditorMode) -> None:
+    def set_mode(self, mode: ChannelBoxMode) -> None:
         """連続編集を終了し、属性を書き換えずに操作する状態を切り替える。"""
         if mode not in ("values", "states"):
             raise ValueError("modeにはvaluesまたはstatesを指定してください")

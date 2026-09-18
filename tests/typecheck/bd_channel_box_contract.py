@@ -1,0 +1,81 @@
+# coding: utf-8
+"""bdChannelBoxの公開入口とWindow内容の型契約。"""
+
+from typing import Literal, assert_type
+
+from bd_util.maya.ui import ChannelDisplayState, MayaEditSession
+from bd_util.ui import (
+    BoolCheckBox,
+    CheckBoxSweep,
+    EnumComboBox,
+    FloatSliderSpinBox,
+    FloatValueStepSpinBox,
+    RadioButtonSweep,
+    qt,
+)
+
+from bd_tools import bd_channel_box
+from bd_tools.bd_channel_box.controller import (
+    ChannelAttributeFilter,
+    ChannelRow,
+    ChannelStateRow,
+)
+from bd_tools.bd_channel_box.widget import (
+    AttributeRowWidget,
+    AttributeStateRowWidget,
+    ChannelBoxWidget,
+)
+
+assert_type(bd_channel_box.show(), bd_channel_box.ChannelBoxWindow)
+assert_type(bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
+assert_type(bd_channel_box.show().widget, ChannelBoxWidget)
+row = bd_channel_box.show().widget.row_widgets[0]
+assert_type(row, AttributeRowWidget | AttributeStateRowWidget)
+if isinstance(row, AttributeRowWidget):
+    assert_type(row.row, ChannelRow)
+    assert_type(
+        row.editor,
+        BoolCheckBox
+        | EnumComboBox
+        | FloatSliderSpinBox
+        | FloatValueStepSpinBox,
+    )
+    assert_type(row.align_action, qt.QAction)
+else:
+    assert_type(row.row, ChannelStateRow)
+    assert_type(row.editor, qt.QWidget)
+    assert_type(
+        row.display_buttons, dict[ChannelDisplayState, qt.QRadioButton]
+    )
+    assert_type(row.lock_check_box, qt.QCheckBox)
+    assert_type(row.set_locked(True), None)
+assert_type(bd_channel_box.dispose(), None)
+assert_type(bd_channel_box.close(), None)
+assert_type(bd_channel_box.restore(), bd_channel_box.ChannelBoxWindow)
+assert_type(bd_channel_box.reset_layout(), bd_channel_box.ChannelBoxWindow)
+assert_type(bd_channel_box.WORKSPACE_CONTROL_NAME, str)
+assert_type(bd_channel_box.show().widget.refresh_action, qt.QAction)
+assert_type(bd_channel_box.show().widget.mode_combo, qt.QComboBox)
+assert_type(bd_channel_box.show().widget.filter_combo, qt.QComboBox)
+assert_type(bd_channel_box.show().widget.mode_label, qt.QLabel)
+assert_type(bd_channel_box.show().widget.filter_label, qt.QLabel)
+assert_type(bd_channel_box.show().widget.state_sweep, RadioButtonSweep)
+assert_type(bd_channel_box.show().widget.lock_sweep, CheckBoxSweep)
+assert_type(
+    bd_channel_box.show().widget.controller.state_edit_session,
+    MayaEditSession,
+)
+assert_type(bd_channel_box.show().widget.controller.begin_state_edit(), None)
+assert_type(
+    bd_channel_box.show().widget.controller.attribute_filter,
+    ChannelAttributeFilter,
+)
+assert_type(
+    bd_channel_box.show().widget.controller.set_attribute_filter("hidden"),
+    None,
+)
+assert_type(
+    bd_channel_box.show().widget.controller.mode, Literal["values", "states"]
+)
+assert_type(bd_channel_box.show().widget.controller.set_mode("states"), None)
+assert_type(bd_channel_box.show().widget.row_widgets[0].context_menu, qt.QMenu)

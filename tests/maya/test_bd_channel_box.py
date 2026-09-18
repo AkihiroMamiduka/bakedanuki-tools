@@ -1,5 +1,5 @@
 # coding: utf-8
-"""Channel Editorの入力境界・選択追従・寿命のMaya統合検証。"""
+"""bdChannelBoxの入力境界・選択追従・寿命のMaya統合検証。"""
 
 from __future__ import annotations
 
@@ -19,17 +19,17 @@ from bd_util.ui import (
     qt,
 )
 
-from bd_tools.channel_editor.widget import (
+from bd_tools.bd_channel_box.widget import (
     AttributeRowWidget,
-    ChannelEditorWidget,
+    ChannelBoxWidget,
 )
-from bd_tools.channel_editor.controller import ChannelAttributeFilter
+from bd_tools.bd_channel_box.controller import ChannelAttributeFilter
 
 
 @pytest.mark.parametrize("selected", ["keyable", "all"])
 @pytest.mark.parametrize("external", [False, True])
 def test_value_change_refreshes_only_related_rows(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
     monkeypatch: pytest.MonkeyPatch,
     selected: ChannelAttributeFilter,
     external: bool,
@@ -85,7 +85,7 @@ def _events() -> None:
         qt.QApplication.sendPostedEvents(None, qt.QEvent.Type.DeferredDelete)
 
 
-def _row(widget: ChannelEditorWidget, name: str) -> AttributeRowWidget:
+def _row(widget: ChannelBoxWidget, name: str) -> AttributeRowWidget:
     """正式な属性名に対応する表示行を返す。"""
     row = next(w for w in widget.row_widgets if w.row.attribute.name == name)
     assert isinstance(row, AttributeRowWidget)
@@ -105,7 +105,7 @@ def _open_context_menu(widget: qt.QWidget) -> None:
 
 
 @pytest.fixture
-def editor(qt_application: qt.QApplication) -> Iterator[ChannelEditorWidget]:
+def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     """異なる値を持つ2ノードを、値を揃えずに表示する。"""
     assert qt_application is not None
     _new_scene()
@@ -137,7 +137,7 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelEditorWidget]:
     )
     cmds.select("channelA", "channelB", replace=True)
     cmds.flushUndo()
-    widget = ChannelEditorWidget()
+    widget = ChannelBoxWidget()
     widget.show()
     _events()
     yield widget
@@ -149,7 +149,7 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelEditorWidget]:
 
 
 def test_selection_and_refresh_only_read_values(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """選択直後・再描画・未編集確定が値とUndo履歴を変更しない。"""
     row = _row(editor, "weight")
@@ -167,7 +167,7 @@ def test_selection_and_refresh_only_read_values(
 
 
 def test_supported_types_flags_and_view_selection(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """OR条件・scalar子・対応型・hard両側範囲でViewを選べる。"""
     names = {w.row.attribute.name for w in editor.row_widgets}
@@ -199,7 +199,7 @@ def test_supported_types_flags_and_view_selection(
 
 @pytest.mark.parametrize("with_slider", [False, True])
 def test_input_columns_stay_compact_at_right_edge(
-    editor: ChannelEditorWidget, with_slider: bool
+    editor: ChannelBoxWidget, with_slider: bool
 ) -> None:
     """Sliderの有無や画面幅によらず補助欄の幅と全入力の右端を揃える。"""
     if not with_slider:
@@ -239,7 +239,7 @@ def test_input_columns_stay_compact_at_right_edge(
 
 
 def test_enter_does_not_activate_context_actions(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """数値確定のEnterが更新・揃えるを実行せず、入力行を維持する。"""
     dialog = qt.QDialog()
@@ -267,7 +267,7 @@ def test_enter_does_not_activate_context_actions(
 
 
 def test_numeric_input_updates_all_targets_with_one_undo(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """数値を変更したときだけ一括適用し、Undoで各元値を復元する。"""
     view = _row(editor, "weight").editor
@@ -283,7 +283,7 @@ def test_numeric_input_updates_all_targets_with_one_undo(
 
 
 def test_bool_input_and_explicit_alignment(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """チェックの切替と明示的な揃える操作を、表示更新から分離する。"""
     row = _row(editor, "visibility")
@@ -316,7 +316,7 @@ def test_bool_input_and_explicit_alignment(
 
 @pytest.mark.parametrize("surface", ["attribute", "background"])
 def test_context_menu_refresh_only_reads_values(
-    editor: ChannelEditorWidget, surface: str
+    editor: ChannelBoxWidget, surface: str
 ) -> None:
     """属性名と余白から更新でき、値・Undo・変更済みstepを維持する。"""
     _value_step(editor, "translateX").setSingleStep(0.01)
@@ -345,7 +345,7 @@ def test_context_menu_refresh_only_reads_values(
 
 
 def test_context_alignment_preserves_unrounded_value_and_one_undo(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """メニューを開くだけでは変更せず、明示操作で未丸めの代表値へ揃える。"""
     value = 0.123456789
@@ -376,7 +376,7 @@ def test_context_alignment_preserves_unrounded_value_and_one_undo(
 
 
 def test_selection_change_closes_attribute_menu(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """メニューを開いたまま選択が変わっても、旧対象の操作を残さない。"""
     row = _row(editor, "weight")
@@ -391,7 +391,7 @@ def test_selection_change_closes_attribute_menu(
 
 
 def test_external_change_does_not_propagate(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """Mayaからの値変更は表示だけへ反映し、別ノードへ転送しない。"""
     _set_value("channelA.weight", 0.9)
@@ -403,7 +403,7 @@ def test_external_change_does_not_propagate(
 
 
 def test_selection_switch_stops_old_binding(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """選択を切り替えた直後に旧入力を無効化し、新しい代表へ切り替える。"""
     old = _row(editor, "weight").row.binding
@@ -419,7 +419,7 @@ def test_selection_switch_stops_old_binding(
 
 
 def test_visibility_flag_and_attribute_removal_refresh_rows(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """channelBox切替と属性削除・Undoに追従して行を再構築する。"""
     cmds.setAttr("channelA.hidden", channelBox=True)
@@ -434,7 +434,7 @@ def test_visibility_flag_and_attribute_removal_refresh_rows(
 
 
 def test_locked_secondary_is_reported_and_excluded(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """編集不可の対象をtooltipへ示し、残りの対応属性だけを更新する。"""
     cmds.setAttr("channelB.weight", lock=True)
@@ -451,7 +451,7 @@ def test_locked_secondary_is_reported_and_excluded(
 
 
 def test_dispose_prevents_selection_updates(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """終了後は選択変更によって入力Bindingが再生成されない。"""
     editor.dispose()
@@ -462,7 +462,7 @@ def test_dispose_prevents_selection_updates(
 
 
 def test_range_rejection_is_visible_and_leaves_all_targets_unchanged(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """他対象の狭い範囲で拒否した入力を画面へ通知し、部分適用を残さない。"""
     cmds.addAttr("channelB.weight", edit=True, maxValue=0.8)
@@ -478,7 +478,7 @@ def test_range_rejection_is_visible_and_leaves_all_targets_unchanged(
 
 
 def test_selection_change_finishes_drag_undo(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """選択変更でドラッグを終了し、選択Undoと値Undoを混ぜない。"""
     binding = _row(editor, "weight").row.binding
@@ -500,7 +500,7 @@ def test_selection_change_finishes_drag_undo(
 
 
 def test_animated_representative_remains_read_only(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """キー付き代表属性の値は時刻へ追従し、一括入力を許可しない。"""
     cmds.setKeyframe("channelA.weight", time=1, value=0.2)
@@ -517,7 +517,7 @@ def test_animated_representative_remains_read_only(
 
 
 def test_missing_and_incompatible_attributes_are_excluded(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """同名でも型・単位が異なる属性は対象から除き、理由を表示する。"""
     cmds.deleteAttr("channelB.weight")
@@ -537,9 +537,7 @@ def test_missing_and_incompatible_attributes_are_excluded(
     assert "対応する属性なし" in row.name_label.toolTip()
 
 
-def _value_step(
-    widget: ChannelEditorWidget, name: str
-) -> FloatValueStepSpinBox:
+def _value_step(widget: ChannelBoxWidget, name: str) -> FloatValueStepSpinBox:
     """指定した属性行から値とstepの複合Viewを返す。"""
     view = _row(widget, name).editor
     assert isinstance(view, FloatValueStepSpinBox)
@@ -556,7 +554,7 @@ def _value_step(
     ],
 )
 def test_step_defaults_by_attribute_kind(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
     name: str,
     step: float,
     mode: str,
@@ -575,7 +573,7 @@ def test_step_defaults_by_attribute_kind(
 @pytest.mark.parametrize("kind", ["double", "doubleLinear", "doubleAngle"])
 @pytest.mark.parametrize("bounded", [False, True])
 def test_radius_override_respects_slider_priority(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
     kind: str,
     bounded: bool,
 ) -> None:
@@ -599,7 +597,7 @@ def test_radius_override_respects_slider_priority(
 
 
 def test_step_survives_value_undo_refresh_and_selection(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """混在した値だけをUndoし、同属性のstepは再構築を越えて保持する。"""
     _set_value("channelB.scaleX", 2)
@@ -630,7 +628,7 @@ def test_step_survives_value_undo_refresh_and_selection(
 
 
 def test_step_cache_is_separate_by_kind_and_window(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """同名でも型が変われば既定値を使い、新規Windowは前回のstepを引き継がない。"""
     _value_step(editor, "shown").setSingleStep(0.01)
@@ -641,7 +639,7 @@ def test_step_cache_is_separate_by_kind_and_window(
     _events()
     assert _value_step(editor, "shown").singleStep() == 15
     _value_step(editor, "translateX").setSingleStep(10)
-    other = ChannelEditorWidget()
+    other = ChannelBoxWidget()
     try:
         assert _value_step(other, "translateX").singleStep() == 1
     finally:
@@ -651,7 +649,7 @@ def test_step_cache_is_separate_by_kind_and_window(
 
 
 def test_step_tracks_display_units_without_converting_numeric_step(
-    editor: ChannelEditorWidget,
+    editor: ChannelBoxWidget,
 ) -> None:
     """単位文字を省略したまま表示値を換算し、stepの数値を維持する。"""
     original = str(cmds.currentUnit(query=True, linear=True))

@@ -1,5 +1,5 @@
 # coding: utf-8
-"""Channel Editorの値入力と表示・ロック設定画面。"""
+"""bdChannelBoxの値入力と表示・ロック設定画面。"""
 
 from __future__ import annotations
 
@@ -25,12 +25,12 @@ from bd_util.ui import (
     qt,
 )
 
-from .controller import ChannelEditorController, ChannelRow, ChannelStateRow
+from .controller import ChannelBoxController, ChannelRow, ChannelStateRow
 
 __all__ = [
     "AttributeRowWidget",
     "AttributeStateRowWidget",
-    "ChannelEditorWidget",
+    "ChannelBoxWidget",
 ]
 
 _VALUE_FIELD_WIDTH = 90
@@ -442,7 +442,7 @@ class AttributeStateRowWidget(qt.QWidget):
             self._update_state()
 
 
-class ChannelEditorWidget(qt.QWidget):
+class ChannelBoxWidget(qt.QWidget):
     """基準ノードの情報と、スクロール可能な属性入力欄を表示する。"""
 
     def __init__(self, parent: qt.QWidget | None = None) -> None:
@@ -534,7 +534,7 @@ class ChannelEditorWidget(qt.QWidget):
         layout.addWidget(self.message_label)
 
         # 選択・表示更新と、ユーザーによる値変更の経路を分離する
-        self.controller = ChannelEditorController(self)
+        self.controller = ChannelBoxController(self)
         self.state_sweep = RadioButtonSweep(self.scroll_area)
         self.lock_sweep = CheckBoxSweep(self.scroll_area)
         for sweep in (self.state_sweep, self.lock_sweep):

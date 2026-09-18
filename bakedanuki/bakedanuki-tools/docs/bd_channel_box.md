@@ -1,4 +1,4 @@
-# Channel Editor
+# bdChannelBox
 
 選択ノードの値入力と表示・ロック状態を操作する、bool・float 系・enum属性のエディタです。
 
@@ -8,17 +8,17 @@
 初回開発を完了し、利用者による動作確認を終えました。今回の範囲に追加必須の機能はありません。
 2026-09-17にenumのComboBox入力、2026-09-18に値入力／表示・ロックのモード切替、
 両モードの表示フィルターと必要時だけの縦スクロールバー表示を追加しました。その他の拡張は
-[今後の候補](roadmap.md#channel-editorの拡張候補)を参照してください。
+[今後の候補](roadmap.md#bdchannelboxの拡張候補)を参照してください。
 同日に値同期を高速化し、transform・jointの属性表示に優先順を追加しました。
 表示状態のラジオボタンは、左ドラッグで複数行をなぞって変更できます。
 
 ## 起動と終了
 
 ```python
-from bd_tools import channel_editor
+from bd_tools import bd_channel_box
 
-window = channel_editor.show()
-channel_editor.close()
+window = bd_channel_box.show()
+bd_channel_box.close()
 ```
 
 `show()` は既存Windowを再利用します。importだけでは表示やscene変更を行いません。
@@ -42,18 +42,17 @@ Escapeは値欄やメニューの操作に使い、パネル全体は閉じま�
 配置を初期状態へ戻す場合は、次を実行します。
 
 ```python
-window = channel_editor.reset_layout()
+window = bd_channel_box.reset_layout()
 ```
 
-固定workspaceControl名は `channel_editor.WORKSPACE_CONTROL_NAME`
-（`bdToolsChannelEditorWindowWorkspaceControl`）です。
-MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中のcontrolへ内容を接続します。
+固定workspaceControl名は `bd_channel_box.WORKSPACE_CONTROL_NAME`
+（`bdChannelBoxWindowWorkspaceControl`）です。
+MayaのuiScriptは `bd_tools.bd_channel_box.ui.restore()` を呼び、復元中のcontrolへ内容を接続します。
 `restore()` は通常の起動用ではなくMayaの復元処理専用です。
 再起動後もtoolsとutilをimportできるよう、Maya.envまたはmodule pathの設定が必要です。
 
-旧通常Windowの `channel_editor/windows/main` にある配置はdock配置へ自動変換しません。
 初回は右側へ配置し、以降はMayaが保存したworkspace配置を使います。
-`reset_layout()` はこの旧配置とworkspaceControlの保存配置をutilの統合APIで消去します。
+`reset_layout()` はworkspaceControlの保存配置をutilの統合APIで消去します。
 
 ## 表示と入力
 
@@ -126,7 +125,7 @@ MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中�
 `overrideColor`は未対応のbyte型のため表示しません。その他の属性も元の相対順を保ちます。
 表示名やleaf名ではなく、`translate.translateX`などの正式な属性pathで照合します。
 別compound内の同名属性は優先対象に含めず、nodeの型による制限は設けません。
-この順序は[config.py](../python/bd_tools/channel_editor/config.py)の
+この順序は[config.py](../python/bd_tools/bd_channel_box/config.py)の
 `ATTRIBUTE_PRIORITY_PATHS`で調整できます。上から優先したい順に文字列を並べ、
 必要な属性の追加・削除もこのtupleだけで行います。存在しない属性は飛ばし、
 重複したpathは最初の指定を採用します。
@@ -140,11 +139,11 @@ MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中�
 import bd_tools
 bd_tools.reload_package()
 
-from bd_tools import channel_editor
-channel_editor.show()
+from bd_tools import bd_channel_box
+bd_channel_box.show()
 ```
 
-Pythonから`channel_editor.config.ATTRIBUTE_PRIORITY_PATHS`を一時的に差し替える場合は、
+Pythonから`bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS`を一時的に差し替える場合は、
 画面の「表示を更新」で反映できます。再読込み・Maya再起動後はファイル内の設定へ戻ります。
 表示順だけを変更し、sceneの属性順・値・Undo履歴には書き込みません。
 
@@ -335,7 +334,7 @@ bd_tools.reload_package(reload_util=True) # utilも変更した場合
 
 ## 実装の分担
 
-`channel_editor/ui.py` は公開Windowと配置・reload、`widget.py` は属性行と表示、
+`bd_channel_box/ui.py` は公開Windowと配置・reload、`widget.py` は属性行と表示、
 `controller.py` は基準node・対応属性・選択追従を所有します。
 Windowはutilの `MayaDockableWindow` を継承し、`dock_closed` と
 `dock_about_to_dispose` で入力controllerを終了します。workspaceControl作成・削除・
@@ -350,7 +349,7 @@ stepの初期値選択とWindow内の設定保持はtools、値とstepの連動�
 
 ### 見た目の調整箇所
 
-以下の定数は`bd_tools/channel_editor`配下で管理します。サイズは全Maya versionで共通です。
+以下の定数は`bd_tools/bd_channel_box`配下で管理します。サイズは全Maya versionで共通です。
 
 | ファイル | 定数 | 現在値 | 調整する内容 |
 | --- | --- | --- | --- |
@@ -368,9 +367,9 @@ utilの`FloatValueStepSpinBox`のstep既定幅は68ですが、このツール�
 属性名列は余剰幅を受け取るため、名前の推奨幅だけを下げても広いパネルの余白は減りません。
 パネル幅と初期・最小Window幅を合わせて調整します。boolは同じ入力列の左端に配置します。
 
-定数を変更した後はtoolsをreloadして`channel_editor`をimportし直し、`show()`で作り直します。
+定数を変更した後はtoolsをreloadして`bd_channel_box`をimportし直し、`show()`で作り直します。
 保存済みworkspaceの幅が優先される場合は、パネルを手動で縮めるか`reset_layout()`を実行します。
-幅・配置を変更した際は`tests/maya/test_channel_editor.py`の配置検証も新しい仕様に合わせ、
+幅・配置を変更した際は`tests/maya/test_bd_channel_box.py`の配置検証も新しい仕様に合わせ、
 Sliderあり／なし、最小幅／拡大時、ドック／floatingで表示を確認してください。
 
 ### 拡張時に維持する仕様
@@ -386,19 +385,19 @@ Sliderあり／なし、最小幅／拡大時、ドック／floatingで表示を
 
 ## 検証
 
-`tests/maya/test_channel_editor.py` は、選択時の無書込み、外部変更の非伝播、
+`tests/maya/test_bd_channel_box.py` は、選択時の無書込み、外部変更の非伝播、
 View選択、混在編集、除外対象、範囲違い、Undo、構成変更を検証します。
 「keyable」「全て」のどちらでも、UI・外部入力によって無関係な行の再読取りや
 全行の作り直しが発生しないことを、時間の閾値ではなく更新対象で検証します。
-`tests/maya/test_channel_editor_enum.py`は、enumの飛び番・定義不一致の除外、使用中の
+`tests/maya/test_bd_channel_box_enum.py`は、enumの飛び番・定義不一致の除外、使用中の
 定義変更、未定義値、ロック・接続、混在、Undo／Redo、選択肢の終了を検証します。
-`tests/maya/test_channel_editor_states.py`は、既存Hide属性の列挙と復帰、表示・ロックの
+`tests/maya/test_bd_channel_box_states.py`は、既存Hide属性の列挙と復帰、表示・ロックの
 独立操作、混在、Undo／Redo、モード切替の無書込みとstep保持、必要時だけのスクロールを検証します。
 両モードの5種類のフィルター、モードごとの選択保持、状態変更後の絞り込みとUndo／Redo、
 非表示属性の値入力・操作制限、外部変更、入力途中や連続編集中の切替も検証します。
-`tests/maya/test_channel_editor_dock.py` は、batchで扱えないworkspaceの画面境界を置換し、
+`tests/maya/test_bd_channel_box_dock.py` は、batchで扱えないworkspaceの画面境界を置換し、
 公開show / restore / close / reset、Window重複防止、監視解除とreloadを検証します。
-公開入口の型は `tests/typecheck/channel_editor_contract.py` で固定します。
+公開入口の型は `tests/typecheck/bd_channel_box_contract.py` で固定します。
 対応Maya全versionでruntime testを行い、本体の操作確認は開発用smoke scriptを利用します。
 
 初回開発完了時の確認結果（2026-09-16）です。対象のtoolsは`bed114f`、utilは`e8e996dc`です。
@@ -417,7 +416,7 @@ Maya 2026 / 2027の最終UI変更はruntime testによる確認です。最終�
 UIを配布する前には、利用するMaya versionと画面倍率・フォントでも文字切れと操作を確認します。
 大量選択時の性能は、既存runnerの計測を使って必要に応じて再評価します。
 実行コマンド、独立したMaya起動環境、操作内容、画像と計測結果の保存先は
-[Maya本体検証の手順](testing.md#channel-editorのmaya本体検証)を参照してください。
+[Maya本体検証の手順](testing.md#bdchannelboxのmaya本体検証)を参照してください。
 
 ### enum追加時の確認（2026-09-17）
 
@@ -453,7 +452,7 @@ Maya 2026 / 2027本体での手動操作は今回実施していません。
 Maya 2025本体の保存画像で切替前後の列位置、名前の省略、混在とロックの表示を確認しました。
 今回もMaya 2026 / 2027本体の画面操作は実施していません。
 本体検証の結果・画像は検証実行環境の
-`%TEMP%/bd-channel-editor-maya2025-xnb085bt`へ保存しました。
+`%TEMP%/bd-channel-box-maya2025-xnb085bt`へ保存しました。
 
 ### 表示フィルター・スクロールバー変更時の確認（2026-09-18）
 
@@ -471,7 +470,7 @@ Maya 2025本体の保存画像で切替前後の列位置、名前の省略、�
 フィルターにより行数が変わっても横スクロールは発生せず、必要時だけ縦スクロールバーを表示します。
 この拡張はtoolsだけの変更です。Maya 2026 / 2027はruntime testで検証し、本体の画面操作は未実施です。
 本体検証の結果・画像は検証実行環境の
-`%TEMP%/bd-channel-editor-maya2025-ux83mnxs`へ保存しました。
+`%TEMP%/bd-channel-box-maya2025-ux83mnxs`へ保存しました。
 
 ### 値同期の高速化（2026-09-18）
 
@@ -507,7 +506,7 @@ callback自体の登録数は同じですが、複数選択時の照合は通知
   全て173行で18.746 ms。単独の計測条件とは異なるため、上表と直接比較しない。
 
 Maya本体の操作結果・画像は検証実行環境の
-`%TEMP%/bd-channel-editor-maya2025-euh2_qt8`へ保存しました。
+`%TEMP%/bd-channel-box-maya2025-euh2_qt8`へ保存しました。
 本体終了時は既知の終了待ちタイムアウトが再現し、runnerの終了codeは1です。
 36工程の操作成功とプロセスの正常終了は区別しています。
 Maya 2026 / 2027はruntimeとUI互換性の自動検証で確認し、本体の画面操作は未実施です。
@@ -527,7 +526,7 @@ toolsだけの変更です。反映には`bd_tools.reload_package()`で再読込
   保存画像で優先順と入力欄の配置を確認し、close／reload後のcallback解放も成功。
 
 本体検証の結果・画像は検証実行環境の
-`%TEMP%/bd-channel-editor-maya2025-p3febnx8`へ保存しました。
+`%TEMP%/bd-channel-box-maya2025-p3febnx8`へ保存しました。
 本体終了時は既知の終了待ちタイムアウトが再現し、runnerの終了codeは1です。
 37工程の操作成功とは区別し、検証専用processの停止を確認しました。
 Maya 2026 / 2027本体の画面操作は今回実施していません。
@@ -535,7 +534,7 @@ Maya 2026 / 2027本体の画面操作は今回実施していません。
 同日の追加調整で、drawOverride内の先頭をoverrideEnabledへ変更しました。
 残りの相対順は維持し、関連Maya 2025 test 10件、Pyright、Black checkが成功しました。
 Maya 2025本体も37工程成功し、両モードの保存画像でoverrideEnabledが先頭になることを確認しました。
-追加調整の結果・画像は`%TEMP%/bd-channel-editor-maya2025-1nuu7kke`へ保存しました。
+追加調整の結果・画像は`%TEMP%/bd-channel-box-maya2025-1nuu7kke`へ保存しました。
 追加調整でも本体終了待ちの既知タイムアウトが再現し、runnerの終了codeは1です。
 
 ### 上部ComboBoxの説明ラベル（2026-09-18）
@@ -544,7 +543,7 @@ ModeとAttribute Filterのラベルを右揃えの共通列に追加しました
 関連Maya 2025 test 26件、Pyright、Black checkが成功し、280 / 360 / 520 pxで
 ラベルと選択欄の整列・幅、モード・フィルター操作を確認しました。
 Maya 2025本体も37工程成功し、保存画像で両モードの文字と配置を確認しました。
-本体検証の結果・画像は`%TEMP%/bd-channel-editor-maya2025-za269o96`へ保存しました。
+本体検証の結果・画像は`%TEMP%/bd-channel-box-maya2025-za269o96`へ保存しました。
 終了待ちでは既知のタイムアウトが再現し、runnerの終了codeは1です。
 操作37工程の成功とは区別し、検証専用processの停止を確認しました。
 
@@ -561,7 +560,7 @@ lockは独立したCheckBoxとし、表示状態の混在時は3ボタンとも�
 - Maya 2025本体: 37工程成功。実マウス入力とSpaceで状態を変更し、
   保存画像で200 pxの操作欄・文字・混在表示を確認。
 
-本体検証の結果・画像は`%TEMP%/bd-channel-editor-maya2025-wv4li987`へ保存しました。
+本体検証の結果・画像は`%TEMP%/bd-channel-box-maya2025-wv4li987`へ保存しました。
 終了待ちでは既知のタイムアウトが再現し、runnerの終了codeは1です。
 操作37工程の成功とは区別し、検証専用processの停止を確認しました。
 Maya 2026 / 2027本体の画面操作は今回実施していません。
@@ -587,7 +586,7 @@ Maya 2026 / 2027本体の画面操作は今回実施していません。
 
 Maya本体でviewportの保持参照が無効になる事象を検出し、操作補助のownerを
 ScrollArea本体にして現在のviewportを判定時に取得する形へ修正しました。
-本体検証の結果・画像は`%TEMP%/bd-channel-editor-maya2025-yefskvp6`へ保存しました。
+本体検証の結果・画像は`%TEMP%/bd-channel-box-maya2025-yefskvp6`へ保存しました。
 38工程の操作結果は成功ですが、本体終了待ちの既知タイムアウトによりrunnerの終了codeは1です。
 検証専用processの停止を確認済みです。Maya 2026 / 2027本体の画面操作は今回実施していません。
 
@@ -611,14 +610,14 @@ toolsはlockの明示入力と既存の共有Undoセッションを接続しま�
 - Maya 2025本体の39工程が成功。lock列の往復によるロック・解除、一回Undo／Redo、
   既存ラジオ操作とreload後の再表示を確認し、ロック前後の保存画像も確認。
 
-結果・画像・util検証ログは`%TEMP%/bd-channel-editor-maya2025-4eg23ktj`へ保存しました。
+結果・画像・util検証ログは`%TEMP%/bd-channel-box-maya2025-4eg23ktj`へ保存しました。
 操作39工程は成功ですが、本体終了待ちの既知タイムアウトによりrunnerの終了codeは1です。
 検証専用processの停止を確認済みです。Maya 2026 / 2027本体の画面操作は今回実施していません。
 
 ### 優先順の調整と設定の分離（2026-09-18）
 
 先頭10属性をvisibility・translate X/Y/Z・rotate X/Y/Z・scale X/Y/Zに変更し、
-残りの相対順を維持しました。優先順を`channel_editor/config.py`の
+残りの相対順を維持しました。優先順を`bd_channel_box/config.py`の
 `ATTRIBUTE_PRIORITY_PATHS`へ分離し、行構築時に現在の設定を参照します。
 
 - `check.cmd -IncludeMaya`: Black・Pyright・unit 8件・Maya 2025 runtime 121件が成功。
@@ -629,5 +628,22 @@ toolsはlockの明示入力と既存の共有Undoセッションを接続しま�
 - Maya 2025本体の39工程が成功し、runnerも終了code 0で完了。
   新しい先頭10属性と後続の順番を両モードの保存画像で確認。
 
-本体検証の結果・画像は`%TEMP%/bd-channel-editor-maya2025-5lf9abq1`へ保存しました。
+本体検証の結果・画像は`%TEMP%/bd-channel-box-maya2025-5lf9abq1`へ保存しました。
 今回はtoolsだけの変更で、Maya 2026 / 2027のruntime・本体確認は実施していません。
+
+### bdChannelBoxへの名称統一（2026-09-18）
+
+ツール名をbdChannelBox、公開packageを`bd_tools.bd_channel_box`へ統一しました。
+Windowタイトル、workspaceControl ID、復元入口、設定path、テスト、検証runner、
+ドキュメントも同じ名称へ揃えています。
+
+- `check.cmd -IncludeMaya`: Black・Pyright・unit 8件・Maya 2025 runtime 121件が成功。
+- Maya 2026 / 2027のruntime test: 各121件成功。
+- Maya 2025本体の初回40工程が成功。WindowとworkspaceControlのタイトル、
+  ドッキング、入力、reload、floating配置の保存を確認。
+- Maya 2025の別processで再起動し、`show()`前のworkspaceControl自動復元、
+  floating配置、単一Windowの再利用、複数ノード編集を確認。
+
+本体検証の結果・画像は`%TEMP%/bd-channel-box-maya2025-0178bgaj`へ保存しました。
+再起動検証の4工程は成功ですが、本体終了待ちの既知タイムアウトによりrunnerの
+終了codeは1です。操作結果と画像の保存、検証専用processの停止を確認済みです。

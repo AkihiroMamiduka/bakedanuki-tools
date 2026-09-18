@@ -1,5 +1,5 @@
 # coding: utf-8
-"""Channel Editorの表示順を調整する設定。"""
+"""bdChannelBoxの表示順を調整する設定。"""
 
 __all__ = ["ATTRIBUTE_PRIORITY_PATHS"]
 

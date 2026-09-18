@@ -1,5 +1,5 @@
 # coding: utf-8
-"""独立したMaya本体でChannel Editorの表示と終了を検証する。"""
+"""独立したMaya本体でbdChannelBoxの表示と終了を検証する。"""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from types import TracebackType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bd_tools.channel_editor.ui import ChannelEditorWindow
-    from bd_tools.channel_editor.widget import (
+    from bd_tools.bd_channel_box.ui import ChannelBoxWindow
+    from bd_tools.bd_channel_box.widget import (
         AttributeRowWidget,
         AttributeStateRowWidget,
     )
@@ -30,7 +30,7 @@ _PHASE_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PHASE"
 _PREPARE_RESTART_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PREPARE_RESTART"
 _STARTUP_IDLE_COMMAND = (
     "import __main__; "
-    "__main__._bd_tools_channel_editor_qa_session.begin_when_idle()"
+    "__main__._bd_tools_bd_channel_box_qa_session.begin_when_idle()"
 )
 
 
@@ -55,7 +55,7 @@ class _MayaSmokeSession:
         faulthandler.dump_traceback_later(
             45, repeat=True, file=self._trace_file
         )
-        self.window: ChannelEditorWindow | None = None
+        self.window: ChannelBoxWindow | None = None
         self.nodes: list[str] = []
         self.baseline_callbacks: dict[str, int] = {}
         self.steps: list[str] = []
@@ -209,7 +209,7 @@ class _MayaSmokeSession:
         if not cmds.undoInfo(query=True, state=True):
             raise RuntimeError("検証sceneのUndoを有効にできません")
         for index in range(2):
-            node = cmds.createNode("transform", name=f"channelEditorQA{index}")
+            node = cmds.createNode("transform", name=f"bdChannelBoxQA{index}")
             cmds.addAttr(
                 node,
                 longName="weight",
@@ -247,10 +247,10 @@ class _MayaSmokeSession:
 
     def _show(self) -> None:
         """Maya標準UIの選択処理が完了してから入力Windowを表示する。"""
-        from bd_tools import channel_editor
+        from bd_tools import bd_channel_box
 
         self.baseline_callbacks = self._callback_counts()
-        self.window = channel_editor.show()
+        self.window = bd_channel_box.show()
         self.steps.append("show_multiple_selection")
 
     def _inspect(self) -> None:
@@ -259,7 +259,11 @@ class _MayaSmokeSession:
 
         window = self._require_window()
         if not window.isVisible():
-            raise AssertionError("Channel Editorが表示されていません")
+            raise AssertionError("bdChannelBoxが表示されていません")
+        if window.windowTitle() != "bdChannelBox":
+            raise AssertionError(
+                f"Windowタイトルが不正です: {window.windowTitle()}"
+            )
         if not window.findChildren(BoolCheckBox):
             raise AssertionError("boolのCheckBoxが見つかりません")
         if not window.findChildren(FloatSliderSpinBox):
@@ -274,14 +278,19 @@ class _MayaSmokeSession:
     def _float_dock(self) -> None:
         """初回の右ドックを確認し、Maya標準のfloatingへ切り替える。"""
         from maya import cmds
-        from bd_tools import channel_editor
+        from bd_tools import bd_channel_box
 
-        name = channel_editor.WORKSPACE_CONTROL_NAME
+        name = bd_channel_box.WORKSPACE_CONTROL_NAME
         if not cmds.workspaceControl(name, query=True, exists=True):
             raise AssertionError("workspaceControlが作成されていません")
+        if (
+            cmds.workspaceControl(name, query=True, label=True)
+            != "bdChannelBox"
+        ):
+            raise AssertionError("workspaceControlのタイトルが不正です")
         if cmds.workspaceControl(name, query=True, floating=True):
             raise AssertionError("初回表示がドッキングされていません")
-        if channel_editor.show() is not self._require_window():
+        if bd_channel_box.show() is not self._require_window():
             raise AssertionError("showでWindowが重複生成されました")
         self._capture_maya("05-docked.png")
         cmds.workspaceControl(name, edit=True, floating=True)
@@ -289,10 +298,10 @@ class _MayaSmokeSession:
     def _inspect_floating(self) -> None:
         """floating後も同じ入力と監視が生存し、内容を表示できることを確認する。"""
         from maya import cmds
-        from bd_tools import channel_editor
+        from bd_tools import bd_channel_box
 
         if not cmds.workspaceControl(
-            channel_editor.WORKSPACE_CONTROL_NAME, query=True, floating=True
+            bd_channel_box.WORKSPACE_CONTROL_NAME, query=True, floating=True
         ):
             raise AssertionError("floatingへ切り替わりません")
         window = self._require_window()
@@ -304,10 +313,10 @@ class _MayaSmokeSession:
     def _redock(self) -> None:
         """floatingからMaya右側の既存パネルとタブ化する。"""
         from maya import cmds
-        from bd_tools import channel_editor
+        from bd_tools import bd_channel_box
 
         cmds.workspaceControl(
-            channel_editor.WORKSPACE_CONTROL_NAME,
+            bd_channel_box.WORKSPACE_CONTROL_NAME,
             edit=True,
             dockToMainWindow=("right", True),
         )
@@ -315,32 +324,32 @@ class _MayaSmokeSession:
     def _inspect_redocked(self) -> None:
         """再ドッキング後も同じWindowで入力を継続できることを確認する。"""
         from maya import cmds
-        from bd_tools import channel_editor
+        from bd_tools import bd_channel_box
 
         if cmds.workspaceControl(
-            channel_editor.WORKSPACE_CONTROL_NAME, query=True, floating=True
+            bd_channel_box.WORKSPACE_CONTROL_NAME, query=True, floating=True
         ):
             raise AssertionError("Mayaへ再ドッキングできません")
-        if channel_editor.show() is not self._require_window():
+        if bd_channel_box.show() is not self._require_window():
             raise AssertionError("再ドッキングでWindowが重複しました")
         self.steps.append("redock_to_maya_tab")
 
     def _reset_dock_layout(self) -> None:
         """配置resetが旧入力を破棄し、新しい右ドックへ戻すことを確認する。"""
         from maya import cmds
-        from bd_tools import channel_editor
+        from bd_tools import bd_channel_box
         from bd_util.ui import qt
 
         old_window = self._require_window()
         old_controller = old_window.widget.controller
-        self.window = channel_editor.reset_layout()
+        self.window = bd_channel_box.reset_layout()
         self._flush_gui()
         if not old_controller.is_disposed or qt.isValid(old_window):
             raise AssertionError(
                 "配置reset後に旧Windowまたは入力が残っています"
             )
         if cmds.workspaceControl(
-            channel_editor.WORKSPACE_CONTROL_NAME, query=True, floating=True
+            bd_channel_box.WORKSPACE_CONTROL_NAME, query=True, floating=True
         ):
             raise AssertionError("配置reset後に右ドックへ戻りません")
         self._assert_values("weight", (0.25, 0.75))
@@ -912,7 +921,7 @@ class _MayaSmokeSession:
         from maya import cmds
 
         widget = self._require_window().widget
-        joint = cmds.createNode("joint", name="channelEditorOrderQA")
+        joint = cmds.createNode("joint", name="bdChannelBoxOrderQA")
         cmds.select(joint, replace=True)
         self._flush_gui()
         expected = ["visibility"]
@@ -1104,23 +1113,23 @@ class _MayaSmokeSession:
     def _close(self) -> None:
         """Maya側のclose操作からworkspaceControlごと完全破棄する。"""
         from maya import cmds
-        from bd_tools import channel_editor
+        from bd_tools import bd_channel_box
 
         cmds.workspaceControl(
-            channel_editor.WORKSPACE_CONTROL_NAME, edit=True, close=True
+            bd_channel_box.WORKSPACE_CONTROL_NAME, edit=True, close=True
         )
         self.steps.append("close")
 
     def _reopen(self) -> None:
         """close後のcallback解放を確認し、新しいWindowを表示する。"""
-        from bd_tools import channel_editor
+        from bd_tools import bd_channel_box
         from bd_util.ui import qt
 
         if self.window is not None and qt.isValid(self.window):
             raise AssertionError("close後にWindowが破棄されていません")
         if self._callback_counts() != self.baseline_callbacks:
             raise AssertionError("close後にnode callbackが残っています")
-        self.window = channel_editor.show()
+        self.window = bd_channel_box.show()
         self.steps.append("reopen_without_callback_leak")
 
     def _change_selection(self) -> None:
@@ -1132,21 +1141,21 @@ class _MayaSmokeSession:
 
     def _close_for_reload(self) -> None:
         """選択追従を確認し、標準Mayaだけのcallback基準値を取り直す。"""
-        from bd_tools import channel_editor
+        from bd_tools import bd_channel_box
 
         window = self._require_window()
         names = window.widget.controller.node_names
         if len(names) != 1 or names[0].rsplit("|", 1)[-1] != self.nodes[1]:
             raise AssertionError(f"新しい選択へ追従していません: {names}")
         self._capture("02-single-selection.png")
-        channel_editor.dispose()
+        bd_channel_box.dispose()
 
     def _reopen_for_reload(self) -> None:
         """現在の選択でcallback基準値を記録し、reload対象を表示する。"""
-        from bd_tools import channel_editor
+        from bd_tools import bd_channel_box
 
         self.baseline_callbacks = self._callback_counts()
-        self.window = channel_editor.show()
+        self.window = bd_channel_box.show()
 
     def _reload(self) -> None:
         """表示中のWindowを含めてutilとtoolsをreloadする。"""
@@ -1157,35 +1166,35 @@ class _MayaSmokeSession:
 
     def _show_after_reload(self) -> None:
         """reloadで古いWindowとcallbackが消えたことを確認して再表示する。"""
-        from bd_tools import channel_editor
+        from bd_tools import bd_channel_box
         from bd_util.ui import qt
 
         if self.window is not None and qt.isValid(self.window):
             raise AssertionError("reload後に古いWindowが残っています")
         if self._callback_counts() != self.baseline_callbacks:
             raise AssertionError("reload後にnode callbackが残っています")
-        self.window = channel_editor.show()
+        self.window = bd_channel_box.show()
         self.steps.append("show_after_reload")
 
     def _capture_after_reload(self) -> None:
         """reload後の表示結果を保存し、負荷測定前に入力Windowを終了する。"""
-        from bd_tools import channel_editor
+        from bd_tools import bd_channel_box
 
         self._capture("03-after-reload.png")
-        channel_editor.dispose()
+        bd_channel_box.dispose()
 
     def _benchmark(self) -> None:
         """10ノード・30追加属性で生成、一括入力、選択切替を1回ずつ計測する。"""
         from maya import cmds
 
-        from bd_tools import channel_editor
+        from bd_tools import bd_channel_box
         from bd_util.ui import FloatValueStepSpinBox
 
         cmds.file(new=True, force=True)
         self.nodes = []
         for node_index in range(10):
             node = cmds.createNode(
-                "transform", name=f"channelEditorBench{node_index}"
+                "transform", name=f"bdChannelBoxBench{node_index}"
             )
             for attribute_index in range(30):
                 cmds.addAttr(
@@ -1201,7 +1210,7 @@ class _MayaSmokeSession:
 
         # 起動時の行構築とQtへの表示更新を同じ測定区間へ含める
         started = time.perf_counter()
-        self.window = channel_editor.show()
+        self.window = bd_channel_box.show()
         self._flush_gui()
         self.measurements["create_window_ms"] = round(
             (time.perf_counter() - started) * 1000, 3
@@ -1260,9 +1269,9 @@ class _MayaSmokeSession:
 
     def _finish(self) -> None:
         """すべての操作結果を保存し、検証専用Mayaを終了する。"""
-        from bd_tools import channel_editor
+        from bd_tools import bd_channel_box
 
-        channel_editor.dispose()
+        bd_channel_box.dispose()
         self.steps.append("dispose")
         if os.environ.get(_PREPARE_RESTART_VARIABLE) == "1":
             self._prepare_restart()
@@ -1271,11 +1280,11 @@ class _MayaSmokeSession:
     def _prepare_restart(self) -> None:
         """独立profileへfloating配置を保存し、次のMaya起動の検証資料を残す。"""
         from maya import cmds
-        from bd_tools import channel_editor
+        from bd_tools import bd_channel_box
 
-        self.window = channel_editor.show()
+        self.window = bd_channel_box.show()
         cmds.workspaceControl(
-            channel_editor.WORKSPACE_CONTROL_NAME,
+            bd_channel_box.WORKSPACE_CONTROL_NAME,
             edit=True,
             floating=True,
             resizeWidth=420,
@@ -1290,7 +1299,7 @@ class _MayaSmokeSession:
             self.output / "prepared-restart.json",
             {
                 "maya_version": str(cmds.about(version=True)),
-                "control_name": channel_editor.WORKSPACE_CONTROL_NAME,
+                "control_name": bd_channel_box.WORKSPACE_CONTROL_NAME,
                 "geometry": geometry,
             },
         )
@@ -1299,10 +1308,10 @@ class _MayaSmokeSession:
     def _inspect_restart(self) -> None:
         """showを呼ぶ前に、Mayaの保存workspaceとuiScriptだけで復元したUIを確認する。"""
         from maya import cmds
-        from bd_tools import channel_editor
+        from bd_tools import bd_channel_box
         from bd_util.ui import qt
 
-        name = channel_editor.WORKSPACE_CONTROL_NAME
+        name = bd_channel_box.WORKSPACE_CONTROL_NAME
         if not cmds.workspaceControl(name, query=True, exists=True):
             raise AssertionError(
                 "Maya再起動でworkspaceControlが復元されません"
@@ -1310,11 +1319,11 @@ class _MayaSmokeSession:
         windows = [
             widget
             for widget in qt.QApplication.allWidgets()
-            if isinstance(widget, channel_editor.ChannelEditorWindow)
+            if isinstance(widget, bd_channel_box.ChannelBoxWindow)
         ]
         if len(windows) != 1:
             raise AssertionError(
-                f"復元されたChannel Editorの数が不正です: {len(windows)}"
+                f"復元されたbdChannelBoxの数が不正です: {len(windows)}"
             )
         self.window = windows[0]
         if not cmds.workspaceControl(name, query=True, floating=True):
@@ -1327,7 +1336,7 @@ class _MayaSmokeSession:
             raise AssertionError(
                 f"floatingの保存配置と復元結果が異なります: {saved['geometry']} -> {geometry}"
             )
-        if channel_editor.show() is not self.window:
+        if bd_channel_box.show() is not self.window:
             raise AssertionError("再起動後のshowでWindowが重複しました")
         self.steps.append("maya_restart_restores_workspace_and_content")
 
@@ -1362,17 +1371,17 @@ class _MayaSmokeSession:
                 None, qt.QEvent.Type.DeferredDelete
             )
 
-    def _require_window(self) -> ChannelEditorWindow:
+    def _require_window(self) -> ChannelBoxWindow:
         """生存している検証対象Windowを返す。"""
         from bd_util.ui import qt
 
         if self.window is None or not qt.isValid(self.window):
-            raise AssertionError("Channel EditorのWindowがありません")
+            raise AssertionError("bdChannelBoxのWindowがありません")
         return self.window
 
     def _row(self, attribute_name: str) -> AttributeRowWidget:
         """指定した属性pathに対応する表示中の入力行を返す。"""
-        from bd_tools.channel_editor.widget import AttributeRowWidget
+        from bd_tools.bd_channel_box.widget import AttributeRowWidget
 
         window = self._require_window()
         for row in window.widget.row_widgets:
@@ -1386,7 +1395,7 @@ class _MayaSmokeSession:
 
     def _state_row(self, attribute_name: str) -> AttributeStateRowWidget:
         """指定した属性pathに対応する表示中の状態行を返す。"""
-        from bd_tools.channel_editor.widget import AttributeStateRowWidget
+        from bd_tools.bd_channel_box.widget import AttributeStateRowWidget
 
         window = self._require_window()
         for row in window.widget.row_widgets:
@@ -1648,7 +1657,7 @@ def _start_inside_maya() -> None:
     output = Path(os.environ[_OUTPUT_VARIABLE]).resolve()
     session = _MayaSmokeSession(output)
     # singleShotのbound method参照だけへ寿命を委ねず、専用processで保持する
-    setattr(__main__, "_bd_tools_channel_editor_qa_session", session)
+    setattr(__main__, "_bd_tools_bd_channel_box_qa_session", session)
     session.defer_until_idle()
 
 
@@ -1675,16 +1684,14 @@ def _launch(
     phase = "restart" if restart_from is not None else "initial"
     if restart_from is None:
         output = Path(
-            tempfile.mkdtemp(prefix=f"bd-channel-editor-maya{maya_version}-")
+            tempfile.mkdtemp(prefix=f"bd-channel-box-maya{maya_version}-")
         )
         for name in ("prefs", "env", "project", "scripts"):
             (output / name).mkdir()
     else:
         output = restart_from.resolve()
         # 通常のMaya設定を再起動検証に流用せず、このrunnerの保存資料だけを許可する
-        if not output.name.startswith(
-            f"bd-channel-editor-maya{maya_version}-"
-        ):
+        if not output.name.startswith(f"bd-channel-box-maya{maya_version}-"):
             raise ValueError(
                 "このrunnerが作成した検証ディレクトリを指定してください"
             )

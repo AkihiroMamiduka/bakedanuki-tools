@@ -57,19 +57,19 @@ bd_tools/
     ...
 ```
 
-最初の実装は `bd_tools.channel_editor` です。`ui.py` がWindow、`widget.py` が入力行、
+最初の実装は `bd_tools.bd_channel_box` です。`ui.py` がWindow、`widget.py` が入力行、
 `controller.py` が選択と対応属性を組み立てます。汎用の属性列挙と一括編集はutilへ配置します。
-Channel Editorは `MayaDockableWindowController` を使い、固定workspaceControl IDと
-`bd_tools.channel_editor.ui.restore` を維持します。初回は右ドック、close時は完全破棄とし、
+bdChannelBoxは `MayaDockableWindowController` を使い、固定workspaceControl IDと
+`bd_tools.bd_channel_box.ui.restore` を維持します。初回は右ドック、close時は完全破棄とし、
 workspace配置の復元・resetはutil、入力と選択監視の終了はtoolsが所有します。
 値とstepの複合Viewもutilへ配置し、属性別の初期stepとWindow内での設定保持は
-Channel Editorが所有します。step設定はsceneの値・Undo履歴へ含めません。
+bdChannelBoxが所有します。step設定はsceneの値・Undo履歴へ含めません。
 属性名の整列、混在の印、対象情報のtooltip、更新・揃えるための右クリックメニューも
-Channel Editorが所有し、値欄のQt標準編集メニューとは独立して提供します。
+bdChannelBoxが所有し、値欄のQt標準編集メニューとは独立して提供します。
 boolにはutilの`BoolCheckBox`、両側hard limit付きfloatには`FloatSliderSpinBox`、
 それ以外のfloatには`FloatValueStepSpinBox`を使います。値欄とSliderの並び順の機能はutil、
 Value先行の選択、単位の非表示、固定幅と右寄せはtoolsの表示方針です。
-属性行の優先順もtoolsの表示方針です。`channel_editor/config.py`の
+属性行の優先順もtoolsの表示方針です。`bd_channel_box/config.py`の
 `ATTRIBUTE_PRIORITY_PATHS`をcontrollerが行構築時に読み、正式pathで照合します。
 既定ではvisibility・translate・rotate・scaleの10属性、残りの指定22属性、
 drawOverride配下、その他の順に安定ソートしてから行を構築します。
@@ -109,8 +109,8 @@ reload しないようにします。
 公開 API を追加した場合は `tests/typecheck` に contract を追加し、実行時のテストと IDE の
 補完品質を別々に確認します。
 
-Channel Editorを利用側から開く場合は`bd_tools.channel_editor.show()`を使います。
-別ツールの実装で必要になる属性列挙や一括編集は、Channel Editorのcontrollerを経由せず
+bdChannelBoxを利用側から開く場合は`bd_tools.bd_channel_box.show()`を使います。
+別ツールの実装で必要になる属性列挙や一括編集は、bdChannelBoxのcontrollerを経由せず
 utilを直接利用します。画面寸法の定数はtools内部の調整箇所で、保存設定や公開APIではありません。
 
 enumも同じ責務分担です。実定義の取得と比較用の値型はutilの`read_enum_definition()`と

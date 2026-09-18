@@ -67,21 +67,21 @@ Black 用環境と、pytest / Pyright 用の開発ツールを準備します。
 .\scripts\setup-dev.cmd
 ```
 
-## Channel Editor
+## bdChannelBox
 
 bool・float系・enumの値入力、step操作、表示・ロック状態の変更、Mayaへのドッキングに対応しています。
-今後の任意の拡張候補は[Roadmap](bakedanuki/bakedanuki-tools/docs/roadmap.md#channel-editorの拡張候補)にまとめています。
+今後の任意の拡張候補は[Roadmap](bakedanuki/bakedanuki-tools/docs/roadmap.md#bdchannelboxの拡張候補)にまとめています。
 
 Maya の Script Editor で実行します。
 
 ```python
-from bd_tools import channel_editor
+from bd_tools import bd_channel_box
 
-channel_editor.show()
+bd_channel_box.show()
 ```
 
 初回はMaya右側へドッキングし、タイトル部分のドラッグでfloatingやタブ配置へ変更できます。
-終了は `channel_editor.close()`、配置のリセットと再表示は `channel_editor.reset_layout()` です。
+終了は `bd_channel_box.close()`、配置のリセットと再表示は `bd_channel_box.reset_layout()` です。
 
 選択リストの先頭ノードを基準に、Channel Box に表示する bool・float 系・enum属性の
 入力欄を表示します。同名・同種の属性を持つ選択ノードへ、編集時だけ値を一括反映します。
@@ -99,7 +99,7 @@ enumはComboBoxで項目名を表示し、整数値と項目名の対応が一�
 
 対応する `bakedanuki-util` の値・状態の複数対象Binding、属性列挙、複合View、ドッキング基盤が必要です。
 toolsとutilは、組み合わせて動作確認した版を配置してください。
-詳細は [Channel Editor](bakedanuki/bakedanuki-tools/docs/channel_editor.md) を参照してください。
+詳細は [bdChannelBox](bakedanuki/bakedanuki-tools/docs/bd_channel_box.md) を参照してください。
 
 ## Verification
 
