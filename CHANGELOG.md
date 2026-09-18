@@ -9,6 +9,10 @@
 
 ### Changed
 
+- bdChannelBoxの選択切替を軽くするutilの属性検索・step入力欄初期化の改善に対応。
+  属性検索は一意な名前を直接取得し、step欄は生成途中の不要な極小値表示を省く。
+  値・状態の編集、Undo、精度、表示順、選択監視は維持する。
+  `bakedanuki-util`の更新が必要。既存API・scene・保存設定の移行は不要。
 - ツール名をbdChannelBox、公開packageを`bd_tools.bd_channel_box`へ統一。
   Windowタイトル、workspaceControl ID、復元入口、設定path、テスト、ドキュメントも
   新名称に揃える。pre-1.0.0の未公開ツールのため互換用の入口は設けない。

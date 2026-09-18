@@ -647,3 +647,42 @@ Windowタイトル、workspaceControl ID、復元入口、設定path、テスト
 本体検証の結果・画像は`%TEMP%/bd-channel-box-maya2025-0178bgaj`へ保存しました。
 再起動検証の4工程は成功ですが、本体終了待ちの既知タイムアウトによりrunnerの
 終了codeは1です。操作結果と画像の保存、検証専用processの停止を確認済みです。
+
+### 選択切替の高速化（2026-09-19）
+
+utilの属性検索とstep入力欄の初期化を改善しました。一意な属性は長名・短名と
+親pathを確認して直接取得し、非一意な属性は既存の全件検索で判定します。
+step欄は初期値を設定してから下限を適用し、生成途中の不要な極小値表示を省きます。
+UIの再利用や監視の共有化は追加せず、選択変更時の入力・callback解放を維持します。
+toolsとutilを更新し、`bd_tools.reload_package(reload_util=True)`で再読込みしてください。
+
+Maya 2025本体の同一processで、変更前の2実装と変更後を交互に計測しました。
+各30個のfloat属性を追加したtransformを使用し、2回のwarm-up後の7回の中央値です。
+入力行の破棄・再構築・Qt更新を含め、前の試行の循環参照回収は測定前に完了しています。
+1ノードでは先頭・末尾ノードを切り替え、10ノードでは選択順序を反転しています。
+
+| 条件 | 変更前 | 変更後 |
+| --- | ---: | ---: |
+| 1ノード・値編集40行 | 113.080 ms | 91.806 ms |
+| 1ノード・値編集173行 | 375.907 ms | 310.413 ms |
+| 10ノード・値編集173行 | 1024.795 ms | 584.613 ms |
+| 1ノード・表示・ロック173行 | 346.262 ms | 311.831 ms |
+
+計測値はsceneと実行環境によって変わり、性能保証値ではありません。
+比較用runnerと結果は検証環境の`%TEMP%/bd_selection_native_compare.py`、
+`%TEMP%/bd-channel-box-maya2025-8evw63y2`へ保存しました。
+
+- utilの`verify.cmd`: Black、3版Pyright、Maya 2025全体4229 passed / 723 skippedが成功。
+  3版の専用Qt検証各823件、Maya UI検証各349件も成功し、全体実行でskipするUIも確認。
+- utilの追加テストでalias・誤った親pathの拒否13件、step初期値の境界12件を確認。
+  属性解決の関連24件はMaya 2026 / 2027でも成功。
+- toolsの`check.cmd -IncludeMaya`: Black、Pyright、unit 8件、Maya 2025 runtime 121件が成功。
+  Maya 2026 / 2027のruntime testも各121件成功。
+- Maya 2025本体の比較検証39工程が成功し、値・enum・表示・ロック・なぞり・Undo／Redo、
+  close／reloadと保存画像を確認。
+- 正式runnerも39工程が成功し、追加した選択切替の計測結果と行数を確認。
+  結果・画像は`%TEMP%/bd-channel-box-maya2025-9qim_h78`へ保存。
+
+比較検証・正式runnerとも操作結果は成功ですが、Maya本体の終了待ちがタイムアウトし、
+runnerの終了codeは1です。検証専用processの停止を確認済みです。
+Maya 2026 / 2027本体の画面操作は今回実施していません。

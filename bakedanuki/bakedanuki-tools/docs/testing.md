@@ -73,6 +73,10 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 1回ずつ計測します。「keyable」「全て」では同じ属性を2回warm-up後に9回入力し、
 遅延同期・描画を含む時間の中央値を`edit_keyable_median_ms`／`edit_all_median_ms`へ保存します。
 行数は`edit_keyable_rows`／`edit_all_rows`です。
+選択切替も値編集の40行・173行、10ノードの173行、表示・ロックの173行で計測します。
+先頭と末尾のノードを交互に代表へ切り替え、10ノードでは選択リストの順序を反転します。
+2回のwarm-up後に7回測り、入力行の破棄・再構築・Qt更新を含む中央値と行数を
+`selection_<mode>_<filter>_<count>_nodes_median_ms`／`..._rows`へ記録します。
 計測値は同時実行中の処理やMayaの環境によって変わるため、
 性能保証値や自動判定の閾値には使用しません。
 

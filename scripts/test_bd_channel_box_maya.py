@@ -52,8 +52,9 @@ class _MayaSmokeSession:
         self._trace_file = (output / f"python-stacks-{self._phase}.log").open(
             "w", encoding="utf-8"
         )
+        # 起動と反復計測の通常所要時間を超えて停止した場合だけstackを採取する
         faulthandler.dump_traceback_later(
-            45, repeat=True, file=self._trace_file
+            120, repeat=True, file=self._trace_file
         )
         self.window: ChannelBoxWindow | None = None
         self.nodes: list[str] = []
@@ -1184,7 +1185,7 @@ class _MayaSmokeSession:
         bd_channel_box.dispose()
 
     def _benchmark(self) -> None:
-        """10ノード・30追加属性で生成、一括入力、選択切替を1回ずつ計測する。"""
+        """10ノード・30追加属性で生成、一括入力、選択切替を計測する。"""
         from maya import cmds
 
         from bd_tools import bd_channel_box
@@ -1265,7 +1266,53 @@ class _MayaSmokeSession:
         )
         if len(self.window.widget.controller.node_names) != 1:
             raise AssertionError("負荷測定時に選択追従が完了していません")
+        self._benchmark_selection()
         self.steps.append("benchmark_10_nodes_30_attributes")
+
+    def _benchmark_selection(self) -> None:
+        """代表ノードを切り替え、行の破棄と描画まで含む中央値を記録する。"""
+        from maya import cmds
+
+        from bd_tools.bd_channel_box.controller import (
+            ChannelAttributeFilter,
+            ChannelBoxMode,
+        )
+
+        widget = self._require_window().widget
+        cases: tuple[
+            tuple[int, ChannelBoxMode, ChannelAttributeFilter], ...
+        ] = (
+            (1, "values", "visible"),
+            (1, "values", "all"),
+            (10, "values", "all"),
+            (1, "states", "all"),
+        )
+        for count, mode, selected in cases:
+            widget.controller.set_mode(mode)
+            widget.controller.set_attribute_filter(selected)
+            self._flush_gui()
+            samples: list[float] = []
+            for index in range(9):
+                targets = (
+                    self.nodes if index % 2 else list(reversed(self.nodes))
+                )[:count]
+                started = time.perf_counter()
+                cmds.select(targets, replace=True)
+                self._flush_gui()
+                elapsed = (time.perf_counter() - started) * 1000
+                if len(widget.controller.node_names) != count or (
+                    widget.controller.node_names[0].rsplit("|", 1)[-1]
+                    != targets[0]
+                ):
+                    raise AssertionError("計測中に選択追従が完了していません")
+                if index >= 2:
+                    samples.append(elapsed)
+            key = f"selection_{mode}_{selected}_{count}_nodes"
+            self.measurements[f"{key}_median_ms"] = round(
+                statistics.median(samples), 3
+            )
+            self.measurements[f"{key}_rows"] = len(widget.row_widgets)
+        self._assert_values("field00", (11.0,) * len(self.nodes))
 
     def _finish(self) -> None:
         """すべての操作結果を保存し、検証専用Mayaを終了する。"""
