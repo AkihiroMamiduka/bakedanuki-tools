@@ -76,7 +76,7 @@ drawOverride配下、その他の順に安定ソートしてから行を構築�
 drawOverride内では設定に含めたoverrideEnabledを先頭にし、残りの相対順を維持します。
 両モードと全フィルターで共有し、utilの列挙順とscene内の属性順は変更しません。
 通常の値変更では並べ替えや行の再構築を行いません。
-今後enumなどの型を追加するときも、toolsで汎用BindingやViewを複製せずutilを拡張します。
+今後対応型を追加するときも、toolsで汎用BindingやViewを複製せずutilを拡張します。
 空の directory は作りません。個別ツール同士の
 暗黙の import は避け、共有処理は責務に応じた場所へ抽出します。
 

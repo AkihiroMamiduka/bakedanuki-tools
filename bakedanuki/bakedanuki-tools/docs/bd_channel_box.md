@@ -4,13 +4,13 @@
 
 ## 開発状態
 
-2026-09-16に、bool・float系の複数選択編集、step操作、表示整理、Mayaへのドッキングまでの
-初回開発を完了し、利用者による動作確認を終えました。今回の範囲に追加必須の機能はありません。
-2026-09-17にenumのComboBox入力、2026-09-18に値入力／表示・ロックのモード切替、
-両モードの表示フィルターと必要時だけの縦スクロールバー表示を追加しました。その他の拡張は
-[今後の候補](roadmap.md#bdchannelboxの拡張候補)を参照してください。
-同日に値同期を高速化し、transform・jointの属性表示に優先順を追加しました。
-表示状態のラジオボタンは、左ドラッグで複数行をなぞって変更できます。
+2026-09-19に、選択切替の高速化まで利用者による動作確認を終え、今回の開発を完了しました。
+現行の対象範囲に追加必須の機能はありません。新しい要望や不具合が生じた時点で開発を再開します。
+
+bool・float系・enumの複数選択編集、step操作、表示・ロックの切替、5種類の表示フィルター、
+表示状態とlockのなぞり操作、設定可能な属性優先順、ドッキングと再起動復元に対応しています。
+値同期と選択切替の負荷も改善しました。将来の任意候補は
+[Roadmap](roadmap.md#bdchannelboxの拡張候補)、変更ごとの確認結果は[検証](#検証)を参照してください。
 
 ## 起動と終了
 
@@ -31,7 +31,7 @@ bd_channel_box.close()
 `MayaEnumPlugsBinding`、`EnumComboBox`、`read_enum_definition()`、enum対応の属性列挙、
 属性列挙・選択取得、`BoolCheckBox`、`FloatValueStepSpinBox`の幅指定、
 `FloatSliderSpinBox.layout_order`、`MayaChannelStateBinding`、`MayaEditSession`、
-`RadioButtonSweep`、
+`RadioButtonSweep` / `CheckBoxSweep`、
 ドッキングとreloadの基盤が必要です。
 toolsとutilを配布するときは、組み合わせて動作確認した版を使用してください。
 
@@ -379,9 +379,28 @@ Sliderあり／なし、最小幅／拡大時、ドック／floatingで表示を
 - Stepの変更はViewの操作設定として扱い、sceneとUndoへ書き込まない。
 - モード・フィルター切替では値・状態・Undoを変更せず、入力幅とstep設定を維持する。
 - 表示状態とロックを独立して変更し、非表示属性も状態モードから復帰できるようにする。
+- なぞり操作は1回のUndoへまとめ、フィルターによる行の除去は操作終了後に反映する。
+  選択・scene・属性構成が変わる場合は、なぞりを終了して古い対象を解放する。
 - 編集不可属性や型・範囲の不一致を尊重し、除外理由や拒否理由を表示する。
 - 選択切替・close・reloadでは古い入力、連続編集、callback、メニューを確実に終了する。
 - 汎用の型・Binding・View・保存基盤はutil、表示対象と各行の組み合わせはtoolsへ置く。
+
+### 性能改善を続ける場合
+
+値変更の同期と選択変更による行の再構築は、別の処理として計測します。
+値変更では無関係な行の再読取りを避け、選択変更では古い入力とcallbackの解放を維持します。
+現状は行・Bindingの再利用や、選択をまたぐ属性情報のキャッシュ、監視の共有化を行っていません。
+これらは追加の負荷計測で必要性が確認された場合に、無効化条件とlifecycleを含めて検討します。
+
+2026-09-19の選択切替改善は、util側の次の2実装で行いました。
+
+- `bd_util/maya/node/_attribute_lookup.py`: 一意な実名は直接取得し、親pathも照合する。
+  aliasや誤った親pathを受理せず、非一意名は従来の全件検索で曖昧さを判定する。
+- `bd_util/ui/binding/float/view/step_spin_box.py`: 正しい初期値を先に設定してから下限を適用し、
+  生成途中の不要な極小値表記を避ける。精度・許容範囲・加算／乗算の操作仕様は維持する。
+
+utilの変更では同リポジトリの検証方針に従い、toolsとの組合せも確認します。
+比較条件と記録方法は[Testing](testing.md#性能比較を記録するとき)を参照してください。
 
 ## 検証
 
@@ -395,6 +414,10 @@ View選択、混在編集、除外対象、範囲違い、Undo、構成変更を
 独立操作、混在、Undo／Redo、モード切替の無書込みとstep保持、必要時だけのスクロールを検証します。
 両モードの5種類のフィルター、モードごとの選択保持、状態変更後の絞り込みとUndo／Redo、
 非表示属性の値入力・操作制限、外部変更、入力途中や連続編集中の切替も検証します。
+`tests/maya/test_bd_channel_box_order.py`は、優先順設定、両モード・全フィルターでの表示順、
+正式pathによる照合と未指定属性の相対順を検証します。
+`tests/maya/test_bd_channel_box_sweep.py`は、表示状態・lockのなぞり操作と1回Undo、
+行の除去の保留、操作中断・失敗時の終了と編集不可行の扱いを検証します。
 `tests/maya/test_bd_channel_box_dock.py` は、batchで扱えないworkspaceの画面境界を置換し、
 公開show / restore / close / reset、Window重複防止、監視解除とreloadを検証します。
 公開入口の型は `tests/typecheck/bd_channel_box_contract.py` で固定します。
