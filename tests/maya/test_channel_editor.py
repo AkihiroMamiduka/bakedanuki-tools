@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from functools import partial
 from math import isclose
 from typing import cast
 import pytest
@@ -22,6 +23,47 @@ from bd_tools.channel_editor.widget import (
     AttributeRowWidget,
     ChannelEditorWidget,
 )
+from bd_tools.channel_editor.controller import ChannelAttributeFilter
+
+
+@pytest.mark.parametrize("selected", ["keyable", "all"])
+@pytest.mark.parametrize("external", [False, True])
+def test_value_change_refreshes_only_related_rows(
+    editor: ChannelEditorWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    selected: ChannelAttributeFilter,
+    external: bool,
+) -> None:
+    """表示行数や入力経路にかかわらず、無関係な行の値・状態を読み直さない。"""
+    editor.controller.set_attribute_filter(selected)
+    _events()
+    refreshed: list[str] = []
+
+    def record_refresh(path: str, original: Callable[[], bool]) -> bool:
+        """変更通知が出ない無駄な読取りも、Storeの同期入口で検出する。"""
+        refreshed.append(path)
+        return original()
+
+    for row in editor.row_widgets:
+        assert isinstance(row, AttributeRowWidget)
+        store = row.row.binding.store
+        monkeypatch.setattr(
+            store,
+            "refresh",
+            partial(record_refresh, row.row.attribute.path, store.refresh),
+        )
+    before = editor.row_widgets
+    if external:
+        _set_value("channelA.weight", 0.5)
+    else:
+        view = _row(editor, "weight").editor
+        assert isinstance(view, FloatSliderSpinBox)
+        view.spin_box.setValue(0.5)
+    _events()
+    assert set(refreshed) == {"weight"}
+    assert editor.row_widgets == before
+    assert _row(editor, "weight").row.binding.value == 0.5
+    assert cmds.getAttr("channelB.weight") == (0.75 if external else 0.5)
 
 
 def _new_scene() -> None:

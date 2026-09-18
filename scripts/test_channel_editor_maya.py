@@ -7,6 +7,7 @@ import argparse
 import faulthandler
 import json
 import os
+import statistics
 import subprocess
 import tempfile
 import time
@@ -1011,6 +1012,31 @@ class _MayaSmokeSession:
             (time.perf_counter() - started) * 1000, 3
         )
         self._assert_values("field00", (0.5,) * 10)
+
+        # 行数の違いによる値同期の負荷を、warm-up後の中央値で比較する
+        for selected in ("keyable", "all"):
+            self.window.widget.controller.set_attribute_filter(selected)
+            self._flush_gui()
+            view = self._row("field00").editor
+            if not isinstance(view, FloatValueStepSpinBox):
+                raise AssertionError("負荷測定用float属性のViewがありません")
+            samples: list[float] = []
+            for index in range(11):
+                started = time.perf_counter()
+                view.spin_box.setValue(float(index + 1))
+                self._flush_gui()
+                elapsed = (time.perf_counter() - started) * 1000
+                if index >= 2:
+                    samples.append(elapsed)
+            self.measurements[f"edit_{selected}_rows"] = len(
+                self.window.widget.row_widgets
+            )
+            self.measurements[f"edit_{selected}_median_ms"] = round(
+                statistics.median(samples), 3
+            )
+            self._assert_values("field00", (11.0,) * 10)
+        self.window.widget.controller.set_attribute_filter("visible")
+        self._flush_gui()
 
         # 全選択から1ノードへの切替と古い入力行の破棄を計測する
         started = time.perf_counter()

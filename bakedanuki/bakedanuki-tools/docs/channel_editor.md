@@ -240,6 +240,9 @@ Undoでは対象ごとに異なっていた状態と元のkeyable／channelBox�
 選択、属性追加・削除、keyable/channelBox切替、改名、Undo/Redo、scene切替で
 構成を再取得します。「全て」では表示フラグだけの変更による全行再構築は不要です。
 通常の値変更では全行を作り直さず、Bindingで表示を同期します。
+utilの複数属性Bindingはdirtyになったplugと祖先を照合し、関係する行だけを読み直します。
+「全て」で多数の行を表示しても、独立した1属性の変更で他の行を再読取りしません。
+接続・親属性・アニメーションによる変更も追従し、Undo／Redoや単位変更では全対象を再同期します。
 選択が変わると古いBindingと連続編集を終了してから、新しい対象へ接続します。
 タイトルバーのclose、`close()`、`dispose()`、tools reloadでもcallbackと入力を終了します。
 モード・フィルター切替、選択変更による行の再構築とWindow終了では、開いている属性メニューと
@@ -306,6 +309,8 @@ Sliderあり／なし、最小幅／拡大時、ドック／floatingで表示を
 
 `tests/maya/test_channel_editor.py` は、選択時の無書込み、外部変更の非伝播、
 View選択、混在編集、除外対象、範囲違い、Undo、構成変更を検証します。
+「keyable」「全て」のどちらでも、UI・外部入力によって無関係な行の再読取りや
+全行の作り直しが発生しないことを、時間の閾値ではなく更新対象で検証します。
 `tests/maya/test_channel_editor_enum.py`は、enumの飛び番・定義不一致の除外、使用中の
 定義変更、未定義値、ロック・接続、混在、Undo／Redo、選択肢の終了を検証します。
 `tests/maya/test_channel_editor_states.py`は、既存Hide属性の列挙と復帰、表示・ロックの
@@ -388,3 +393,42 @@ Maya 2025本体の保存画像で切替前後の列位置、名前の省略、�
 この拡張はtoolsだけの変更です。Maya 2026 / 2027はruntime testで検証し、本体の画面操作は未実施です。
 本体検証の結果・画像は検証実行環境の
 `%TEMP%/bd-channel-editor-maya2025-ux83mnxs`へ保存しました。
+
+### 値同期の高速化（2026-09-18）
+
+utilの複数属性Storeを変更し、dirtyになったplugと祖先に関係するBindingだけを再同期します。
+通知されたnodeの対象をcallbackへ直接渡すことで、複数選択時に他nodeの対象を走査しません。
+公開APIやUIは変更せず、既存scene・保存設定の移行も不要です。反映にはutilを含めて更新し、
+`bd_tools.reload_package(reload_util=True)`で再読込みしてください。
+
+Maya 2025 standalone・Qt offscreenで、transformに追加した独立double属性`weight`を
+同じUI操作で変更しました。生成・フィルター切替を計測区間から除き、2回warm-up後の
+9回の中央値を比較しています。遅延同期とQtイベント処理を含みます。
+
+| 選択node数 | フィルター・行数 | 変更前 | 変更後 |
+| --- | --- | --- | --- |
+| 1 | keyable・11行 | 1.316 ms | 0.629 ms |
+| 1 | 全て・144行 | 14.517 ms | 1.287 ms |
+| 10 | keyable・11行 | 2.996 ms | 1.462 ms |
+| 10 | 全て・144行 | 51.444 ms | 10.706 ms |
+
+「全て」の同じUI入力では、Storeの再読取りは144回から変更行の1回へ減りました。
+callback自体の登録数は同じですが、複数選択時の照合は通知node内に限定しています。
+これは独立シーンでの参考値です。実際のrig評価・viewport描画や環境負荷による時間は別途変わります。
+外部`setAttr`からの同期も計測し、他属性への転送や無関係な行の再読取りがないことを確認しました。
+
+検証結果は次のとおりです。
+
+- toolsの`check.cmd -IncludeMaya`: Black・Pyright・unit 8件・Maya 2025 runtime 90件が成功。
+- Maya 2026 / 2027のtools runtime test: 各90件成功。
+- utilの`verify.cmd`: Black・3 versionのPyright・Maya 2025 full pytest・3 versionのUI互換性・差分検査が成功。
+  Qt/UIは各790件、Maya UIは各340件。通知対象を絞る追加回帰test 14件を含む。
+- util変更ファイルのMaya 2025 Pyright: エラー・警告なし。
+- Maya 2025本体: 36工程成功。10node・各30追加属性の入力中央値はkeyable 40行で5.564 ms、
+  全て173行で18.746 ms。単独の計測条件とは異なるため、上表と直接比較しない。
+
+Maya本体の操作結果・画像は検証実行環境の
+`%TEMP%/bd-channel-editor-maya2025-euh2_qt8`へ保存しました。
+本体終了時は既知の終了待ちタイムアウトが再現し、runnerの終了codeは1です。
+36工程の操作成功とプロセスの正常終了は区別しています。
+Maya 2026 / 2027はruntimeとUI互換性の自動検証で確認し、本体の画面操作は未実施です。
