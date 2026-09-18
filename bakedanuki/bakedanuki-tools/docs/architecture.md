@@ -110,3 +110,11 @@ enumも同じ責務分担です。実定義の取得と比較用の値型はutil
 `EnumDefinition`を使用します。controllerが代表と定義の一致する対象を選び、
 `MayaEnumPlugsBinding`へ渡します。混在・Undo・定義変更時の入力停止はutil、
 除外理由の表示と「表示を更新」による再選別はtoolsが担当します。
+
+表示・ロック状態はutilの`MayaChannelStateBinding`を使用します。状態の読取り、
+複数対象の混在と操作可否、外部変更の監視、表示・ロックごとの一括操作、
+Maya標準Undoへの登録はutilが所有します。値入力不可でもロック解除や表示変更を
+操作できるよう、値用Bindingと状態用Bindingの可否判定を分離します。
+toolsは値編集／表示・ロックのモード、非表示属性を含む設定対象の選別、
+状態ComboBox・ロックCheckBox、名前の省略表示と共通列幅を所有します。
+状態編集ではenum値を変更しないため、enum定義の一致による対象除外を行いません。

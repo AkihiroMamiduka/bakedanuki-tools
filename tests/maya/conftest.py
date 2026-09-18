@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -38,7 +39,10 @@ def pytest_configure(config: pytest.Config) -> None:
         font_id = qt.QtGui.QFontDatabase.addApplicationFont(str(font_path))
         if font_id < 0:
             raise RuntimeError(f"配置検証用フォントを読めません: {font_path}")
-        application.setFont(qt.QtGui.QFont("Segoe UI", 9))
+        set_font = cast(
+            Callable[[qt.QFont], None], getattr(application, "setFont")
+        )
+        set_font(qt.QtGui.QFont("Segoe UI", 9))
 
     # テストsessionで利用するMaya standaloneを一度だけ初期化する
     maya.standalone.initialize(name="python")

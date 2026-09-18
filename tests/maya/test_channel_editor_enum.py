@@ -42,7 +42,9 @@ def _row(
     editor: ChannelEditorWidget, path: str = "mode"
 ) -> AttributeRowWidget:
     """正式pathに対応する、再構築後の最新の行を取得する。"""
-    return next(w for w in editor.row_widgets if w.row.attribute.path == path)
+    row = next(w for w in editor.row_widgets if w.row.attribute.path == path)
+    assert isinstance(row, AttributeRowWidget)
+    return row
 
 
 def _combo(editor: ChannelEditorWidget) -> EnumComboBox:

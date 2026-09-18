@@ -45,6 +45,19 @@
 
 ### Added
 
+- Channel Editorに「値編集／表示・ロック」の切替を追加。表示・ロックでは非表示の
+  対応scalarも列挙し、Keyable／ChannelBox／HideとLock／Unlockを独立して一括操作する。
+  混在表示、外部変更、Maya標準Undo／Redoへ対応し、Hideへ変更した行も設定中は維持する。
+  属性定義によりkeyableとchannelBoxが両方Trueの属性は、Maya標準Undoで復元できないため
+  表示変更だけを不可とし、理由をtooltipへ表示する。基準属性なら行の表示変更を停止し、
+  後続の対象だけなら除外する。ロック／解除は通常どおり操作でき、自動修正や移行は行わない。
+  両モードで右列156 pxを共用し、長い属性名は省略表示とtooltipへ変更する。
+  名前欄の幅調整定数は`_NAME_FIELD_MINIMUM_WIDTH`から`_NAME_FIELD_PREFERRED_WIDTH`へ変更する。
+  モード切替はscene・Undoを変更せず、Window内のstep設定を維持する。
+  utilの`MayaChannelStateBinding`が必要なため、toolsとutilを組み合わせて更新する。
+  `controller.rows`へ`ChannelStateRow`、`widget.row_widgets`へ`AttributeStateRowWidget`が
+  加わるため、値編集用の`binding`／`editor`を参照する利用コードは`isinstance()`で
+  行の型を絞ること。既存scene・保存設定の移行は不要。
 - Channel Editorのenum入力を追加。utilの`EnumComboBox` / `MayaEnumPlugsBinding`を使用し、
   同じ正式属性path・整数値と項目名の対応を持つ対象へ、明示操作時だけ一括適用する。
   飛び番・未定義値・混在・定義不一致の除外、Undo／Redo、選択肢の終了に対応する。

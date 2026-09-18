@@ -54,6 +54,10 @@ enumの選択肢表示・マウス選択・飛び番入力、右クリックメ�
 ドッキングからfloatingへの切替、Mayaへのタブ再配置、Maya側のcloseによる破棄も確認します。
 step欄のキー入力が値とUndoを変更しないこと、変更後の刻み幅で値入力できること、
 値をUndoしてもstepが保持されることも確認します。
+上部ComboBoxから値編集と表示・ロックを切り替え、非表示属性の追加によって
+Window幅・名前列幅・入力列位置が変わらないことを確認します。
+既存Hide属性の復帰、Keyable／ChannelBox／Hideの選択、ロック／解除のSpace操作、
+表示とロックの混在・独立操作・Undo／Redo、値とstepの維持も確認します。
 さらに10ノード・各30個の追加float属性を用いて、Window生成、一括入力、選択切替を
 1回ずつ計測します。計測値は同時実行中の処理やMayaの環境によって変わるため、
 性能保証値や自動判定の閾値には使用しません。
@@ -66,6 +70,10 @@ step欄のキー入力が値とUndoを変更しないこと、変更後の刻み
 - `04-attribute-menu.png`: 属性名を右クリックして開いた操作メニュー。
 - `05-docked.png`、`06-floating-content.png`: Maya右側へのドッキングとfloatingの表示。
 - `08-enum-popup.png`、`09-enum-selected.png`: enumの選択肢と入力後の表示。
+- `10-values-before-mode-switch.png`、`14-values-after-mode-switch.png`:
+  モード切替前後の値入力表示。
+- `11-state-mode-hidden-attributes.png`、`12-state-mode-locked.png`、
+  `13-state-mode-mixed.png`: 非表示属性の設定行、ロック中、混在状態の表示。
 - `progress.json`: 実行中の段階と完了済みの操作。
 - `maya-initial.log`、`process-initial.log`、`python-stacks-initial.log`: Mayaの出力と、長時間停止した場合の
   Python stack。
@@ -88,8 +96,13 @@ deferred quitでも発生しており、終了待ちの原因は未特定です�
 - bool: 基準値を二値CheckBoxで表示し、クリック／Spaceで切替、属性名の直後に左詰め。
 - enum: 項目名と実整数、飛び番・未定義値、定義不一致の除外・入力停止、同値揃えと選択肢の終了。
 - step: 値／Undoを変更しないこと、型別初期値、選択変更／Undo後の保持、close後の初期化。
+- 表示・ロック: 既存Hide属性の列挙・復帰、Keyable／ChannelBox／Hide、ロック／解除、
+  各項目の混在と独立操作、1回UndoとRedo、接続済み属性・親ロックの扱い。
+- モード切替: sceneとUndoへの無書込み、step保持、古い入力と選択肢の終了、
+  enum定義が異なる対象の状態編集、状態モードでHide行を維持すること。
 - 幅・配置: Sliderあり／なし、最小幅／拡大時、長い属性名、縦スクロール時、ドック／floating。
   StepとSliderの幅・開始位置、値欄の文字切れ、不要な右余白を保存画像でも確認する。
+  モード切替で行数と長い属性名が増えても、Window幅と名前・入力列の位置が動かないことを確認する。
 - lifecycle: 選択切替・close・reloadで古い入力とcallbackを終了し、再表示で重複させない。
 
 対応version、配布構成、Qt / Maya API互換性の変更では3 versionのruntime testを実行します。

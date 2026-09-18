@@ -1,8 +1,9 @@
 # coding: utf-8
-"""Channel Editorの値入力画面。"""
+"""Channel Editorの値入力と表示・ロック設定画面。"""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
 from typing import Protocol, cast
 
@@ -20,15 +21,19 @@ from bd_util.ui import (
     qt,
 )
 
-from .controller import ChannelEditorController, ChannelRow
+from .controller import ChannelEditorController, ChannelRow, ChannelStateRow
 
-__all__ = ["AttributeRowWidget", "ChannelEditorWidget"]
+__all__ = [
+    "AttributeRowWidget",
+    "AttributeStateRowWidget",
+    "ChannelEditorWidget",
+]
 
 _VALUE_FIELD_WIDTH = 90
 _AUXILIARY_FIELD_WIDTH = 60
 _FIELD_SPACING = 6
 _EDITOR_WIDTH = _VALUE_FIELD_WIDTH + _FIELD_SPACING + _AUXILIARY_FIELD_WIDTH
-_NAME_FIELD_MINIMUM_WIDTH = 92
+_NAME_FIELD_PREFERRED_WIDTH = 92
 
 
 class _MenuActions(Protocol):
@@ -37,6 +42,46 @@ class _MenuActions(Protocol):
     def addAction(self, action: qt.QAction, /) -> None:
         """作成済みのQActionをメニューへ追加する。"""
         ...
+
+
+class _AttributeNameLabel(qt.QLabel):
+    """設定モードの長い属性名でも入力列を押し広げない名前欄。"""
+
+    def sizeHint(self) -> qt.QSize:
+        """属性名の文字数に依存しない推奨幅を返す。"""
+        return qt.QSize(
+            _NAME_FIELD_PREFERRED_WIDTH, super().sizeHint().height()
+        )
+
+    def minimumSizeHint(self) -> qt.QSize:
+        """狭いドックでは名前欄を縮めて入力欄を維持する。"""
+        return qt.QSize(0, super().minimumSizeHint().height())
+
+    def paintEvent(self, arg__1: qt.QtGui.QPaintEvent) -> None:
+        """完全な名前を保持し、表示領域へ収まる文字列だけを描画する。"""
+        del arg__1
+        painter = qt.QPainter(self)
+        painter.setPen(self.palette().color(qt.QPalette.ColorRole.WindowText))
+        painter.drawText(
+            self.contentsRect(),
+            self.alignment(),
+            self.fontMetrics().elidedText(
+                self.text(), qt.Qt.TextElideMode.ElideRight, self.width()
+            ),
+        )
+        painter.end()
+
+
+class _LockCheckBox(qt.QCheckBox):
+    """混在を表示しつつ、明示入力ではロックか解除だけを選ぶ。"""
+
+    def nextCheckState(self) -> None:
+        """混在からはロックへ進み、その後は二状態で切り替える。"""
+        self.setCheckState(
+            qt.Qt.CheckState.Unchecked
+            if self.checkState() == qt.Qt.CheckState.Checked
+            else qt.Qt.CheckState.Checked
+        )
 
 
 class AttributeRowWidget(qt.QWidget):
@@ -58,7 +103,7 @@ class AttributeRowWidget(qt.QWidget):
         self.row = row
         self.selection_count = selection_count
         self.setObjectName(f"channel_{row.attribute.path}")
-        self.name_label = qt.QLabel(row.attribute.nice_name, self)
+        self.name_label = _AttributeNameLabel(row.attribute.nice_name, self)
         self.name_label.setAlignment(
             qt.Qt.AlignmentFlag.AlignRight | qt.Qt.AlignmentFlag.AlignVCenter
         )
@@ -78,7 +123,9 @@ class AttributeRowWidget(qt.QWidget):
         if isinstance(
             self.editor, (FloatSliderSpinBox, FloatValueStepSpinBox)
         ):
-            self.editor.layout().setSpacing(_FIELD_SPACING)
+            editor_layout = self.editor.layout()
+            if isinstance(editor_layout, qt.QHBoxLayout):
+                editor_layout.setSpacing(_FIELD_SPACING)
         if isinstance(self.editor, FloatValueStepSpinBox):
             self.editor.settingsChanged.connect(self._notify_step_changed)
 
@@ -162,7 +209,7 @@ class AttributeRowWidget(qt.QWidget):
         binding = self.row.binding
         editable = binding.view_model.set_value_command.can_execute
         count = binding.writable_count if editable else 0
-        details = [self.row.attribute.path]
+        details = [self.row.attribute.nice_name, self.row.attribute.path]
         details.append(f"編集対象: {count}/{self.selection_count} 件")
         if binding.is_mixed:
             details.append(
@@ -203,6 +250,154 @@ class AttributeRowWidget(qt.QWidget):
             return
 
 
+class AttributeStateRowWidget(qt.QWidget):
+    """値入力と同じ幅へ表示状態とロックの操作を配置する。"""
+
+    refresh_requested = qt.Signal()
+
+    def __init__(
+        self,
+        row: ChannelStateRow,
+        selection_count: int,
+        parent: qt.QWidget,
+    ) -> None:
+        """状態の読取りと、ユーザーが明示した入力だけを接続する。"""
+        super().__init__(parent)
+        self.row = row
+        self.selection_count = selection_count
+        self.setObjectName(f"channel_state_{row.attribute.path}")
+        self.name_label = _AttributeNameLabel(row.attribute.nice_name, self)
+        self.name_label.setAlignment(
+            qt.Qt.AlignmentFlag.AlignRight | qt.Qt.AlignmentFlag.AlignVCenter
+        )
+        self.context_menu = qt.QMenu(self)
+        self.refresh_action = qt.QAction("表示を更新", self)
+        self.refresh_action.triggered.connect(self.refresh_requested.emit)
+        cast(_MenuActions, self.context_menu).addAction(self.refresh_action)
+        self.editor = qt.QWidget(self)
+        self.editor.setFixedWidth(_EDITOR_WIDTH)
+        self.display_combo = qt.QComboBox(self.editor)
+        self.display_combo.setFixedWidth(_VALUE_FIELD_WIDTH)
+        self.display_combo.setAccessibleName(
+            f"{row.attribute.nice_name} 表示状態"
+        )
+        self.lock_check_box: qt.QCheckBox = _LockCheckBox(
+            "ロック", self.editor
+        )
+        self.lock_check_box.setTristate(True)
+        self.lock_check_box.setFixedWidth(_AUXILIARY_FIELD_WIDTH)
+        self.lock_check_box.setAccessibleName(
+            f"{row.attribute.nice_name} ロック"
+        )
+        controls = qt.QHBoxLayout(self.editor)
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(_FIELD_SPACING)
+        controls.addWidget(self.display_combo)
+        controls.addWidget(self.lock_check_box)
+        layout = qt.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(_FIELD_SPACING)
+        layout.addWidget(self.name_label, 1)
+        layout.addWidget(self.editor)
+
+        # 初期同期や外部変更は書き込まず、明示選択とクリックだけを入力にする
+        self.display_combo.activated.connect(self._set_display_state)
+        self.lock_check_box.clicked.connect(self._set_locked)
+        row.state_binding.state_changed.connect(self._update_state)
+        self._update_state()
+
+    def contextMenuEvent(self, event: qt.QtGui.QContextMenuEvent) -> None:
+        """属性名から状態を再取得するメニューを開く。"""
+        self.context_menu.popup(event.globalPos())
+        event.accept()
+
+    def _update_state(self) -> None:
+        """表示とロックの混在を独立して表示し、操作可否を同期する。"""
+        state = self.row.state_binding.state
+        old_display = self.display_combo.blockSignals(True)
+        old_lock = self.lock_check_box.blockSignals(True)
+        try:
+            self.display_combo.clear()
+            if state.display_mixed:
+                self.display_combo.addItem("混在", None)
+            for label, value in (
+                ("Keyable", "keyable"),
+                ("ChannelBox", "channel_box"),
+                ("Hide", "hidden"),
+            ):
+                self.display_combo.addItem(label, value)
+            self.display_combo.setCurrentIndex(
+                0
+                if state.display_mixed
+                else self.display_combo.findData(state.display_state)
+            )
+            self.display_combo.setEnabled(state.can_set_display)
+            self.lock_check_box.setCheckState(
+                qt.Qt.CheckState.PartiallyChecked
+                if state.lock_mixed
+                else (
+                    qt.Qt.CheckState.Checked
+                    if state.locked
+                    else qt.Qt.CheckState.Unchecked
+                )
+            )
+            self.lock_check_box.setEnabled(state.can_set_locked)
+        finally:
+            self.display_combo.blockSignals(old_display)
+            self.lock_check_box.blockSignals(old_lock)
+
+        mixed = state.display_mixed or state.lock_mixed
+        self.name_label.setText(
+            ("• " if mixed else "") + self.row.attribute.nice_name
+        )
+        details = [self.row.attribute.nice_name, self.row.attribute.path]
+        display_count = (
+            state.display_writable_count if state.can_set_display else 0
+        )
+        lock_count = state.lock_writable_count if state.can_set_locked else 0
+        details.append(f"表示変更: {display_count}/{self.selection_count} 件")
+        details.append(f"ロック変更: {lock_count}/{self.selection_count} 件")
+        if state.display_mixed:
+            details.append("表示状態が混在しています。項目の選択で揃えます")
+        if state.lock_mixed:
+            details.append(
+                "ロック状態が混在しています。クリックでロックへ揃えます"
+            )
+        details.extend(self.row.excluded)
+        for target in state.targets:
+            reasons = tuple(
+                dict.fromkeys(
+                    reason
+                    for reason in (target.display_reason, target.lock_reason)
+                    if reason
+                )
+            )
+            if reasons:
+                details.append(f"{target.plug_name}: {' / '.join(reasons)}")
+        tooltip = "\n".join(details)
+        self.name_label.setToolTip(tooltip)
+        self.display_combo.setToolTip(tooltip)
+        self.lock_check_box.setToolTip(tooltip)
+
+    def _set_display_state(self, index: int) -> None:
+        """明示選択した表示状態だけを、一括変更する。"""
+        value = self.display_combo.itemData(index)
+        if value not in ("keyable", "channel_box", "hidden"):
+            return
+        try:
+            self.row.state_binding.set_display_state(value)
+        except (ValueError, RuntimeError, ExceptionGroup):
+            # Bindingの通知で理由を表示し、失敗前の正本へUIを戻す
+            self._update_state()
+
+    def _set_locked(self, locked: bool) -> None:
+        """属性自身のロックだけを変更し、親のロックには触れない。"""
+        try:
+            self.row.state_binding.set_locked(locked)
+        except (ValueError, RuntimeError, ExceptionGroup):
+            self._update_state()
+
+
 class ChannelEditorWidget(qt.QWidget):
     """基準ノードの情報と、スクロール可能な属性入力欄を表示する。"""
 
@@ -210,10 +405,23 @@ class ChannelEditorWidget(qt.QWidget):
         """画面を作成してから選択監視を開始する。"""
         super().__init__(parent)
         self._steps: dict[tuple[str, str], float] = {}
-        self.row_widgets: tuple[AttributeRowWidget, ...] = ()
+        self.row_widgets: tuple[
+            AttributeRowWidget | AttributeStateRowWidget, ...
+        ] = ()
+        self._scroll_anchor: tuple[str, int] | None = None
+        self._scroll_timer = qt.QTimer(self)
+        self._scroll_timer.setSingleShot(True)
+        self._scroll_timer.timeout.connect(self._restore_scroll_anchor)
+        self.mode_combo = qt.QComboBox(self)
+        self.mode_combo.addItem("値編集", "values")
+        self.mode_combo.addItem("表示・ロック", "states")
+        self.mode_combo.setAccessibleName("表示モード")
         self.header_label = qt.QLabel("ノードを選択してください", self)
         self.header_label.setTextInteractionFlags(
             qt.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.header_label.setSizePolicy(
+            qt.QSizePolicy.Policy.Ignored, qt.QSizePolicy.Policy.Preferred
         )
         self.context_menu = qt.QMenu(self)
         self.refresh_action = qt.QAction("表示を更新", self)
@@ -226,6 +434,10 @@ class ChannelEditorWidget(qt.QWidget):
         self.scroll_area = qt.QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(qt.QFrame.Shape.NoFrame)
+        # 行数による縦スクロールバーの出入りで名前列の幅を変えない
+        self.scroll_area.setVerticalScrollBarPolicy(
+            qt.Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+        )
         self._contents = qt.QWidget(self.scroll_area)
         self._rows_layout = qt.QVBoxLayout(self._contents)
         self._rows_layout.setContentsMargins(0, 0, 4, 0)
@@ -237,6 +449,7 @@ class ChannelEditorWidget(qt.QWidget):
         layout = qt.QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
+        layout.addWidget(self.mode_combo)
         layout.addWidget(self.header_label)
         layout.addWidget(self.empty_label)
         layout.addWidget(self.scroll_area, 1)
@@ -246,7 +459,61 @@ class ChannelEditorWidget(qt.QWidget):
         self.controller = ChannelEditorController(self)
         self.controller.rows_changed.connect(self._rebuild_rows)
         self.controller.error_occurred.connect(self._show_error)
+        self.controller.mode_changed.connect(self._sync_mode)
+        self.mode_combo.currentIndexChanged.connect(self._change_mode)
         self.controller.refresh()
+
+    def _change_mode(self, index: int) -> None:
+        """編集中の値を通常のフォーカス移動で確定してから表示を切り替える。"""
+        focus_widget = cast(
+            Callable[[], qt.QWidget | None],
+            getattr(qt.QApplication, "focusWidget"),
+        )
+        focused = focus_widget()
+        if (
+            focused is not None
+            and focused is not self.mode_combo
+            and self.isAncestorOf(focused)
+        ):
+            focused.clearFocus()
+        self._remember_scroll_anchor()
+        self.message_label.hide()
+        self.controller.set_mode("states" if index == 1 else "values")
+
+    def _sync_mode(self) -> None:
+        """controllerからのモード変更を属性へ入力せず表示へ反映する。"""
+        blocked = self.mode_combo.blockSignals(True)
+        try:
+            self.mode_combo.setCurrentIndex(
+                1 if self.controller.mode == "states" else 0
+            )
+        finally:
+            self.mode_combo.blockSignals(blocked)
+
+    def _remember_scroll_anchor(self) -> None:
+        """表示先頭の属性pathを記録して、設定行の増減後も位置を保つ。"""
+        position = self.scroll_area.verticalScrollBar().value()
+        self._scroll_anchor = next(
+            (
+                (w.row.attribute.path, w.y() - position)
+                for w in self.row_widgets
+                if w.y() + w.height() > position
+            ),
+            None,
+        )
+
+    def _restore_scroll_anchor(self) -> None:
+        """同じ属性が残っている場合だけスクロール位置を復元する。"""
+        anchor, self._scroll_anchor = self._scroll_anchor, None
+        if anchor is None or self.controller.is_disposed:
+            return
+        path, offset = anchor
+        for widget in self.row_widgets:
+            if widget.row.attribute.path == path:
+                self.scroll_area.verticalScrollBar().setValue(
+                    widget.y() - offset
+                )
+                return
 
     def contextMenuEvent(self, event: qt.QtGui.QContextMenuEvent) -> None:
         """画面の余白から、値を書き込まない表示更新を開く。"""
@@ -269,6 +536,8 @@ class ChannelEditorWidget(qt.QWidget):
             widget.context_menu.close()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
+            if isinstance(widget, AttributeStateRowWidget):
+                widget.display_combo.hidePopup()
             self._rows_layout.removeWidget(widget)
             widget.hide()
             widget.deleteLater()
@@ -282,17 +551,25 @@ class ChannelEditorWidget(qt.QWidget):
         else:
             self.header_label.setText("ノードを選択してください")
             self.header_label.setToolTip("")
-        widgets: list[AttributeRowWidget] = []
+        widgets: list[AttributeRowWidget | AttributeStateRowWidget] = []
         try:
             for row in self.controller.rows:
-                key = (row.attribute.path, row.attribute.kind)
-                widget = AttributeRowWidget(
-                    row,
-                    len(names),
-                    self._contents,
-                    single_step=self._steps.get(key),
-                )
-                widget.step_changed.connect(partial(self._remember_step, key))
+                widget: AttributeRowWidget | AttributeStateRowWidget
+                if isinstance(row, ChannelStateRow):
+                    widget = AttributeStateRowWidget(
+                        row, len(names), self._contents
+                    )
+                else:
+                    key = (row.attribute.path, row.attribute.kind)
+                    widget = AttributeRowWidget(
+                        row,
+                        len(names),
+                        self._contents,
+                        single_step=self._steps.get(key),
+                    )
+                    widget.step_changed.connect(
+                        partial(self._remember_step, key)
+                    )
                 widget.refresh_requested.connect(self.refresh)
                 widgets.append(widget)
                 self._rows_layout.insertWidget(len(widgets) - 1, widget)
@@ -300,19 +577,8 @@ class ChannelEditorWidget(qt.QWidget):
             self.controller.dispose()
             raise
         self.row_widgets = tuple(widgets)
-        # 属性名の共通最小幅を確保し、入力グループの右端を全行で揃える
-        name_width = max(
-            [_NAME_FIELD_MINIMUM_WIDTH]
-            + [
-                widget.name_label.fontMetrics().horizontalAdvance(
-                    "• " + widget.row.attribute.nice_name
-                )
-                + 2
-                for widget in widgets
-            ]
-        )
-        for widget in widgets:
-            widget.name_label.setMinimumWidth(name_width)
+        # 文字数に応じた最小幅を要求せず、両モードで同じ入力列を維持する
+        self._scroll_timer.start(0)
         self.empty_label.setVisible(not widgets)
         self.empty_label.setText(
             "表示対象の bool・float 系・enum 属性がありません。"
@@ -326,9 +592,12 @@ class ChannelEditorWidget(qt.QWidget):
 
     def dispose(self) -> None:
         """画面の入力と監視を即時に終了する。"""
+        self._scroll_timer.stop()
         self.context_menu.close()
         for widget in self.row_widgets:
             widget.context_menu.close()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
+            if isinstance(widget, AttributeStateRowWidget):
+                widget.display_combo.hidePopup()
         self.controller.dispose()

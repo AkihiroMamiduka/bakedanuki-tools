@@ -1,12 +1,12 @@
 # Channel Editor
 
-選択ノードの値入力を支援する、bool・float 系・enum属性のエディタです。
+選択ノードの値入力と表示・ロック状態を操作する、bool・float 系・enum属性のエディタです。
 
 ## 開発状態
 
 2026-09-16に、bool・float系の複数選択編集、step操作、表示整理、Mayaへのドッキングまでの
 初回開発を完了し、利用者による動作確認を終えました。今回の範囲に追加必須の機能はありません。
-2026-09-17にenumのComboBox入力を追加しました。その他の拡張は
+2026-09-17にenumのComboBox入力、2026-09-18に値入力／表示・ロックのモード切替を追加しました。その他の拡張は
 [今後の候補](roadmap.md#channel-editorの拡張候補)を参照してください。
 
 ## 起動と終了
@@ -27,7 +27,8 @@ channel_editor.close()
 利用するutilには、複数属性用の`MayaBoolPlugsBinding` / `MayaFloatPlugsBinding`、
 `MayaEnumPlugsBinding`、`EnumComboBox`、`read_enum_definition()`、enum対応の属性列挙、
 属性列挙・選択取得、`BoolCheckBox`、`FloatValueStepSpinBox`の幅指定、
-`FloatSliderSpinBox.layout_order`、ドッキングとreloadの基盤が必要です。
+`FloatSliderSpinBox.layout_order`、`MayaChannelStateBinding`、
+ドッキングとreloadの基盤が必要です。
 toolsとutilを配布するときは、組み合わせて動作確認した版を使用してください。
 
 タイトルバーまたは `close()` で、workspaceControl・入力・callbackを破棄します。
@@ -52,36 +53,47 @@ MayaのuiScriptは `bd_tools.channel_editor.ui.restore()` を呼び、復元中�
 
 ## 表示と入力
 
+- 上部のComboBoxで「値編集」と「表示・ロック」を切り替えます。初回は値編集です。
+  モードは開いているWindow内だけで保持し、scene・設定ファイルへ保存しません。
+  切替だけでは属性の値・状態・Undo履歴を変更しません。
 - 現在の選択リストの index 0 が基準です。ノード名だけを画面上部へ表示し、
   選択数と全ノードのpathはそのtooltipへまとめます。
   クリック履歴を記録するMayaの設定は変更しません。
 - Maya nodeのobject選択が対象です。componentとplug選択は除外し、Shapeや履歴を
   自動で追加しません。DAG instanceの重複選択は同じnodeへまとめます。
-- 基準nodeで `keyable OR channelBox` がTrueの対応scalarを、属性順で表示します。
+- 値編集は基準nodeで `keyable OR channelBox` がTrueの対応scalarを、属性順で表示します。
   XYZは子ごとに表示し、compound親の表示フラグでは子を除外しません。
   標準Channel Boxの表示順への同期は行わず、ノード内部の属性順を維持します。
+- 表示・ロックは同じ対応scalarを、非表示の属性も含めて列挙します。
+  以前の操作や別ツールでHideにした属性も復帰できます。標準nodeの内部属性も含むため、
+  値編集より行数が増えます。Hideへ変更しても状態編集の行はそのまま残ります。
 - bool、float/double、距離、角度、enumに対応します。bool・enumのcompound子も対象です。
   整数、time、文字列、配列とその配下、compound全体は対象外です。
 - 同じ正式属性pathと型・単位種別の属性へ絶対値を一括入力します。
   距離と角度は同名でも対応付けません。編集対象数、対応しないnodeや編集不可の理由は
   属性名と入力Viewのtooltipへ表示します。属性のないnodeへ属性を追加することはありません。
 
-属性名は共通幅の列で右揃えにし、入力欄の左端を全行で揃えます。
+属性名は共通幅の列で右揃えにし、入力欄の左端を全行・両モードで揃えます。
 初期サイズの指定は320×360、最小幅は280です。実際の寸法はMayaのドック領域に合わせて調整されます。
 属性名側の余白は`ui.py`の`_INITIAL_WIDTH`・`_MINIMUM_WIDTH`で調整できます。
-名前列の最小幅は`widget.py`の`_NAME_FIELD_MINIMUM_WIDTH`（92 px）で指定し、長い名前には自動で広げます。
+名前列の推奨幅は`widget.py`の`_NAME_FIELD_PREFERRED_WIDTH`（92 px）で指定します。
+狭いパネルでは名前列を縮めて入力欄を確保します。
+長い名前は省略表示し、正式な属性pathと省略していない表示名をtooltipへ表示します。
+状態モードの行数や名前の長さでWindow幅を広げず、縦スクロールバー用の幅も常に確保します。
 保存済みの広い配置を使っている場合は、パネル幅を縮めるか`reset_layout()`で初期配置へ戻します。
 
 選択・初期表示・外部変更の同期・表示更新では値を書き込みません。
 数値入力はEnterまたはフォーカス移動で確定し、値欄の上下操作・Sliderは操作時に反映します。
 未編集のEnterやフォーカス移動も値を書き込みません。
+数値の文字入力中に上部のモードComboBoxへ移動した場合も、通常のフォーカス移動として
+その編集を確定します。未編集のモード切替だけで値を揃えることはありません。
 boolはutilの`BoolCheckBox`を使い、属性名のすぐ右、数値入力列の左端にチェックを表示します。
 チェックまたはSpaceキーで切り替えると、対応する編集可能なノードへ一括適用します。
 boolが混在していてもチェックは基準ノードのTrue / Falseを表示し、三状態表示にはしません。
 
 enumはutilの`EnumComboBox`で項目名を表示します。入力列全体の156 pxを使い、
 Step／Sliderは表示しません。標準属性（rotateOrderなど）も追加属性も同じ扱いですが、
-基準属性の`keyable OR channelBox`がFalseなら表示しません。
+値編集では基準属性の`keyable OR channelBox`がFalseなら表示しません。
 負数・飛び番を扱い、ComboBoxの位置ではなく定義の整数値を入力します。
 tooltipには省略されていない基準の項目名と実整数も表示します。
 
@@ -143,6 +155,7 @@ step欄への直接入力も可能です。ロック等で値が編集不可で�
 保持します。別ノードの同属性、選択解除・再選択、更新、Undo / Redo、scene切替でも維持し、
 X/Y/Zは独立して扱います。Windowの終了・reload後は既定値から開始し、設定ファイルや
 sceneへstepを保存しません。
+値編集と表示・ロックの切替でもstep設定を維持します。
 
 表示範囲は基準属性を使い、他対象の制限は書込み前に検証します。
 入力がどれかの編集可能な対象の範囲外なら、その入力全体を拒否して理由を表示します。
@@ -158,13 +171,55 @@ sceneへstepを保存しません。
 一回のUndoへまとめます。Undoでは混在していた各ノードの元値が戻ります。
 途中の書込み失敗は同じ操作内で復旧し、復旧にも失敗した場合は両方の理由を報告します。
 
+## 表示・ロック
+
+属性名の右側を、表示状態のComboBoxとロックのCheckBoxへ切り替えます。
+入力グループ全体は値編集と同じ156 pxで、追加の列は作りません。
+
+| 表示状態 | keyable | channelBox |
+| --- | --- | --- |
+| Keyable | True | False |
+| ChannelBox | False | True |
+| Hide | False | False |
+
+Keyableはキー設定可能、ChannelBoxはキー設定不可でChannel Boxへ表示、
+Hideはキー設定不可でChannel Boxから非表示の状態です。
+既存属性のkeyableとchannelBoxが両方Trueの場合はKeyableとして表示します。
+Hideは上記のplug状態だけを変更し、属性定義のhiddenや属性自体は変更・削除しません。
+表示状態はロックを変更せず、ロック／解除は表示状態を変更しません。値やキーにも書き込みません。
+
+属性定義によってkeyableとchannelBoxが両方Trueになっている特殊な属性は、
+Maya標準Undoで元の組合せを復元できないため、表示状態の変更対象から除外します。
+基準ノードの属性がこの状態なら、その行の表示状態の操作全体を無効にします。
+基準以外だけが該当する場合は、その対象を除いて残りへ適用します。
+理由はtooltipへ表示し、状態の自動修正や属性定義の変更は行いません。
+この制限は表示状態にだけ適用し、ロック／解除は通常の操作可否に従って利用できます。
+
+複数選択の対象は、値編集と同じ正式属性path・型区分の属性です。
+enumの項目定義は変更しないため、定義が異なるenumも状態編集の対象になります。
+表示状態が異なる場合はComboBoxへ「混在」、ロックが異なる場合はCheckBoxへ三状態の印を表示します。
+表示同期だけでは揃えず、表示状態を選択したときやロックを操作したときに、その項目だけ一括適用します。
+ロック混在のクリック／Spaceはロックする操作です。次の操作で解除します。
+属性名と入力欄のtooltipで、各操作の対象数や操作できない理由を確認できます。
+
+ロック中や入力接続済みの属性でも、表示状態の編集や自身のロック解除を操作できます。
+値編集の可否判定は流用せず、状態ごとに操作可否を判定します。
+compound祖先がロックされている場合、子の操作で祖先まで自動解除しません。
+自身のロックと親による制限は区別して表示します。
+属性名の右クリックと余白のメニューから「表示を更新」を選べます。
+
+1回の表示状態変更、またはロック変更を、それぞれ1回のMaya標準Undoへまとめます。
+Undoでは対象ごとに異なっていた状態と元のkeyable／channelBoxの組合せを復元します。
+同じ状態への入力はUndo履歴を増やしません。外部変更とUndo／Redoにも追従します。
+
 ## 更新と終了
 
 選択、属性追加・削除、keyable/channelBox切替、改名、Undo/Redo、scene切替で
 構成を再取得します。通常の値変更では全行を作り直さず、Bindingで表示を同期します。
 選択が変わると古いBindingと連続編集を終了してから、新しい対象へ接続します。
 タイトルバーのclose、`close()`、`dispose()`、tools reloadでもcallbackと入力を終了します。
-選択変更による行の再構築とWindow終了では、開いている属性メニューとenumの選択肢も閉じます。
+モード切替、選択変更による行の再構築とWindow終了では、開いている属性メニューと
+enum・表示状態の選択肢も閉じ、古いBindingと連続編集を終了します。
 
 ```python
 import bd_tools
@@ -182,6 +237,8 @@ Windowはutilの `MayaDockableWindow` を継承し、`dock_closed` と
 Maya再起動時の接続・画面外補正・配置resetはutilへ委譲します。
 stepの初期値選択とWindow内の設定保持はtools、値とstepの連動はutilの複合Viewが所有します。
 値の単位変換・型付き属性列挙・一括書込み・混在状態・Undoはutilを使用します。
+属性の表示・ロック状態の読取り、一括操作、Undo、操作可否と監視もutilが所有します。
+値編集と状態編集の対象選別、モード切替、共通列幅と各入力欄はtoolsが所有します。
 別ツールはこのcontrollerへ暗黙に依存せず、必要な汎用APIをutilから利用します。
 
 ### 見た目の調整箇所
@@ -193,14 +250,14 @@ stepの初期値選択とWindow内の設定保持はtools、値とstepの連動�
 | `widget.py` | `_VALUE_FIELD_WIDTH` | 90 | 数値入力欄の固定幅 |
 | `widget.py` | `_AUXILIARY_FIELD_WIDTH` | 60 | StepとSliderの共通固定幅 |
 | `widget.py` | `_FIELD_SPACING` | 6 | ValueとStep / Sliderの間隔 |
-| `widget.py` | `_EDITOR_WIDTH` | 156（上記から算出） | boolも含めて確保する入力列の幅 |
-| `widget.py` | `_NAME_FIELD_MINIMUM_WIDTH` | 92 | 属性名列の最小幅。長い名前では自動拡張 |
+| `widget.py` | `_EDITOR_WIDTH` | 156（上記から算出） | 値・表示・ロックで共用する入力列の幅 |
+| `widget.py` | `_NAME_FIELD_PREFERRED_WIDTH` | 92 | 属性名列の推奨幅。長い名前は省略表示 |
 | `ui.py` | `_INITIAL_WIDTH` | 320 | Window / workspaceControlの初期幅 |
 | `ui.py` | `_MINIMUM_WIDTH` | 280 | Window / workspaceControlの最小幅 |
 
 utilの`FloatValueStepSpinBox`のstep既定幅は68ですが、このツールでは60を明示指定しています。
 値・補助欄の幅を変えたら、最小Window幅で入力が隠れないことも確認してください。
-属性名列は余剰幅を受け取るため、名前の最小幅だけを下げても広いパネルの余白は減りません。
+属性名列は余剰幅を受け取るため、名前の推奨幅だけを下げても広いパネルの余白は減りません。
 パネル幅と初期・最小Window幅を合わせて調整します。boolは同じ入力列の左端に配置します。
 
 定数を変更した後はtoolsをreloadして`channel_editor`をimportし直し、`show()`で作り直します。
@@ -213,6 +270,8 @@ Sliderあり／なし、最小幅／拡大時、ドック／floatingで表示を
 - 選択・表示更新・外部からの値変更は読取りと表示同期だけにし、他ノードへ値を転送しない。
 - 明示的な入力・揃える操作だけを一括編集し、Undoで各ノードの元値を復元する。
 - Stepの変更はViewの操作設定として扱い、sceneとUndoへ書き込まない。
+- モード切替では値・状態・Undoを変更せず、共通列の幅とstep設定を維持する。
+- 表示状態とロックを独立して変更し、非表示属性も状態モードから復帰できるようにする。
 - 編集不可属性や型・範囲の不一致を尊重し、除外理由や拒否理由を表示する。
 - 選択切替・close・reloadでは古い入力、連続編集、callback、メニューを確実に終了する。
 - 汎用の型・Binding・View・保存基盤はutil、表示対象と各行の組み合わせはtoolsへ置く。
@@ -223,6 +282,8 @@ Sliderあり／なし、最小幅／拡大時、ドック／floatingで表示を
 View選択、混在編集、除外対象、範囲違い、Undo、構成変更を検証します。
 `tests/maya/test_channel_editor_enum.py`は、enumの飛び番・定義不一致の除外、使用中の
 定義変更、未定義値、ロック・接続、混在、Undo／Redo、選択肢の終了を検証します。
+`tests/maya/test_channel_editor_states.py`は、既存Hide属性の列挙と復帰、表示・ロックの
+独立操作、混在、Undo／Redo、モード切替の無書込みとstep保持、共通列幅を検証します。
 `tests/maya/test_channel_editor_dock.py` は、batchで扱えないworkspaceの画面境界を置換し、
 公開show / restore / close / reset、Window重複防止、監視解除とreloadを検証します。
 公開入口の型は `tests/typecheck/channel_editor_contract.py` で固定します。
@@ -261,3 +322,23 @@ offscreenで発生していた最小幅の配置testの失敗は、Qtのフォ�
 test環境でSegoe UIを読み込む対応により、enumも含めて280 / 360 / 520 pxの配置検証が成功しました。
 製品のフォント・幅設定は変更していません。Maya 2025本体の保存画像でもComboBoxと選択肢を確認しました。
 Maya 2026 / 2027本体での手動操作は今回実施していません。
+
+### 表示・ロック追加時の確認（2026-09-18）
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsの`check.cmd -IncludeMaya` | Black・Pyright・unit 8件・Maya 2025 runtime 68件が成功 |
+| Maya 2026 / 2027のtools runtime test | 各68件成功 |
+| toolsの3 version Pyright | エラー・警告なし |
+| utilの`verify.cmd` | 成功。3 versionの型・Qt/UI互換性、全pytest、差分チェックを含む |
+| utilのUI専用検証 | Qt/UIは790件、Maya UIは326件を各versionで成功。状態編集基盤の17件を含む |
+| Maya 2025本体の操作 | 34工程成功。モード切替、既存Hideの復帰、表示状態、Lock/Unlock、混在、Undo/Redo、step維持を含む |
+| 幅・列配置 | 280 / 360 / 520 pxの両モードで横スクロールなし。本体では値13行から設定147行へ増えても列幅を維持 |
+| Maya 2025本体の終了 | 既知の終了待ちタイムアウトが再現。操作結果は成功、runnerの終了codeは1 |
+
+未編集のモード切替はscene・Undoを変更せず、キーボードの上下キーだけで往復できます。
+入力途中の数値は通常のフォーカス移動として確定し、状態編集とは別のUndo操作になります。
+Maya 2025本体の保存画像で切替前後の列位置、名前の省略、混在とロックの表示を確認しました。
+今回もMaya 2026 / 2027本体の画面操作は実施していません。
+本体検証の結果・画像は検証実行環境の
+`%TEMP%/bd-channel-editor-maya2025-xnb085bt`へ保存しました。

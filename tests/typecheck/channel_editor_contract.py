@@ -1,7 +1,7 @@
 # coding: utf-8
 """Channel Editorの公開入口とWindow内容の型契約。"""
 
-from typing import assert_type
+from typing import Literal, assert_type
 
 from bd_util.ui import (
     BoolCheckBox,
@@ -12,21 +12,41 @@ from bd_util.ui import (
 )
 
 from bd_tools import channel_editor
-from bd_tools.channel_editor.widget import ChannelEditorWidget
+from bd_tools.channel_editor.controller import ChannelRow, ChannelStateRow
+from bd_tools.channel_editor.widget import (
+    AttributeRowWidget,
+    AttributeStateRowWidget,
+    ChannelEditorWidget,
+)
 
 assert_type(channel_editor.show(), channel_editor.ChannelEditorWindow)
 assert_type(channel_editor.show().widget, ChannelEditorWidget)
-assert_type(
-    channel_editor.show().widget.row_widgets[0].editor,
-    BoolCheckBox | EnumComboBox | FloatSliderSpinBox | FloatValueStepSpinBox,
-)
+row = channel_editor.show().widget.row_widgets[0]
+assert_type(row, AttributeRowWidget | AttributeStateRowWidget)
+if isinstance(row, AttributeRowWidget):
+    assert_type(row.row, ChannelRow)
+    assert_type(
+        row.editor,
+        BoolCheckBox
+        | EnumComboBox
+        | FloatSliderSpinBox
+        | FloatValueStepSpinBox,
+    )
+    assert_type(row.align_action, qt.QAction)
+else:
+    assert_type(row.row, ChannelStateRow)
+    assert_type(row.editor, qt.QWidget)
+    assert_type(row.display_combo, qt.QComboBox)
+    assert_type(row.lock_check_box, qt.QCheckBox)
 assert_type(channel_editor.dispose(), None)
 assert_type(channel_editor.close(), None)
 assert_type(channel_editor.restore(), channel_editor.ChannelEditorWindow)
 assert_type(channel_editor.reset_layout(), channel_editor.ChannelEditorWindow)
 assert_type(channel_editor.WORKSPACE_CONTROL_NAME, str)
 assert_type(channel_editor.show().widget.refresh_action, qt.QAction)
+assert_type(channel_editor.show().widget.mode_combo, qt.QComboBox)
 assert_type(
-    channel_editor.show().widget.row_widgets[0].align_action, qt.QAction
+    channel_editor.show().widget.controller.mode, Literal["values", "states"]
 )
+assert_type(channel_editor.show().widget.controller.set_mode("states"), None)
 assert_type(channel_editor.show().widget.row_widgets[0].context_menu, qt.QMenu)

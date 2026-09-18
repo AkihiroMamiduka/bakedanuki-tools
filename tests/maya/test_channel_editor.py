@@ -45,7 +45,9 @@ def _events() -> None:
 
 def _row(widget: ChannelEditorWidget, name: str) -> AttributeRowWidget:
     """正式な属性名に対応する表示行を返す。"""
-    return next(w for w in widget.row_widgets if w.row.attribute.name == name)
+    row = next(w for w in widget.row_widgets if w.row.attribute.name == name)
+    assert isinstance(row, AttributeRowWidget)
+    return row
 
 
 def _open_context_menu(widget: qt.QWidget) -> None:
@@ -170,6 +172,7 @@ def test_input_columns_stay_compact_at_right_edge(
         _events()
         assert editor.scroll_area.horizontalScrollBar().maximum() == 0
         for row in editor.row_widgets:
+            assert isinstance(row, AttributeRowWidget)
             view = row.editor
             assert view.width() == 156
             assert view.x() + view.width() == row.width()

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 from maya.api import OpenMaya as om
 
@@ -16,6 +16,8 @@ from bd_util.maya.node.inspection import (
 from bd_util.maya.ui import (
     MayaBoolPlugsBinding,
     MayaCallbackRegistry,
+    MayaChannelStateBinding,
+    MayaChannelStatePlug,
     MayaEnumPlugsBinding,
     MayaFloatPlugsBinding,
     read_enum_definition,
@@ -28,8 +30,15 @@ from bd_util.ui import qt
 ChannelBinding: TypeAlias = (
     MayaBoolPlugsBinding | MayaFloatPlugsBinding | MayaEnumPlugsBinding
 )
+ChannelEditorMode: TypeAlias = Literal["values", "states"]
 
-__all__ = ["ChannelBinding", "ChannelRow", "ChannelEditorController"]
+__all__ = [
+    "ChannelBinding",
+    "ChannelEditorMode",
+    "ChannelRow",
+    "ChannelStateRow",
+    "ChannelEditorController",
+]
 
 
 @dataclass(frozen=True)
@@ -41,17 +50,28 @@ class ChannelRow:
     excluded: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ChannelStateRow:
+    """代表属性、表示・ロックBinding、対応しないノードの理由。"""
+
+    attribute: ScalarAttributeInfo
+    state_binding: MayaChannelStateBinding
+    excluded: tuple[str, ...]
+
+
 class ChannelEditorController(qt.QObject):
     """選択・属性構成の変更時だけ入力行を組み直す。"""
 
     rows_changed = qt.Signal()
     error_occurred = qt.Signal(str)
+    mode_changed = qt.Signal()
 
     def __init__(self, parent: qt.QObject) -> None:
         """表示用状態と、Windowと同じ寿命の監視を初期化する。"""
         super().__init__(parent)
-        self.rows: tuple[ChannelRow, ...] = ()
+        self.rows: tuple[ChannelRow | ChannelStateRow, ...] = ()
         self.node_names: tuple[str, ...] = ()
+        self._mode: ChannelEditorMode = "values"
         self._disposed = False
         self._events = MayaCallbackRegistry(self)
         self._nodes = MayaCallbackRegistry(self)
@@ -93,6 +113,26 @@ class ChannelEditorController(qt.QObject):
         self._refresh_pending()
 
     @property
+    def mode(self) -> ChannelEditorMode:
+        """値入力または表示・ロック設定の表示モードを返す。"""
+        return self._mode
+
+    def set_mode(self, mode: ChannelEditorMode) -> None:
+        """連続編集を終了し、属性を書き換えずに操作する状態を切り替える。"""
+        if mode not in ("values", "states"):
+            raise ValueError("modeにはvaluesまたはstatesを指定してください")
+        if self._disposed or mode == self._mode:
+            return
+        for row in self.rows:
+            if isinstance(row, ChannelRow) and isinstance(
+                row.binding, MayaFloatPlugsBinding
+            ):
+                row.binding.view_model.end_edit()
+        self._mode = mode
+        self.mode_changed.emit()
+        self.refresh()
+
+    @property
     def is_disposed(self) -> bool:
         """入力と選択監視が終了済みか返す。"""
         return self._disposed
@@ -124,10 +164,13 @@ class ChannelEditorController(qt.QObject):
             om.MNodeMessage.kAttributeAdded
             | om.MNodeMessage.kAttributeRemoved
             | om.MNodeMessage.kAttributeRenamed
-            | om.MNodeMessage.kAttributeKeyable
-            | om.MNodeMessage.kAttributeUnkeyable
         )
         if message & structural:
+            self._queue_rebuild()
+        elif self._mode == "values" and message & (
+            om.MNodeMessage.kAttributeKeyable
+            | om.MNodeMessage.kAttributeUnkeyable
+        ):
             self._queue_rebuild()
 
     def _watch_nodes(self) -> None:
@@ -173,15 +216,17 @@ class ChannelEditorController(qt.QObject):
 
     def _create_rows(
         self, attributes: tuple[tuple[ScalarAttributeInfo, ...], ...]
-    ) -> tuple[ChannelRow, ...]:
-        """先頭ノードの表示対象と、各ノードの同名・同種属性を対応付ける。"""
+    ) -> tuple[ChannelRow | ChannelStateRow, ...]:
+        """モードの表示対象と、各ノードの同名・同種属性を対応付ける。"""
         if not attributes:
             return ()
         lookup = tuple({a.path: a for a in items} for items in attributes)
-        rows: list[ChannelRow] = []
+        rows: list[ChannelRow | ChannelStateRow] = []
         try:
             for attribute in attributes[0]:
-                if not (attribute.keyable or attribute.channel_box):
+                if self._mode == "values" and not (
+                    attribute.keyable or attribute.channel_box
+                ):
                     continue
                 targets: list[str] = []
                 excluded: list[str] = []
@@ -193,6 +238,21 @@ class ChannelEditorController(qt.QObject):
                         excluded.append(f"{name}: 型・単位が異なる")
                     else:
                         targets.append(name)
+                if self._mode == "states":
+                    state_binding = MayaChannelStateBinding(
+                        [
+                            self._resolve_state_plug(n, attribute)
+                            for n in targets
+                        ],
+                        parent=self,
+                    )
+                    state_binding.edit_failed.connect(self.error_occurred.emit)
+                    rows.append(
+                        ChannelStateRow(
+                            attribute, state_binding, tuple(excluded)
+                        )
+                    )
+                    continue
                 binding: ChannelBinding
                 if attribute.kind == "bool":
                     binding = MayaBoolPlugsBinding(
@@ -218,9 +278,20 @@ class ChannelEditorController(qt.QObject):
                 rows.append(ChannelRow(attribute, binding, tuple(excluded)))
         except Exception:
             for row in rows:
-                row.binding.dispose()
+                self._dispose_row(row)
             raise
         return tuple(rows)
+
+    @staticmethod
+    def _resolve_state_plug(
+        name: str, attribute: ScalarAttributeInfo
+    ) -> MayaChannelStatePlug:
+        """値やenum定義を比較せず、対応scalarの参照だけを取得する。"""
+        if attribute.kind == "bool":
+            return resolve_bool_plug(name, attribute.path)
+        if attribute.kind == "enum":
+            return resolve_enum_plug(name, attribute.path)
+        return resolve_float_plug(name, attribute.path)
 
     def _create_enum_binding(
         self, path: str, targets: list[str], excluded: list[str]
@@ -241,7 +312,16 @@ class ChannelEditorController(qt.QObject):
         """Qtの遅延削除を待たず、すべての入力とMaya監視を終了する。"""
         rows, self.rows = self.rows, ()
         for row in rows:
-            row.binding.dispose()
+            self._dispose_row(row)
+
+    @staticmethod
+    def _dispose_row(row: ChannelRow | ChannelStateRow) -> None:
+        """表示モードに対応するBindingの監視とQObjectを解放する。"""
+        binding = (
+            row.binding if isinstance(row, ChannelRow) else row.state_binding
+        )
+        binding.dispose()
+        binding.deleteLater()
 
     def dispose(self) -> None:
         """timer、入力Binding、Maya callbackを一度だけ解放する。"""

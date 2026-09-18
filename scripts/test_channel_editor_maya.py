@@ -16,7 +16,10 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from bd_tools.channel_editor.ui import ChannelEditorWindow
-    from bd_tools.channel_editor.widget import AttributeRowWidget
+    from bd_tools.channel_editor.widget import (
+        AttributeRowWidget,
+        AttributeStateRowWidget,
+    )
     from bd_util.ui import qt
 
 _OUTPUT_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_OUTPUT"
@@ -55,6 +58,7 @@ class _MayaSmokeSession:
         self.screenshots: list[str] = []
         self.measurements: dict[str, float | int] = {}
         self.diagnostics: list[dict[str, object]] = []
+        self._value_layout: tuple[int, int, int, int] | None = None
         self._started_at = time.perf_counter()
         self._startup_idle_checks = 0
         self._stage_index = 0
@@ -83,6 +87,11 @@ class _MayaSmokeSession:
             self._undo_drag,
             self._align_bool,
             self._undo_alignment,
+            self._show_state_mode,
+            self._edit_display_state,
+            self._edit_lock_state,
+            self._inspect_mixed_states,
+            self._return_to_values,
             self._close,
             self._reopen,
             self._change_selection,
@@ -203,6 +212,13 @@ class _MayaSmokeSession:
                 keyable=True,
             )
             cmds.setAttr(f"{node}.mode", 5 if index == 0 else -2)
+            cmds.addAttr(
+                node,
+                longName="hiddenWeight",
+                niceName="Previously Hidden Attribute With A Long Name",
+                attributeType="double",
+            )
+            cmds.setAttr(f"{node}.hiddenWeight", 0.2 + index * 0.4)
             self.nodes.append(node)
         cmds.select(self.nodes, replace=True)
         self.steps.append("create_isolated_scene")
@@ -578,6 +594,206 @@ class _MayaSmokeSession:
         self._assert_values("enabled", (False, True))
         self.steps.append("undo_alignment_once")
 
+    def _show_state_mode(self) -> None:
+        """表示モードを実UIで切り替え、無書込みと共通列の位置を確認する。"""
+        from maya import cmds
+
+        window = self._require_window()
+        widget = window.widget
+        self._flush_gui()
+        row = self._row("enabled")
+        self._value_layout = self._row_layout(row)
+        self.measurements["value_mode_rows"] = len(widget.row_widgets)
+        if any(
+            item.row.attribute.path == "hiddenWeight"
+            for item in widget.row_widgets
+        ):
+            raise AssertionError("値モードにHide属性が表示されています")
+        self._capture("10-values-before-mode-switch.png")
+        before = self._attribute_states("enabled")
+        cmds.flushUndo()
+        self._select_combo_item(widget.mode_combo, 1)
+        state_row = self._state_row("enabled")
+        self._assert_state_layout(state_row)
+        self._state_row("hiddenWeight")
+        self.measurements["state_mode_rows"] = len(widget.row_widgets)
+        if (
+            self.measurements["state_mode_rows"]
+            <= self.measurements["value_mode_rows"]
+        ):
+            raise AssertionError("状態モードで非表示属性の行が増えません")
+        if self._attribute_states("enabled") != before:
+            raise AssertionError("モード切替で属性の状態が変わりました")
+        self._assert_values("hiddenWeight", (0.2, 0.6))
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("モード切替でUndo履歴が増えました")
+        self._capture("11-state-mode-hidden-attributes.png")
+        self.steps.append("mode_switch_preserves_scene_and_column_widths")
+
+    def _edit_display_state(self) -> None:
+        """非表示属性を3状態へ切り替え、行の維持とUndo/Redoを確認する。"""
+        from maya import cmds
+
+        initial = ((False, False, False),) * len(self.nodes)
+        for mode, expected in (
+            ("channel_box", (False, True, False)),
+            ("keyable", (True, False, False)),
+        ):
+            cmds.flushUndo()
+            row = self._state_row("hiddenWeight")
+            self._select_combo_item(
+                row.display_combo, row.display_combo.findData(mode)
+            )
+            if self._attribute_states("hiddenWeight") != (expected,) * 2:
+                raise AssertionError(f"非表示属性を{mode}へ変更できません")
+            self._assert_values("hiddenWeight", (0.2, 0.6))
+            cmds.undo()
+            self._flush_gui()
+            self._state_row("hiddenWeight")
+            if self._attribute_states("hiddenWeight") != initial:
+                raise AssertionError("表示状態をUndoで復元できません")
+            if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+                raise AssertionError("表示状態変更が1回のUndoになりません")
+            cmds.redo()
+            self._flush_gui()
+            if self._attribute_states("hiddenWeight") != (expected,) * 2:
+                raise AssertionError("表示状態をRedoで再適用できません")
+            cmds.undo()
+            self._flush_gui()
+
+        # 表示されていた属性を隠しても設定行は維持する
+        cmds.flushUndo()
+        row = self._state_row("enabled")
+        self._select_combo_item(
+            row.display_combo, row.display_combo.findData("hidden")
+        )
+        self._state_row("enabled")
+        if self._attribute_states("enabled") != initial:
+            raise AssertionError("Hideの設定または状態行の維持に失敗しました")
+        cmds.undo()
+        self._flush_gui()
+        if self._attribute_states("enabled") != ((True, False, False),) * 2:
+            raise AssertionError("Hide操作前の状態へ戻りません")
+        self.steps.append("hidden_attribute_display_states_undo_redo")
+
+    def _edit_lock_state(self) -> None:
+        """ロックと解除を実入力で行い、表示状態と値を維持する。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+
+        cmds.flushUndo()
+        self._key(
+            self._state_row("enabled").lock_check_box, qt.Qt.Key.Key_Space
+        )
+        self._flush_gui()
+        if self._attribute_states("enabled") != ((True, False, True),) * 2:
+            raise AssertionError("複数対象をロックできません")
+        self._capture("12-state-mode-locked.png")
+        cmds.undo()
+        self._flush_gui()
+        if self._attribute_states("enabled") != ((True, False, False),) * 2:
+            raise AssertionError("ロック操作をUndoで戻せません")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("ロック変更が1回のUndoになりません")
+        cmds.redo()
+        self._flush_gui()
+        self._key(
+            self._state_row("enabled").lock_check_box, qt.Qt.Key.Key_Space
+        )
+        self._flush_gui()
+        if self._attribute_states("enabled") != ((True, False, False),) * 2:
+            raise AssertionError("ロック中の属性を解除できません")
+        self._assert_values("enabled", (False, True))
+        self.steps.append("lock_unlock_preserves_visibility_and_values")
+
+    def _inspect_mixed_states(self) -> None:
+        """外部から作った混在を表示し、明示操作だけで各状態を揃える。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+
+        cmds.setAttr(
+            f"{self.nodes[1]}.enabled", keyable=False, channelBox=True
+        )
+        cmds.setAttr(f"{self.nodes[1]}.enabled", lock=True)
+        self._flush_gui()
+        row = self._state_row("enabled")
+        if (
+            row.lock_check_box.checkState()
+            != qt.Qt.CheckState.PartiallyChecked
+        ):
+            raise AssertionError("ロックの混在が三状態で表示されません")
+        if "混在" not in row.display_combo.currentText():
+            raise AssertionError("表示状態の混在が表示されません")
+        initial = self._attribute_states("enabled")
+        self._capture("13-state-mode-mixed.png")
+        cmds.flushUndo()
+        self._select_combo_item(
+            row.display_combo, row.display_combo.findData("keyable")
+        )
+        if self._attribute_states("enabled") != (
+            (True, False, False),
+            (True, False, True),
+        ):
+            raise AssertionError("表示状態の変更がロックを維持しません")
+        self._key(
+            self._state_row("enabled").lock_check_box, qt.Qt.Key.Key_Space
+        )
+        self._flush_gui()
+        if self._attribute_states("enabled") != ((True, False, True),) * 2:
+            raise AssertionError("混在ロックを明示入力で揃えられません")
+        cmds.undo()
+        self._flush_gui()
+        cmds.undo()
+        self._flush_gui()
+        if self._attribute_states("enabled") != initial:
+            raise AssertionError("各状態のUndoで元の混在へ戻りません")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("表示とロックが独立したUndoになりません")
+
+        # 後続の値モード確認へ最初の表示状態を引き継ぐ
+        cmds.setAttr(f"{self.nodes[1]}.enabled", lock=False)
+        cmds.setAttr(
+            f"{self.nodes[1]}.enabled", keyable=True, channelBox=False
+        )
+        self._flush_gui()
+        self.steps.append("mixed_visibility_and_lock_edit_independently")
+
+    def _return_to_values(self) -> None:
+        """値モードへ戻し、列位置・値・刻み幅の維持を確認する。"""
+        from maya import cmds
+
+        from bd_util.ui import FloatValueStepSpinBox
+
+        widget = self._require_window().widget
+        cmds.flushUndo()
+        self._select_combo_item(widget.mode_combo, 0)
+        if self._row_layout(self._row("enabled")) != self._value_layout:
+            raise AssertionError(
+                "値モードへ戻した際に横幅か列位置が変わりました"
+            )
+        if any(
+            item.row.attribute.path == "hiddenWeight"
+            for item in widget.row_widgets
+        ):
+            raise AssertionError(
+                "値モードへ戻してもHide属性の行が残っています"
+            )
+        view = self._row("translate.translateX").editor
+        if (
+            not isinstance(view, FloatValueStepSpinBox)
+            or view.singleStep() != 0.1
+        ):
+            raise AssertionError("モード切替でstep設定が失われました")
+        self._assert_values("enabled", (False, True))
+        self._assert_values("weight", (0.25, 0.75))
+        self._assert_values("mode", (5, -2))
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("値モードへの切替でUndo履歴が増えました")
+        self._capture("14-values-after-mode-switch.png")
+        self.steps.append("return_to_values_preserves_width_step_and_scene")
+
     def _close(self) -> None:
         """Maya側のclose操作からworkspaceControlごと完全破棄する。"""
         from maya import cmds
@@ -824,12 +1040,94 @@ class _MayaSmokeSession:
 
     def _row(self, attribute_name: str) -> AttributeRowWidget:
         """指定した属性pathに対応する表示中の入力行を返す。"""
+        from bd_tools.channel_editor.widget import AttributeRowWidget
+
         window = self._require_window()
         for row in window.widget.row_widgets:
-            if row.row.attribute.path == attribute_name:
+            if (
+                isinstance(row, AttributeRowWidget)
+                and row.row.attribute.path == attribute_name
+            ):
                 window.widget.scroll_area.ensureWidgetVisible(row)
                 return row
         raise AssertionError(f"入力行が見つかりません: {attribute_name}")
+
+    def _state_row(self, attribute_name: str) -> AttributeStateRowWidget:
+        """指定した属性pathに対応する表示中の状態行を返す。"""
+        from bd_tools.channel_editor.widget import AttributeStateRowWidget
+
+        window = self._require_window()
+        for row in window.widget.row_widgets:
+            if (
+                isinstance(row, AttributeStateRowWidget)
+                and row.row.attribute.path == attribute_name
+            ):
+                window.widget.scroll_area.ensureWidgetVisible(row)
+                return row
+        raise AssertionError(f"状態行が見つかりません: {attribute_name}")
+
+    def _row_layout(
+        self, row: AttributeRowWidget | AttributeStateRowWidget
+    ) -> tuple[int, int, int, int]:
+        """同じ属性のWindow幅と名前・入力列の位置を取得する。"""
+        from bd_util.ui import qt
+
+        window = self._require_window()
+        return (
+            window.width(),
+            row.name_label.width(),
+            row.editor.mapTo(window.widget, qt.QPoint(0, 0)).x(),
+            row.editor.width(),
+        )
+
+    def _assert_state_layout(self, row: AttributeStateRowWidget) -> None:
+        """設定行の追加で横幅や列位置が変わらないことを確認する。"""
+        actual = self._row_layout(row)
+        if actual != self._value_layout:
+            raise AssertionError(
+                f"モード切替で横幅か列位置が変わりました: "
+                f"{self._value_layout} -> {actual}"
+            )
+        if (
+            self._require_window()
+            .widget.scroll_area.horizontalScrollBar()
+            .maximum()
+        ):
+            raise AssertionError("状態入力欄がWindow幅に収まりません")
+
+    def _attribute_states(
+        self, name: str
+    ) -> tuple[tuple[bool, bool, bool], ...]:
+        """Mayaの実属性からkeyable・channelBox・lockを読み取る。"""
+        from maya import cmds
+
+        return tuple(
+            (
+                bool(cmds.getAttr(f"{node}.{name}", keyable=True)),
+                bool(cmds.getAttr(f"{node}.{name}", channelBox=True)),
+                bool(cmds.getAttr(f"{node}.{name}", lock=True)),
+            )
+            for node in self.nodes
+        )
+
+    def _select_combo_item(self, combo: qt.QComboBox, index: int) -> None:
+        """ComboBoxを開いて項目をマウスで選び、通常の選択通知を通す。"""
+        from bd_util.ui import qt
+
+        if not 0 <= index < combo.count():
+            raise AssertionError(f"選択するComboBox項目がありません: {index}")
+        combo.showPopup()
+        self._flush_gui()
+        view = combo.view()
+        model_index = combo.model().index(index, 0)
+        view.scrollTo(model_index)
+        position = view.visualRect(model_index).center()
+        for event_type in (
+            qt.QEvent.Type.MouseButtonPress,
+            qt.QEvent.Type.MouseButtonRelease,
+        ):
+            self._mouse(view.viewport(), event_type, position)
+        self._flush_gui()
 
     def _assert_values(
         self, name: str, expected: tuple[float | bool, ...]
