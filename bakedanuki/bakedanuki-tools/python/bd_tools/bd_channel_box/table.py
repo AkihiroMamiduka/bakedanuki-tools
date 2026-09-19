@@ -43,6 +43,8 @@ class _RowDelegate(qt.QStyledItemDelegate):
         del option
         widget = self._table.rows[index.row()].widget
         widget.setParent(parent)
+        # 属性名と補助部品の周囲を通常のUI背景で塗り、入力欄と区別する
+        widget.setAutoFillBackground(True)
         return widget
 
     def setEditorData(
@@ -102,6 +104,7 @@ class ChannelTableView(qt.QTableView):
         self.verticalHeader().setMinimumSectionSize(1)
         self.setShowGrid(False)
         self.setFrameShape(qt.QFrame.Shape.NoFrame)
+        self.viewport().setBackgroundRole(qt.QPalette.ColorRole.Window)
         self.setSelectionMode(
             qt.QAbstractItemView.SelectionMode.ExtendedSelection
         )
@@ -117,6 +120,11 @@ class ChannelTableView(qt.QTableView):
         )
         self.selectionModel().selectionChanged.connect(self._paint_selection)
         self.verticalScrollBar().valueChanged.connect(self._scroll_changed)
+
+    def setupViewport(self, viewport: qt.QWidget) -> None:
+        """Mayaが表示領域を交換した後も、一覧の余白を通常のUI背景にする。"""
+        super().setupViewport(viewport)
+        viewport.setBackgroundRole(qt.QPalette.ColorRole.Window)
 
     def set_rows(
         self, rows: Sequence[TableRow], preserve_selection: bool = True
