@@ -12,6 +12,7 @@ from bd_util.maya.ui import (
     MayaBoolPlugsBinding,
     MayaEnumPlugsBinding,
     MayaEditSession,
+    MayaFloatPlugsBinding,
     get_channel_box_precision,
 )
 from bd_util.ui import (
@@ -667,6 +668,107 @@ class ChannelBoxWidget(qt.QWidget):
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
+    def _request_numeric_value(
+        self,
+        key: tuple[str, str],
+        binding: MayaFloatPlugsBinding,
+        value: float,
+    ) -> bool:
+        """値欄の絶対値入力を、現在選択中の数値属性へ適用する。"""
+        display_value = binding.view_model.presentation.to_display(value)
+        try:
+            self.controller.apply_numeric_values(
+                self._action_keys(key), display_value
+            )
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+        return True
+
+    def _request_numeric_step(
+        self,
+        key: tuple[str, str],
+        editor: FloatValueStepSpinBox | FloatSliderSpinBox,
+        steps: int,
+    ) -> bool:
+        """操作元のStepによる共通増減量を、選択数値属性の現在値へ加える。"""
+        display_offset = editor.spin_box.singleStep() * steps
+        try:
+            self.controller.offset_numeric_values(
+                self._action_keys(key), display_offset
+            )
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+        return True
+
+    def _request_slider_value(
+        self,
+        key: tuple[str, str],
+        binding: MayaFloatPlugsBinding,
+        editor: FloatSliderSpinBox,
+        value: float,
+    ) -> bool:
+        """Slider入力を選択数値へ適用し、拒否時は連続操作を終了する。"""
+        display_value = binding.view_model.presentation.to_display(value)
+        try:
+            self.controller.apply_numeric_values(
+                self._action_keys(key), display_value
+            )
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+            editor.slider.setSliderDown(False)
+        return True
+
+    def _request_bool_value(self, key: tuple[str, str], value: bool) -> bool:
+        """選択中のbool属性を、操作したCheckBoxと同じ状態へ揃える。"""
+        try:
+            self.controller.apply_bool_values(self._action_keys(key), value)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+        return True
+
+    def _request_enum_value(self, key: tuple[str, str], value: int) -> bool:
+        """選択中で定義が一致するenum属性を、操作した項目へ揃える。"""
+        try:
+            keys = self._action_keys(key)
+            self.controller.apply_enum_values(keys, key, value)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+        return True
+
+    def _configure_value_input(
+        self, widget: AttributeRowWidget, key: tuple[str, str]
+    ) -> None:
+        """既存Viewの入力を、属性選択を解釈する一括操作へ接続する。"""
+        editor = widget.editor
+        binding = widget.row.binding
+        if isinstance(
+            editor, (FloatValueStepSpinBox, FloatSliderSpinBox)
+        ) and isinstance(binding, MayaFloatPlugsBinding):
+            editor.spin_box.setValueRequestHandler(
+                partial(self._request_numeric_value, key, binding)
+            )
+            editor.spin_box.setStepRequestHandler(
+                partial(self._request_numeric_step, key, editor)
+            )
+            if isinstance(editor, FloatSliderSpinBox):
+                editor.slider.setValueRequestHandler(
+                    partial(self._request_slider_value, key, binding, editor)
+                )
+                editor.slider.editStarted.connect(
+                    self.controller.begin_value_edit
+                )
+                editor.slider.editFinished.connect(
+                    self.controller.finish_value_edit
+                )
+        elif isinstance(editor, BoolCheckBox):
+            editor.setValueRequestHandler(
+                partial(self._request_bool_value, key)
+            )
+        elif isinstance(editor, EnumComboBox):
+            editor.setValueRequestHandler(
+                partial(self._request_enum_value, key)
+            )
+
     def _action_keys(
         self, key: tuple[str, str]
     ) -> tuple[tuple[str, str], ...]:
@@ -785,6 +887,7 @@ class ChannelBoxWidget(qt.QWidget):
                     widget.step_changed.connect(
                         partial(self._remember_step, key)
                     )
+                    self._configure_value_input(widget, key)
                 widget.refresh_requested.connect(self.refresh)
                 self._add_selection_menu(widget)
                 widgets.append(widget)

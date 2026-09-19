@@ -73,6 +73,7 @@ Maya本体がviewportを交換する場合に備え、行の親は構築時に`v
 以前のviewportを永続的な参照として保持しません。
 既存の数値・Step・Slider・bool・enum・状態Viewを維持し、値をmodelへ複製しません。
 複数選択時の数値文字入力・貼付けだけを一時的な文字欄で受け付け、入力開始時の属性集合へ確定します。
+既存の数値・Slider・bool・enum Viewは任意入力handlerを使い、選択中の互換属性へ操作を委譲します。
 ノードの識別子と属性path・型区分を用いて、同じノードの再表示では残存行の選択を維持し、
 対象ノードが変わる場合は選択を解除します。属性選択自体はsceneや設定ファイルへ保存しません。
 boolにはutilの`BoolCheckBox`、両側hard limit付きfloatには`FloatSliderSpinBox`、
@@ -122,12 +123,13 @@ bdChannelBoxを利用側から開く場合は`bd_tools.bd_channel_box.show()`を
 別ツールの実装で必要になる属性列挙や一括編集は、bdChannelBoxのcontrollerを経由せず
 utilを直接利用します。画面寸法の定数はtools内部の調整箇所で、保存設定や公開APIではありません。
 
-複数属性への数値直接入力と「この値に揃える」は、toolsのcontrollerが各行の対象と入力値を決め、
-utilの`MayaFloatValueEdit` / `MayaBoolValueEdit` / `MayaEnumValueEdit`へまとめます。
+複数属性への値入力は、toolsのcontrollerが各行の対象と入力値を決め、utilの
+`MayaFloatValueEdit` / `MayaFloatOffsetEdit` / `MayaBoolValueEdit` / `MayaEnumValueEdit`へまとめます。
 `apply_plugs_values()`が全件の事前検証、書込み失敗時の復旧、1回のUndoを所有します。
 数値直接入力は各行の表示単位で換算し、「この値に揃える」は各行自身の基準ノード値を使います。
-将来の上下操作・Slider・bool・enumの複数属性操作も、選択操作とこの書込み経路を組み合わせて拡張します。
-現段階の通常の上下・Step・Slider・bool・enum操作は、操作した1行の対応ノードだけが対象です。
+上下操作は操作元Stepによる表示増減量を各数値の現在値へ加え、Slider・bool・enumは互換属性を
+操作後の値へ揃えます。Sliderの連続入力は`MayaEditSession`で1回のUndoへまとめます。
+Step欄の設定はViewごとの操作設定として保持し、一括変更はtoolsの将来候補です。
 
 一覧を参照するコードは`widget.table_view`を使います。`scroll_area`は同じ
 `ChannelTableView`への参照として残しますが、`QScrollArea.widget()`の代わりに`viewport()`を使います。

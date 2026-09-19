@@ -36,7 +36,9 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     del qt_application
     cast(Callable[..., str], cmds.file)(new=True, force=True)
     cmds.currentUnit(linear="cm", angle="deg")
-    for node, tx, ty in (("multiA", 5.0, 1.0), ("multiB", 9.0, 3.0)):
+    for index, (node, tx, ty) in enumerate(
+        (("multiA", 5.0, 1.0), ("multiB", 9.0, 3.0))
+    ):
         cmds.createNode("transform", name=node)
         _set_value(node + ".translateX", tx)
         _set_value(node + ".translateY", ty)
@@ -50,9 +52,39 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
         )
         cmds.addAttr(
             node,
+            longName="limited",
+            attributeType="double",
+            minValue=0.0,
+            maxValue=5.0,
+            defaultValue=1.0,
+            keyable=True,
+        )
+        cmds.addAttr(
+            node,
             longName="mode",
             attributeType="enum",
             enumName="A:B:C",
+            keyable=True,
+        )
+        cmds.addAttr(
+            node,
+            longName="quality",
+            attributeType="enum",
+            enumName="A:B:C",
+            keyable=True,
+        )
+        cmds.addAttr(
+            node,
+            longName="variant",
+            attributeType="enum",
+            enumName="A:B:D",
+            keyable=True,
+        )
+        cmds.addAttr(
+            node,
+            longName="enabled",
+            attributeType="bool",
+            defaultValue=index == 1,
             keyable=True,
         )
     cmds.select("multiA", "multiB", replace=True)
@@ -342,10 +374,10 @@ def test_readonly_and_nonnumeric_rows_are_reported_and_skipped(
     assert "対象外" in editor.message_label.text()
 
 
-def test_auxiliary_operations_stay_in_their_row(
+def test_step_setting_stays_in_row_and_value_arrow_uses_source_step(
     editor: ChannelBoxWidget,
 ) -> None:
-    """複数属性の選択中も値の上下操作とStep設定は従来の一行だけを扱う。"""
+    """Step設定は一行に保ち、その値欄の上下操作を全選択数値へ適用する。"""
     editor.table_view.select_keys(_keys(editor, "translateX", "translateY"))
     view = _row(editor, "translateX").editor
     assert isinstance(view, FloatValueStepSpinBox)
@@ -354,9 +386,149 @@ def test_auxiliary_operations_stay_in_their_row(
     view.spin_box.stepUp()
     _events()
     assert cmds.getAttr("multiA.translateX") == 7.0
-    assert cmds.getAttr("multiB.translateX") == 7.0
-    assert cmds.getAttr("multiA.translateY") == 1.0
+    assert cmds.getAttr("multiB.translateX") == 11.0
+    assert cmds.getAttr("multiA.translateY") == 3.0
+    assert cmds.getAttr("multiB.translateY") == 5.0
+
+
+def test_value_arrows_add_source_step_to_each_selected_value(
+    editor: ChannelBoxWidget,
+) -> None:
+    """値欄の上下操作は操作元のStepを全選択数値の現在値へ加える。"""
+    selected = _keys(editor, "translateX", "translateY", "rotateZ")
+    editor.table_view.select_keys(selected)
+    view = _row(editor, "translateX").editor
+    assert isinstance(view, FloatValueStepSpinBox)
+    view.setSingleStep(0.5)
+    cmds.flushUndo()
+    view.spin_box.stepUp()
+    _events()
+    assert cmds.getAttr("multiA.translateX") == 5.5
+    assert cmds.getAttr("multiB.translateX") == 9.5
+    assert cmds.getAttr("multiA.translateY") == 1.5
+    assert cmds.getAttr("multiB.translateY") == 3.5
+    assert cmds.getAttr("multiA.rotateZ") == 0.5
+    assert cmds.getAttr("multiB.rotateZ") == 0.5
+    cmds.undo()
+    _events()
+    assert cmds.getAttr("multiA.translateX") == 5.0
     assert cmds.getAttr("multiB.translateY") == 3.0
+    assert cmds.getAttr("multiA.rotateZ") == 0.0
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_value_arrow_range_error_rejects_every_selected_row(
+    editor: ChannelBoxWidget,
+) -> None:
+    """共通増減後に一行でも範囲を超える場合は全数値行を変更しない。"""
+    _set_value("multiA.gain", 9.0)
+    _set_value("multiB.gain", 9.0)
+    _events()
+    editor.table_view.select_keys(_keys(editor, "translateX", "gain"))
+    view = _row(editor, "translateX").editor
+    assert isinstance(view, FloatValueStepSpinBox)
+    view.setSingleStep(2.0)
+    cmds.flushUndo()
+    view.spin_box.stepUp()
+    _events()
+    assert cmds.getAttr("multiA.translateX") == 5.0
+    assert cmds.getAttr("multiB.translateX") == 9.0
+    assert cmds.getAttr("multiA.gain") == 9.0
+    assert editor.message_label.isVisible()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_slider_aligns_selected_numeric_rows_in_one_continuous_undo(
+    editor: ChannelBoxWidget,
+) -> None:
+    """Sliderの連続値を選択数値へ揃え、押下から解放までを一Undoにする。"""
+    editor.table_view.select_keys(_keys(editor, "translateX", "gain"))
+    view = _row(editor, "gain").editor
+    assert isinstance(view, FloatSliderSpinBox)
+    cmds.flushUndo()
+    view.slider.sliderPressed.emit()
+    view.slider.setValue(view.slider.maximum() // 2)
+    view.slider.setValue(view.slider.maximum() * 7 // 10)
+    view.slider.sliderReleased.emit()
+    _events()
+    assert cmds.getAttr("multiA.translateX") == 7.0
+    assert cmds.getAttr("multiB.translateX") == 7.0
+    assert cmds.getAttr("multiA.gain") == 7.0
+    assert cmds.getAttr("multiB.gain") == 7.0
+    cmds.undo()
+    _events()
+    assert cmds.getAttr("multiA.translateX") == 5.0
+    assert cmds.getAttr("multiB.translateX") == 9.0
+    assert cmds.getAttr("multiA.gain") == 0.0
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_slider_range_error_stops_continuous_edit_without_writing(
+    editor: ChannelBoxWidget,
+) -> None:
+    """選択数値の範囲違反ではSlider操作を終了し、全対象を変更しない。"""
+    editor.table_view.select_keys(_keys(editor, "gain", "limited"))
+    view = _row(editor, "gain").editor
+    assert isinstance(view, FloatSliderSpinBox)
+    cmds.flushUndo()
+    view.slider.setSliderDown(True)
+    view.slider.setValue(view.slider.maximum() * 7 // 10)
+    _events()
+    assert cmds.getAttr("multiA.gain") == 0.0
+    assert cmds.getAttr("multiB.gain") == 0.0
+    assert cmds.getAttr("multiA.limited") == 1.0
+    assert cmds.getAttr("multiB.limited") == 1.0
+    assert not view.slider.isSliderDown()
+    assert not editor.controller.value_edit_session.is_editing
+    assert editor.message_label.isVisible()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_bool_input_aligns_selected_bool_rows(
+    editor: ChannelBoxWidget,
+) -> None:
+    """CheckBox操作は選択中のbool属性だけを同じ状態へ揃える。"""
+    editor.table_view.select_keys(
+        _keys(editor, "visibility", "enabled", "translateX")
+    )
+    view = _row(editor, "visibility").editor
+    assert isinstance(view, BoolCheckBox)
+    cmds.flushUndo()
+    view.click()
+    _events()
+    for node in ("multiA", "multiB"):
+        assert cmds.getAttr(f"{node}.visibility") is False
+        assert cmds.getAttr(f"{node}.enabled") is False
+    assert cmds.getAttr("multiA.translateX") == 5.0
+    assert "対象外" in editor.message_label.text()
+    cmds.undo()
+    _events()
+    assert cmds.getAttr("multiA.visibility") is True
+    assert cmds.getAttr("multiB.enabled") is True
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_enum_input_aligns_only_matching_definitions(
+    editor: ChannelBoxWidget,
+) -> None:
+    """ComboBox操作は操作元と定義が一致する選択enumだけへ適用する。"""
+    editor.table_view.select_keys(_keys(editor, "mode", "quality", "variant"))
+    view = _row(editor, "mode").editor
+    assert isinstance(view, EnumComboBox)
+    cmds.flushUndo()
+    view.setCurrentIndex(2)
+    _events()
+    for node in ("multiA", "multiB"):
+        assert cmds.getAttr(f"{node}.mode") == 2
+        assert cmds.getAttr(f"{node}.quality") == 2
+        assert cmds.getAttr(f"{node}.variant") == 0
+    assert "enum定義" in editor.message_label.text()
+    cmds.undo()
+    _events()
+    for node in ("multiA", "multiB"):
+        assert cmds.getAttr(f"{node}.mode") == 0
+        assert cmds.getAttr(f"{node}.quality") == 0
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_selected_menu_lock_hide_and_alignment(
@@ -502,10 +674,10 @@ def test_invalid_numeric_input_does_not_write(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
-def test_slider_bool_enum_remain_single_row_operations(
+def test_slider_bool_enum_apply_to_selected_compatible_rows(
     editor: ChannelBoxWidget,
 ) -> None:
-    """複数選択中の既存部品は同じ行の対応nodeだけへ入力する。"""
+    """Slider、bool、enumは選択中の互換属性へ入力を揃える。"""
     editor.table_view.select_keys(
         _keys(editor, "translateX", "gain", "visibility", "mode")
     )
@@ -523,5 +695,5 @@ def test_slider_bool_enum_remain_single_row_operations(
         assert cmds.getAttr(node + ".gain") == 10.0
         assert cmds.getAttr(node + ".visibility") is False
         assert cmds.getAttr(node + ".mode") == 2
-    assert cmds.getAttr("multiA.translateX") == 5.0
-    assert cmds.getAttr("multiB.translateX") == 9.0
+    assert cmds.getAttr("multiA.translateX") == 10.0
+    assert cmds.getAttr("multiB.translateX") == 10.0

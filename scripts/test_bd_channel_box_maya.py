@@ -101,6 +101,7 @@ class _MayaSmokeSession:
             self._inspect_filters,
             self._inspect_attribute_order,
             self._inspect_multi_attribute_selection,
+            self._inspect_multi_value_controls,
             self._inspect_state_sweep,
             self._inspect_lock_sweep,
             self._close,
@@ -237,6 +238,14 @@ class _MayaSmokeSession:
                 keyable=True,
             )
             cmds.setAttr(f"{node}.mode", 5 if index == 0 else -2)
+            cmds.addAttr(
+                node,
+                longName="modeCopy",
+                attributeType="enum",
+                enumName="Negative=-2:Off=0:Preview=5:Final=10",
+                keyable=True,
+            )
+            cmds.setAttr(f"{node}.modeCopy", 0 if index == 0 else 10)
             cmds.addAttr(
                 node,
                 longName="hiddenWeight",
@@ -838,7 +847,7 @@ class _MayaSmokeSession:
         from maya import cmds
 
         widget = self._require_window().widget
-        custom = {"enabled", "weight", "mode", "hiddenWeight"}
+        custom = {"enabled", "weight", "mode", "modeCopy", "hiddenWeight"}
         initial = self._attribute_states("weight")
         cmds.flushUndo()
         for mode_index in (0, 1):
@@ -1080,6 +1089,135 @@ class _MayaSmokeSession:
         self.steps.append(
             "multi_attribute_selection_numeric_input_menu_and_undo"
         )
+
+    def _inspect_multi_value_controls(self) -> None:
+        """既存の上下・Slider・bool・enum入力を選択属性へ一括適用する。"""
+        from maya import cmds
+
+        from bd_util.ui import (
+            BoolCheckBox,
+            EnumComboBox,
+            FloatSliderSpinBox,
+            FloatValueStepSpinBox,
+        )
+
+        widget = self._require_window().widget
+
+        # 操作元のStepによる共通増減量を六つの数値属性へ加える
+        numeric_paths = (
+            "translate.translateX",
+            "translate.translateY",
+            "translate.translateZ",
+            "rotate.rotateX",
+            "rotate.rotateY",
+            "rotate.rotateZ",
+        )
+        numeric_keys = tuple(
+            (
+                self._row(path).row.attribute.path,
+                self._row(path).row.attribute.kind,
+            )
+            for path in numeric_paths
+        )
+        numeric_before = {
+            path: tuple(
+                cmds.getAttr(f"{node}.{path.rsplit('.', 1)[-1]}")
+                for node in self.nodes
+            )
+            for path in numeric_paths
+        }
+        widget.table_view.select_keys(numeric_keys)
+        step_editor = self._row("translate.translateX").editor
+        if not isinstance(step_editor, FloatValueStepSpinBox):
+            raise AssertionError("translateXに値とStepのViewがありません")
+        step_editor.setSingleStep(0.5)
+        cmds.flushUndo()
+        step_editor.spin_box.stepUp()
+        self._flush_gui()
+        for path in numeric_paths:
+            name = path.rsplit(".", 1)[-1]
+            expected = tuple(value + 0.5 for value in numeric_before[path])
+            self._assert_values(name, expected)
+        cmds.undo()
+        self._flush_gui()
+        for path in numeric_paths:
+            self._assert_values(path.rsplit(".", 1)[-1], numeric_before[path])
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("複数属性の上下操作が一Undoになっていません")
+
+        # Sliderの連続入力で、選択数値を同じ表示値へ揃える
+        slider_row = self._row("weight")
+        slider_editor = slider_row.editor
+        if not isinstance(slider_editor, FloatSliderSpinBox):
+            raise AssertionError("weight行にSlider付きViewがありません")
+        slider_keys = tuple(
+            (row.row.attribute.path, row.row.attribute.kind)
+            for row in (slider_row, self._row("translate.translateX"))
+        )
+        widget.table_view.select_keys(slider_keys)
+        cmds.flushUndo()
+        slider_editor.slider.setSliderDown(True)
+        slider_editor.slider.setValue(600)
+        slider_editor.slider.setValue(700)
+        slider_editor.slider.setSliderDown(False)
+        self._flush_gui()
+        self._assert_values("weight", (0.7, 0.7))
+        self._assert_values("translateX", (0.7, 0.7))
+        cmds.undo()
+        self._flush_gui()
+        self._assert_values("weight", (0.25, 0.75))
+        self._assert_values(
+            "translateX", numeric_before["translate.translateX"]
+        )
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError(
+                "複数属性のSlider操作が一Undoになっていません"
+            )
+
+        # boolと互換enumも、それぞれ操作した状態・項目へ揃える
+        enabled_row = self._row("enabled")
+        visibility_row = self._row("visibility")
+        if not isinstance(enabled_row.editor, BoolCheckBox):
+            raise AssertionError("enabled行にCheckBoxがありません")
+        widget.table_view.select_keys(
+            tuple(
+                (row.row.attribute.path, row.row.attribute.kind)
+                for row in (enabled_row, visibility_row)
+            )
+        )
+        cmds.flushUndo()
+        enabled_row.editor.click()
+        self._flush_gui()
+        self._assert_values("enabled", (True, True))
+        self._assert_values("visibility", (True, True))
+        cmds.undo()
+        self._flush_gui()
+        self._assert_values("enabled", (False, True))
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("複数bool属性の入力が一Undoになっていません")
+
+        mode_row = self._row("mode")
+        copy_row = self._row("modeCopy")
+        if not isinstance(mode_row.editor, EnumComboBox):
+            raise AssertionError("mode行にComboBoxがありません")
+        widget.table_view.select_keys(
+            tuple(
+                (row.row.attribute.path, row.row.attribute.kind)
+                for row in (mode_row, copy_row)
+            )
+        )
+        cmds.flushUndo()
+        self._select_combo_item(mode_row.editor, 3)
+        self._assert_values("mode", (10, 10))
+        self._assert_values("modeCopy", (10, 10))
+        cmds.undo()
+        self._flush_gui()
+        self._assert_values("mode", (5, -2))
+        self._assert_values("modeCopy", (0, 10))
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("複数enum属性の入力が一Undoになっていません")
+        self._capture("29-multi-attribute-value-controls.png")
+        self.steps.append("multi_attribute_value_controls_and_undo")
 
     def _inspect_state_sweep(self) -> None:
         """実画面で三行をなぞり、即時反映、絞り込み保留と一回Undoを確認する。"""

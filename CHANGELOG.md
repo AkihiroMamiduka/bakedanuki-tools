@@ -9,6 +9,12 @@
 
 ### Changed
 
+- bdChannelBoxで選択中の複数属性へ、既存の値欄の上下操作、Slider、bool、enum入力を一括適用する。
+  上下操作は操作元のStepから求めた同じ表示増減量を各数値の現在値へ加え、値の差を維持する。
+  Sliderは選択数値を同じ表示値へ揃え、1ドラッグを1回のUndoへまとめる。
+  boolは同じ状態へ揃え、enumは操作元と項目定義が一致する選択属性だけへ適用する。
+  異なる型や互換性のない行は対象外として理由を表示する。Step欄の設定は引き続き行ごとに保持する。
+  対応する`bakedanuki-util`への更新が必要。既存scene・保存設定の移行は不要。
 - bdChannelBoxの一覧・属性名・入力部品の周囲をMaya UIの通常背景色へ変更。
   数値・Stepなどの入力欄の暗い背景と、選択中の青い強調表示は維持し、
   入力箇所とOFFのboolチェックボックスを見分けやすくした。
@@ -20,7 +26,7 @@
   成功時は全属性・全ノードを1回のUndoへまとめる。属性選択だけでは書き込まない。
   「この値に揃える」を選択した各属性の基準ノード値への一括操作へ拡張し、
   両モードへロック／解除・Keyable／ChannelBox／Hideの選択メニューを追加する。
-  上下・Step・Slider・bool・enumの通常操作は、従来どおり操作した1行の対応ノードだけへ適用する。
+  この初回変更時点では上下・Step・Slider・bool・enumの通常操作を1行へ適用した。
   対象ノードの変更で属性選択を解除し、同じノードの表示更新・Undoでは残存する属性の選択を維持する。
   `widget.scroll_area`の型は`QScrollArea`から`ChannelTableView`へ変更。
   内容の取得は`widget.scroll_area.widget()`から`widget.table_view.viewport()`へ移行する。

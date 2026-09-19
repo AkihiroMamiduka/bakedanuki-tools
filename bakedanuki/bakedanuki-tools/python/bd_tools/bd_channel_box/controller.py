@@ -26,6 +26,7 @@ from bd_util.maya.ui import (
     MayaEnumValueEdit,
     MayaEditSession,
     MayaFloatPlugsBinding,
+    MayaFloatOffsetEdit,
     MayaFloatValueEdit,
     MayaPlugsValueEdit,
     apply_plugs_values,
@@ -114,6 +115,9 @@ class ChannelBoxController(qt.QObject):
         self.state_edit_session = MayaEditSession(
             self, chunk_name="SweepChannelStates"
         )
+        self.value_edit_session = MayaEditSession(
+            self, chunk_name="EditSelectedAttributes"
+        )
         self.state_edit_session.finished.connect(self._finish_state_edit)
         self._filter_refresh_pending = False
         self._events = MayaCallbackRegistry(self)
@@ -191,6 +195,7 @@ class ChannelBoxController(qt.QObject):
 
     def _finish_value_edit(self) -> None:
         """行を切り替える前に、値の連続編集とUndoのまとまりを閉じる。"""
+        self.value_edit_session.finish()
         for row in self.rows:
             if isinstance(row, ChannelRow) and isinstance(
                 row.binding, MayaFloatPlugsBinding
@@ -203,6 +208,17 @@ class ChannelBoxController(qt.QObject):
             return
         self._finish_value_edit()
         self.state_edit_session.begin()
+
+    def begin_value_edit(self) -> None:
+        """Sliderによる複数属性の連続入力を一つのUndoとして開始する。"""
+        if self._disposed or self._mode != "values":
+            return
+        self.state_edit_session.finish()
+        self.value_edit_session.begin()
+
+    def finish_value_edit(self) -> None:
+        """複数属性の連続入力を確定してUndoのまとまりを閉じる。"""
+        self.value_edit_session.finish()
 
     def _finish_state_edit(self) -> None:
         """なぞり操作で保留したフィルターを、操作終了後にまとめて反映する。"""
@@ -436,6 +452,7 @@ class ChannelBoxController(qt.QObject):
         if self._active_state_binding is not None:
             self._active_state_binding.dispose()
         self.state_edit_session.finish()
+        self.value_edit_session.finish()
         rows, self.rows = self.rows, ()
         for row in rows:
             self._dispose_row(row)
@@ -493,6 +510,113 @@ class ChannelBoxController(qt.QObject):
                     ),
                 )
             )
+        changed = apply_plugs_values(
+            edits,
+            edit_session=(
+                self.value_edit_session
+                if self.value_edit_session.is_editing
+                else None
+            ),
+        )
+        self._report_excluded(excluded)
+        return changed
+
+    def offset_numeric_values(
+        self, keys: Sequence[tuple[str, str]], display_offset: float
+    ) -> bool:
+        """各数値の現在値へ、表示単位で同じ増減量を一括適用する。"""
+        edits: list[MayaPlugsValueEdit] = []
+        excluded: list[str] = []
+        for row in self._selected_rows(keys):
+            if not isinstance(row, ChannelRow) or not isinstance(
+                row.binding, MayaFloatPlugsBinding
+            ):
+                excluded.append(f"{row.attribute.nice_name}: 数値操作の対象外")
+                continue
+            row.binding.refresh()
+            if not row.binding.view_model.set_value_command.can_execute:
+                excluded.append(
+                    f"{row.attribute.nice_name}: 値を編集できません"
+                )
+                continue
+            edits.append(
+                MayaFloatOffsetEdit(
+                    row.binding,
+                    row.binding.view_model.presentation.from_display(
+                        display_offset
+                    ),
+                )
+            )
+        changed = apply_plugs_values(edits)
+        self._report_excluded(excluded)
+        return changed
+
+    def apply_bool_values(
+        self, keys: Sequence[tuple[str, str]], value: bool
+    ) -> bool:
+        """選択中のbool属性だけを同じONまたはOFFへ一括適用する。"""
+        edits: list[MayaPlugsValueEdit] = []
+        excluded: list[str] = []
+        for row in self._selected_rows(keys):
+            if not isinstance(row, ChannelRow) or not isinstance(
+                row.binding, MayaBoolPlugsBinding
+            ):
+                excluded.append(f"{row.attribute.nice_name}: bool操作の対象外")
+                continue
+            row.binding.refresh()
+            if not row.binding.view_model.set_value_command.can_execute:
+                excluded.append(
+                    f"{row.attribute.nice_name}: 値を編集できません"
+                )
+                continue
+            edits.append(MayaBoolValueEdit(row.binding, value))
+        changed = apply_plugs_values(edits)
+        self._report_excluded(excluded)
+        return changed
+
+    def apply_enum_values(
+        self,
+        keys: Sequence[tuple[str, str]],
+        source_key: tuple[str, str],
+        value: int,
+    ) -> bool:
+        """操作元と定義が一致する選択enum属性へ同じ項目を一括適用する。"""
+        rows = self._selected_rows(keys)
+        source = next(
+            (
+                row
+                for row in rows
+                if (row.attribute.path, row.attribute.kind) == source_key
+            ),
+            None,
+        )
+        if not isinstance(source, ChannelRow) or not isinstance(
+            source.binding, MayaEnumPlugsBinding
+        ):
+            raise ValueError("操作元のenum属性が選択対象にありません")
+        source.binding.refresh()
+        definition = source.binding.view_model.definition
+        definition.require_value(value)
+        edits: list[MayaPlugsValueEdit] = []
+        excluded: list[str] = []
+        for row in rows:
+            if not isinstance(row, ChannelRow) or not isinstance(
+                row.binding, MayaEnumPlugsBinding
+            ):
+                excluded.append(f"{row.attribute.nice_name}: enum操作の対象外")
+                continue
+            row.binding.refresh()
+            if not definition.matches(row.binding.view_model.definition):
+                excluded.append(
+                    f"{row.attribute.nice_name}: enum定義が操作元と異なる"
+                )
+                continue
+            if not row.binding.view_model.set_value_command.can_execute:
+                excluded.append(
+                    f"{row.attribute.nice_name}: 値を編集できません"
+                )
+                continue
+            edits.append(MayaEnumValueEdit(row.binding, value))
         changed = apply_plugs_values(edits)
         self._report_excluded(excluded)
         return changed
@@ -629,3 +753,4 @@ class ChannelBoxController(qt.QObject):
         self._nodes.dispose()
         self._events.dispose()
         self.state_edit_session.dispose()
+        self.value_edit_session.dispose()

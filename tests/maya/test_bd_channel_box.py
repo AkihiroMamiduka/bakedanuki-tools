@@ -599,7 +599,7 @@ def test_radius_override_respects_slider_priority(
 def test_step_survives_value_undo_refresh_and_selection(
     editor: ChannelBoxWidget,
 ) -> None:
-    """混在した値だけをUndoし、同属性のstepは再構築を越えて保持する。"""
+    """混在値へ同じ増減量を加えてUndoし、stepは再構築を越えて保持する。"""
     _set_value("channelB.scaleX", 2)
     _events()
     cmds.flushUndo()
@@ -610,7 +610,7 @@ def test_step_survives_value_undo_refresh_and_selection(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
     view.spin_box.stepUp()
     assert isclose(float(cmds.getAttr("channelA.scaleX")), 1.1)
-    assert isclose(float(cmds.getAttr("channelB.scaleX")), 1.1)
+    assert isclose(float(cmds.getAttr("channelB.scaleX")), 2.1)
     cmds.undo()
     _events()
     assert cmds.getAttr("channelA.scaleX") == 1
