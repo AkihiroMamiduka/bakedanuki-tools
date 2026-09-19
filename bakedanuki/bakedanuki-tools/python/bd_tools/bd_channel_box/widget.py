@@ -199,6 +199,7 @@ class AttributeRowWidget(qt.QWidget):
             step_mode=mode,
             step_increment=increment,
             step_show_unit=False,
+            step_wheel_requires_focus=False,
             value_width=_VALUE_FIELD_WIDTH,
             step_width=_AUXILIARY_FIELD_WIDTH,
         )

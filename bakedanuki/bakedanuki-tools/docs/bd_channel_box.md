@@ -256,6 +256,8 @@ Step欄の直接入力と上下操作では、選択中でStep欄を持つ属性
 距離・角度・通常数値が混在していても、各行の現在の表示単位で同じ数値を使用します。
 各行のmultiplicative／additive方式は変更しません。Slider・bool・enumなどStep欄のない行は
 対象外として理由を表示し、未選択行のStep欄を操作した場合はその行だけを変更します。
+Step欄はフォーカスがなくても、マウスオーバー中のホイールを受け付けます。
+この位置では一覧をスクロールせず、Stepを変更します。値欄も従来どおり同じ操作が可能です。
 
 Sliderは選択した数値属性を操作位置と同じ表示値へ揃え、1回のドラッグを1回のUndoへまとめます。
 boolは選択したbool属性を操作後のON／OFFへ揃えます。enumは操作元と整数値・項目名の定義が
@@ -895,12 +897,17 @@ Step欄の直接入力と上下操作を、選択中で同欄を持つ属性へ�
 各行の表示単位で同じ数値を設定し、multiplicative／additive方式を維持します。
 Step欄のない行は対象外として通知し、属性値とMaya Undo履歴は変更しません。
 対象となった属性ごとのWindow内キャッシュを更新し、再構築後も設定を復元します。
+Step欄のマウスオーバー中は、クリック前でもホイールにより同じ経路で変更します。
 
 | 確認対象 | 結果 |
 | --- | --- |
 | toolsのBlack・Pyright・unit test | 成功。unit 8件、Pyrightのerrorは0件 |
-| Maya 2025 / 2026 / 2027のtools runtime test | 各151件成功 |
-| 選択操作のtarget test | 各versionで30件成功。Step一括設定、対象外通知、増減方式、キャッシュ、単独変更を含む |
+| Maya 2025 / 2026 / 2027のtools runtime test | 各152件成功 |
+| 選択操作のtarget test | Maya 2025で31件成功。Step一括設定、対象外通知、増減方式、キャッシュ、単独変更、未focus時のホイール操作を含む |
+| utilのBlack・Pyright・Maya 2025 runtime test | 成功。runtime 4,246件成功、730件skip、各versionのPyright errorは0件 |
+| utilの関連Qt test | Maya 2025 / 2026 / 2027で各2件成功。既定値と上書き後のホイール動作を含む |
+| utilのUI compatibility test | 既知のclipboard test 1件を除外し、各versionでQt/UI 829件・Maya UI 366件成功 |
 
 既存行Viewと配置寸法は変更していません。Maya本体の画面操作による確認は利用者確認前の段階では
-実施していません。toolsだけの変更で、`bd_tools.reload_package()`により再読み込みできます。
+実施していません。toolsとutilの変更で、`bd_tools.reload_package(reload_util=True)`により
+再読み込みできます。

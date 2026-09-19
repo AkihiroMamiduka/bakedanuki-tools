@@ -144,6 +144,21 @@ def _key(
         )
 
 
+def _wheel(widget: qt.QWidget) -> None:
+    """マウスオーバー相当の1ノッチを、フォーカスを移さず送る。"""
+    event = qt.QtGui.QWheelEvent(
+        qt.QPointF(5, 5),
+        qt.QPointF(5, 5),
+        qt.QPoint(),
+        qt.QPoint(0, 120),
+        qt.Qt.MouseButton.NoButton,
+        qt.Qt.KeyboardModifier.NoModifier,
+        qt.Qt.ScrollPhase.NoScrollPhase,
+        False,
+    )
+    qt.QApplication.sendEvent(widget, event)
+
+
 def _begin_input(
     editor: ChannelBoxWidget, text: str = "5", name: str = "translateX"
 ) -> qt.QLineEdit:
@@ -446,6 +461,25 @@ def test_step_setting_on_unselected_row_stays_local(
     assert translate_x.singleStep() == 1.0
     assert translate_y.singleStep() == 1.0
     assert not editor.message_label.isVisible()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_step_wheel_without_focus_aligns_selected_rows(
+    editor: ChannelBoxWidget,
+) -> None:
+    """Step欄のマウスオーバー中は、クリックせず選択行のStepを変更する。"""
+    editor.table_view.select_keys(_keys(editor, "translateX", "translateY"))
+    translate_x = _row(editor, "translateX").editor
+    translate_y = _row(editor, "translateY").editor
+    assert isinstance(translate_x, FloatValueStepSpinBox)
+    assert isinstance(translate_y, FloatValueStepSpinBox)
+    editor.filter_combo.setFocus()
+    _events()
+    assert not translate_x.step_spin_box.hasFocus()
+
+    _wheel(translate_x.step_spin_box)
+    assert translate_x.singleStep() == 10.0
+    assert translate_y.singleStep() == 10.0
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
