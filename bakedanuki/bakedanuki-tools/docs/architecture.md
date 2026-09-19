@@ -129,7 +129,9 @@ utilを直接利用します。画面寸法の定数はtools内部の調整箇�
 数値直接入力は各行の表示単位で換算し、「この値に揃える」は各行自身の基準ノード値を使います。
 上下操作は操作元Stepによる表示増減量を各数値の現在値へ加え、Slider・bool・enumは互換属性を
 操作後の値へ揃えます。Sliderの連続入力は`MayaEditSession`で1回のUndoへまとめます。
-Step欄の設定はViewごとの操作設定として保持し、一括変更はtoolsの将来候補です。
+Step欄の入力はtoolsが選択を解釈し、同欄を持つ各Viewへ同じ表示stepを設定します。
+各Viewの増減方式は維持し、属性path・型ごとのWindow内キャッシュも対象ごとに更新します。
+Step欄のない選択行は除外し、sceneとMaya Undo履歴は変更しません。
 
 一覧を参照するコードは`widget.table_view`を使います。`scroll_area`は同じ
 `ChannelTableView`への参照として残しますが、`QScrollArea.widget()`の代わりに`viewport()`を使います。

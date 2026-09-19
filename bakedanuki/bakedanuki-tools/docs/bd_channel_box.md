@@ -250,7 +250,12 @@ Enter・フォーカス移動・一覧のスクロールで確定し、Escapeで
 
 値欄の上下操作では、操作した行のStepから表示単位の増減量を求め、選択した各数値属性の
 現在値へ同じ増減量を加えます。各行・各ノードの値の差は維持します。どれかがhard limitを
-超える場合は全体を変更しません。Step欄の設定そのものは操作した行だけに保存します。
+超える場合は全体を変更しません。
+
+Step欄の直接入力と上下操作では、選択中でStep欄を持つ属性へ同じ表示stepを反映します。
+距離・角度・通常数値が混在していても、各行の現在の表示単位で同じ数値を使用します。
+各行のmultiplicative／additive方式は変更しません。Slider・bool・enumなどStep欄のない行は
+対象外として理由を表示し、未選択行のStep欄を操作した場合はその行だけを変更します。
 
 Sliderは選択した数値属性を操作位置と同じ表示値へ揃え、1回のドラッグを1回のUndoへまとめます。
 boolは選択したbool属性を操作後のON／OFFへ揃えます。enumは操作元と整数値・項目名の定義が
@@ -308,8 +313,9 @@ step欄への直接入力も可能です。ロック等で値が編集不可で�
 
 変更したstepはWindowが開いている間、正式属性pathと型区分（数値／距離／角度）ごとに
 保持します。別ノードの同属性、選択解除・再選択、更新、Undo / Redo、scene切替でも維持し、
-X/Y/Zは独立して扱います。Windowの終了・reload後は既定値から開始し、設定ファイルや
-sceneへstepを保存しません。
+複数選択への入力時は対象となった各属性のキャッシュを同時に更新します。その後は各行を
+個別に変更できます。Windowの終了・reload後は既定値から開始し、設定ファイルやsceneへ
+stepを保存しません。
 モードやフィルターの切替でもstep設定を維持します。
 
 表示範囲は基準属性を使い、他対象の制限は書込み前に検証します。
@@ -421,6 +427,7 @@ bd_tools.reload_package(reload_util=True) # utilも変更した場合
 常時表示します。既存の数値・Step・Slider・bool・enum・状態ViewとBindingを維持し、
 値をtable modelへ二重に保存しません。選択中の複数属性への文字入力だけ一時的な文字欄で受け付け、
 既存Viewからの上下・Slider・bool・enum入力はutilの任意入力handlerを通してcontrollerへ渡します。
+Step入力はWindow内で選択を解釈し、各行の既存Viewとキャッシュへ反映します。
 Windowはutilの `MayaDockableWindow` を継承し、`dock_closed` と
 `dock_about_to_dispose` で入力controllerを終了します。workspaceControl作成・削除・
 Maya再起動時の接続・画面外補正・配置resetはutilへ委譲します。
@@ -520,7 +527,8 @@ View選択、混在編集、除外対象、範囲違い、Undo、構成変更を
 行の除去の保留、操作中断・失敗時の終了と編集不可行の扱いを検証します。
 `tests/maya/test_bd_channel_box_selection.py`は、複数属性選択、数値直接入力、選択維持・解除、
 未編集時の無書込み、入力中断、単位変換、全件の範囲検証、1回Undo、対象外属性の通知、
-選択属性のメニュー、共通増減量、Slider・bool・enumの互換属性への一括入力を検証する入口です。
+選択属性のメニュー、共通増減量、Slider・bool・enumの互換属性への一括入力、
+同じ表示Stepの一括設定と属性ごとのキャッシュを検証する入口です。
 モード切替時に先行するフォーカス移動の有無によらず拒否理由を維持することと、
 Maya側がviewportを交換した後に古い親を参照しないことも検証します。
 複数行の事前検証・書込み失敗時の復旧はutilの`tests/maya/ui/test_plugs_value_edits.py`でも検証します。
@@ -865,7 +873,6 @@ toolsだけの変更です。反映には`bd_tools.reload_package()`で再読み
 
 値欄の上下操作、Slider、bool、enumの通常入力を、選択中の互換属性へ適用するよう拡張しました。
 上下操作は操作元Stepによる同じ表示増減量を加え、Slider・bool・enumは操作後の値へ揃えます。
-Step欄の設定は行ごとに維持し、複数行のStep設定は今後の候補として残しています。
 
 | 確認対象 | 結果 |
 | --- | --- |
@@ -881,3 +888,19 @@ Step欄の設定は行ごとに維持し、複数行のStep設定は今後の候
 Maya 2026 / 2027はruntime testによる確認で、本体の画面操作は実施していません。
 
 toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=True)`で再読み込みします。
+
+### Step設定の複数属性入力（2026-09-20）
+
+Step欄の直接入力と上下操作を、選択中で同欄を持つ属性へ適用するよう拡張しました。
+各行の表示単位で同じ数値を設定し、multiplicative／additive方式を維持します。
+Step欄のない行は対象外として通知し、属性値とMaya Undo履歴は変更しません。
+対象となった属性ごとのWindow内キャッシュを更新し、再構築後も設定を復元します。
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsのBlack・Pyright・unit test | 成功。unit 8件、Pyrightのerrorは0件 |
+| Maya 2025 / 2026 / 2027のtools runtime test | 各151件成功 |
+| 選択操作のtarget test | 各versionで30件成功。Step一括設定、対象外通知、増減方式、キャッシュ、単独変更を含む |
+
+既存行Viewと配置寸法は変更していません。Maya本体の画面操作による確認は利用者確認前の段階では
+実施していません。toolsだけの変更で、`bd_tools.reload_package()`により再読み込みできます。

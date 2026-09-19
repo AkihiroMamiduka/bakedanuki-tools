@@ -456,6 +456,7 @@ class ChannelBoxWidget(qt.QWidget):
         """画面を作成してから選択監視を開始する。"""
         super().__init__(parent)
         self._steps: dict[tuple[str, str], float] = {}
+        self._changing_steps = False
         self.row_widgets: tuple[
             AttributeRowWidget | AttributeStateRowWidget, ...
         ] = ()
@@ -885,7 +886,7 @@ class ChannelBoxWidget(qt.QWidget):
                         ),
                     )
                     widget.step_changed.connect(
-                        partial(self._remember_step, key)
+                        partial(self._apply_step_value, key)
                     )
                     self._configure_value_input(widget, key)
                 widget.refresh_requested.connect(self.refresh)
@@ -925,9 +926,38 @@ class ChannelBoxWidget(qt.QWidget):
             else "Maya ノードを選択すると、入力可能な種類の属性を表示します。"
         )
 
-    def _remember_step(self, key: tuple[str, str], value: float) -> None:
-        """ノードに依存しない属性path・型ごとのstepをWindow内に保持する。"""
-        self._steps[key] = value
+    def _apply_step_value(
+        self, source_key: tuple[str, str], value: float
+    ) -> None:
+        """同じ表示stepを、選択中でStep欄を持つ属性へ反映して保持する。"""
+        if self._changing_steps:
+            self._steps[source_key] = value
+            return
+
+        target_keys = set(self._action_keys(source_key))
+        excluded: list[str] = []
+        self._changing_steps = True
+        try:
+            # 各行固有の増減方式は維持し、表示stepの数値だけを同期する
+            for widget in self.row_widgets:
+                key = (widget.row.attribute.path, widget.row.attribute.kind)
+                if key not in target_keys:
+                    continue
+                if not isinstance(
+                    widget, AttributeRowWidget
+                ) or not isinstance(widget.editor, FloatValueStepSpinBox):
+                    excluded.append(
+                        f"{widget.row.attribute.nice_name}: Step欄なし"
+                    )
+                    continue
+                widget.editor.setSingleStep(value)
+                self._steps[key] = value
+        finally:
+            self._changing_steps = False
+
+        self._show_operation_report(
+            "対象外: " + " / ".join(excluded) if excluded else ""
+        )
 
     def dispose(self) -> None:
         """画面の入力と監視を即時に終了する。"""

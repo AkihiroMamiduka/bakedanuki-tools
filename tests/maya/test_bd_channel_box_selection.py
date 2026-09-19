@@ -374,21 +374,79 @@ def test_readonly_and_nonnumeric_rows_are_reported_and_skipped(
     assert "対象外" in editor.message_label.text()
 
 
-def test_step_setting_stays_in_row_and_value_arrow_uses_source_step(
+def test_step_setting_aligns_selected_rows_and_value_arrow_uses_common_step(
     editor: ChannelBoxWidget,
 ) -> None:
-    """Step設定は一行に保ち、その値欄の上下操作を全選択数値へ適用する。"""
-    editor.table_view.select_keys(_keys(editor, "translateX", "translateY"))
-    view = _row(editor, "translateX").editor
-    assert isinstance(view, FloatValueStepSpinBox)
-    view.step_spin_box.setValue(2.0)
+    """同じ表示Stepを対応行へ反映し、その刻みで選択数値を増減する。"""
+    editor.table_view.select_keys(
+        _keys(
+            editor,
+            "translateX",
+            "translateY",
+            "rotateY",
+            "gain",
+            "visibility",
+        )
+    )
+    translate_x = _row(editor, "translateX").editor
+    translate_y = _row(editor, "translateY").editor
+    rotate_y = _row(editor, "rotateY").editor
+    assert isinstance(translate_x, FloatValueStepSpinBox)
+    assert isinstance(translate_y, FloatValueStepSpinBox)
+    assert isinstance(rotate_y, FloatValueStepSpinBox)
+    assert translate_x.step_spin_box.stepMode() == "multiplicative"
+    assert rotate_y.step_spin_box.stepMode() == "additive"
+
+    translate_x.step_spin_box.setValue(2.0)
+    assert translate_x.singleStep() == 2.0
+    assert translate_y.singleStep() == 2.0
+    assert rotate_y.singleStep() == 2.0
+    assert translate_x.step_spin_box.stepMode() == "multiplicative"
+    assert rotate_y.step_spin_box.stepMode() == "additive"
+    assert editor.message_label.isVisible()
+    assert "Step欄なし" in editor.message_label.text()
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
-    view.spin_box.stepUp()
+
+    # 再構築後も、同期した各属性のWindow内キャッシュを復元する
+    editor.refresh()
+    _events()
+    translate_x = _row(editor, "translateX").editor
+    translate_y = _row(editor, "translateY").editor
+    rotate_y = _row(editor, "rotateY").editor
+    assert isinstance(translate_x, FloatValueStepSpinBox)
+    assert isinstance(translate_y, FloatValueStepSpinBox)
+    assert isinstance(rotate_y, FloatValueStepSpinBox)
+    assert translate_x.singleStep() == 2.0
+    assert translate_y.singleStep() == 2.0
+    assert rotate_y.singleStep() == 2.0
+
+    editor.table_view.select_keys(_keys(editor, "translateX", "translateY"))
+    translate_x.spin_box.stepUp()
     _events()
     assert cmds.getAttr("multiA.translateX") == 7.0
     assert cmds.getAttr("multiB.translateX") == 11.0
     assert cmds.getAttr("multiA.translateY") == 3.0
     assert cmds.getAttr("multiB.translateY") == 5.0
+
+
+def test_step_setting_on_unselected_row_stays_local(
+    editor: ChannelBoxWidget,
+) -> None:
+    """選択外のStep欄は、その属性だけの設定として変更する。"""
+    editor.table_view.select_keys(_keys(editor, "translateX", "translateY"))
+    rotate_z = _row(editor, "rotateZ").editor
+    translate_x = _row(editor, "translateX").editor
+    translate_y = _row(editor, "translateY").editor
+    assert isinstance(rotate_z, FloatValueStepSpinBox)
+    assert isinstance(translate_x, FloatValueStepSpinBox)
+    assert isinstance(translate_y, FloatValueStepSpinBox)
+
+    rotate_z.step_spin_box.setValue(3.0)
+    assert rotate_z.singleStep() == 3.0
+    assert translate_x.singleStep() == 1.0
+    assert translate_y.singleStep() == 1.0
+    assert not editor.message_label.isVisible()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_value_arrows_add_source_step_to_each_selected_value(
