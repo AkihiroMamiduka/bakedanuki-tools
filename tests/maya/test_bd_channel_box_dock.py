@@ -144,6 +144,8 @@ def test_ui_script_restore_and_layout_reset(dock_host: _WorkspaceHost) -> None:
     from bd_tools import bd_channel_box
     from bd_util.maya.ui import restore_dockable
 
+    node = cmds.createNode("transform", name="channelBoxResetTarget")
+    cmds.select(node, replace=True)
     window = restore_dockable("bd_tools.bd_channel_box.ui", "restore")
     assert isinstance(window, bd_channel_box.ChannelBoxWindow)
     assert window is dock_host.window
@@ -157,3 +159,9 @@ def test_ui_script_restore_and_layout_reset(dock_host: _WorkspaceHost) -> None:
     assert window.widget.controller.is_disposed
     assert new_window is not window
     assert new_window is dock_host.window
+    _events()
+    assert new_window.widget.row_widgets
+    assert qt.isValid(new_window.widget.table_view.viewport())
+    new_window.widget.refresh()
+    _events()
+    assert new_window.widget.row_widgets

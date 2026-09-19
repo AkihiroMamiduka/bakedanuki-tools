@@ -37,6 +37,15 @@ drawOverride内ではoverrideEnabledが先頭になることも確認します�
 表示切替でsceneの属性順・値・フラグ・Undoを変更しないことと、別compound内の同名属性や
 類似した名前を誤って優先しないことも確認します。
 
+`test_bd_channel_box_selection.py`は複数属性選択と一括入力の入口です。
+Ctrl／Shift、選択後の未編集Enter・フォーカス移動での無書込み、同値の明示入力、
+複数行・複数ノードの1回Undo、各行の単位変換、全件の範囲検証、編集不可・非数値行の除外、
+選択の保持・解除、入力中断、モード変更時の確定、選択属性メニューを検証します。
+モード変更時の入力拒否理由の維持と、Maya側のviewport交換後の行構築も回帰対象です。
+既存の上下・Step・Slider・bool・enum操作が1行の対応ノードだけへ適用されることも確認します。
+util側の`tests/maya/ui/test_plugs_value_edits.py`で、複数Bindingをまとめた事前検証と
+書込み失敗時の復旧を確認します。toolsとutilの両方を更新し、同じ組合せで検証してください。
+
 ## bdChannelBoxのMaya本体検証
 
 リポジトリ直下から専用runnerを実行します。`--maya-version` は2025 / 2026 / 2027を
@@ -69,6 +78,9 @@ Window幅が変わらず、値編集156 px・設定200 pxの操作欄が収ま�
 絞り込み中の状態変更による行の除去・Undo／Redoでの再評価を確認します。
 jointを選択して両モードの指定32属性とdrawOverrideの配置を確認します。
 drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです。
+属性名のドラッグでTranslate・Rotateの六属性を選び、数値を直接入力し、
+両ノードの全対象へ適用されることと1回Undoを確認します。選択属性メニューでのロックとUndo、
+選択維持、入力前・入力中・適用後とメニューの表示も確認します。
 さらに10ノード・各30個の追加float属性を用いて、Window生成、一括入力、選択切替を
 1回ずつ計測します。「keyable」「全て」では同じ属性を2回warm-up後に9回入力し、
 遅延同期・描画を含む時間の中央値を`edit_keyable_median_ms`／`edit_all_median_ms`へ保存します。
@@ -97,6 +109,9 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 - `17-attribute-order-mode-0.png`、`17-attribute-order-mode-1.png`、
   `18-draw-override-mode-0.png`、`18-draw-override-mode-1.png`:
   jointの値編集／表示・ロックでの優先属性とdrawOverrideの配置。
+- `25-multi-attribute-selection.png`、`26-multi-attribute-typing.png`、
+  `27-multi-attribute-applied.png`: 六属性の選択、一括数値入力中、適用後の表示。
+- `28-multi-attribute-menu.png`: 選択属性の操作メニュー。独立したpopupのためメニュー自身を描画して保存する。
 - `progress.json`: 実行中の段階と完了済みの操作。
 - `maya-initial.log`、`process-initial.log`、`python-stacks-initial.log`: Mayaの出力と、長時間停止した場合の
   Python stack。
@@ -110,11 +125,27 @@ deferred quitでも発生しており、終了待ちの原因は未特定です�
 成功扱いにせず、結果を表示して専用processだけを停止し、終了code 1を返します。
 操作の検証結果とMayaアプリケーションの正常終了は区別して確認してください。
 
+複数属性拡張の最終検証（2026-09-19）では、Maya 2025本体の40工程が2回連続で成功し、
+いずれもrunnerの終了code 0で正常終了しました。過去の終了待ちタイムアウトの原因が
+解決したとは断定せず、再発時も操作結果と終了結果を分けます。
+最終資料は`%TEMP%/bd-channel-box-maya2025-q6i850he`です。
+toolsはBlack・Pyright・unit 8件、Maya 2025 / 2026 / 2027のruntime各144件が成功し、
+utilの`verify.cmd`も対応3 versionを含めて成功しました。
+詳細は[bdChannelBoxの検証記録](bd_channel_box.md#検証)を参照してください。利用者による確認は未実施です。
+
 ### 次回変更時の回帰確認
 
 変更ごとの件数と確認範囲は[bdChannelBoxの検証記録](bd_channel_box.md#検証)を参照します。
 変更した仕様に応じて既存testと本体runnerを更新し、次を確認します。
 
+- 属性の複数選択: Ctrl／Shift・属性名ドラッグ・数値欄の縦ドラッグ、選択の強調表示、
+  右クリック時の選択維持／切替、更新・Undo後の残存選択、対象ノード変更時の選択解除。
+- 複数属性入力: 数値直接入力と貼付け、Enter／フォーカス移動での確定、Escapeでの取消、
+  単位が異なる行への入力、範囲外の全体拒否、全属性・全ノードを含む1回Undo、
+  属性・scene・選択構成が変わった後の古い対象への無書込み。
+  上下・Step・Slider・bool・enumの通常操作が、操作した1行だけを対象にすること。
+- 選択メニュー: 各属性をそれぞれの基準値へ揃えること、ロック／解除と3種類の表示状態、
+  状態操作ではenum定義の不一致を理由にノードを除外しないこと、親ロックを自動解除しないこと。
 - 入力・対応型: 選択／更新で無書込み、外部変更の非伝播、混在値への一括入力、1回Undo、編集不可対象の扱い。
 - 値同期の負荷: 表示フィルターや入力経路に関わらず、無関係な行の再読取りを発生させない。
   接続・親属性・アニメーションによるdirtyの同期はutilの通知回帰testでも検証する。
@@ -133,11 +164,13 @@ deferred quitでも発生しており、終了待ちの原因は未特定です�
   状態変更完了後と外部変更・Undo／Redoでの再評価、Hide属性の値編集と従来の操作制限。
   入力途中の数値確定、連続編集のUndo終了、step保持、キーボードでの往復も検証する。
 - 幅・配置: Sliderあり／なし、最小幅／拡大時、長い属性名、縦スクロール時、ドック／floating。
+  QTableView内の既存行Viewが常時表示され、選択の配色と一括入力欄で文字切れ・重なりがないこと。
   上部のMode／Attribute Filterラベルと選択欄が最小幅280 pxにも収まり、2行の選択欄が揃うこと。
   StepとSliderの幅・開始位置、値欄の文字切れ、不要な右余白を保存画像でも確認する。
   行数と長い属性名が増えてもWindow幅を保ち、各モードの操作幅で文字切れ・重なりがないことを確認する。
   縦スクロールバーは必要時だけ表示する。
 - lifecycle: 選択切替・close・reloadで古い入力とcallbackを終了し、再表示で重複させない。
+  Maya側がviewportを交換した後も現在の親へ行を生成できることを確認する。
 
 対応version、配布構成、Qt / Maya API互換性の変更では3 versionのruntime testを実行します。
 workspaceControl、再起動復元、実画面配置の変更では対象Maya本体で確認し、

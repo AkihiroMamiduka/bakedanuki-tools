@@ -9,6 +9,21 @@
 
 ### Changed
 
+- bdChannelBoxの属性一覧を`QTableView`とdelegateへ移行し、既存の行Viewを常時表示する。
+  Ctrl／Shift・属性名ドラッグ・値欄の縦ドラッグによる複数属性選択を追加。
+  選択属性への数値文字入力・貼付けを、各行の表示単位で換算して一括適用する。
+  Enter／フォーカス移動で確定、Escapeで取消。全対象を事前検証し、書込み失敗時は復旧し、
+  成功時は全属性・全ノードを1回のUndoへまとめる。属性選択だけでは書き込まない。
+  「この値に揃える」を選択した各属性の基準ノード値への一括操作へ拡張し、
+  両モードへロック／解除・Keyable／ChannelBox／Hideの選択メニューを追加する。
+  上下・Step・Slider・bool・enumの通常操作は、従来どおり操作した1行の対応ノードだけへ適用する。
+  対象ノードの変更で属性選択を解除し、同じノードの表示更新・Undoでは残存する属性の選択を維持する。
+  `widget.scroll_area`の型は`QScrollArea`から`ChannelTableView`へ変更。
+  内容の取得は`widget.scroll_area.widget()`から`widget.table_view.viewport()`へ移行する。
+  Maya側のviewport交換後も再構築できるよう、行の親は使用時に取得する。
+  `row_widgets`、各行の`editor`、公開`show()`とWindowの復元入口は維持する。
+  `ChannelRow` / `ChannelStateRow`の直接構築時は対応ノード名の`target_names`引数を追加する。
+  同時変更の`bakedanuki-util`への更新が必要。scene・保存設定の移行は不要。
 - bdChannelBoxの選択切替を軽くするutilの属性検索・step入力欄初期化の改善に対応。
   属性検索は一意な名前を直接取得し、step欄は生成途中の不要な極小値表示を省く。
   値・状態の編集、Undo、精度、表示順、選択監視は維持する。

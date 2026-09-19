@@ -58,14 +58,23 @@ bd_tools/
 ```
 
 最初の実装は `bd_tools.bd_channel_box` です。`ui.py` がWindow、`widget.py` が入力行、
-`controller.py` が選択と対応属性を組み立てます。汎用の属性列挙と一括編集はutilへ配置します。
+`table.py`が一覧内の属性選択と数値直接入力、`controller.py` が選択ノード・対応属性と
+操作対象を組み立てます。汎用の属性列挙と一括編集はutilへ配置します。
 bdChannelBoxは `MayaDockableWindowController` を使い、固定workspaceControl IDと
 `bd_tools.bd_channel_box.ui.restore` を維持します。初回は右ドック、close時は完全破棄とし、
 workspace配置の復元・resetはutil、入力と選択監視の終了はtoolsが所有します。
 値とstepの複合Viewもutilへ配置し、属性別の初期stepとWindow内での設定保持は
 bdChannelBoxが所有します。step設定はsceneの値・Undo履歴へ含めません。
-属性名の整列、混在の印、対象情報のtooltip、更新・揃えるための右クリックメニューも
+属性名の整列、混在の印、対象情報のtooltip、選択属性を操作する右クリックメニューも
 bdChannelBoxが所有し、値欄のQt標準編集メニューとは独立して提供します。
+一覧は`QTableView`へ1属性1セルを置き、delegateが既存の属性行Widgetをpersistent editorとして
+常時表示します。modelは行と選択を管理し、値は既存Bindingから同期します。
+Maya本体がviewportを交換する場合に備え、行の親は構築時に`viewport()`から取得し、
+以前のviewportを永続的な参照として保持しません。
+既存の数値・Step・Slider・bool・enum・状態Viewを維持し、値をmodelへ複製しません。
+複数選択時の数値文字入力・貼付けだけを一時的な文字欄で受け付け、入力開始時の属性集合へ確定します。
+ノードの識別子と属性path・型区分を用いて、同じノードの再表示では残存行の選択を維持し、
+対象ノードが変わる場合は選択を解除します。属性選択自体はsceneや設定ファイルへ保存しません。
 boolにはutilの`BoolCheckBox`、両側hard limit付きfloatには`FloatSliderSpinBox`、
 それ以外のfloatには`FloatValueStepSpinBox`を使います。値欄とSliderの並び順の機能はutil、
 Value先行の選択、単位の非表示、固定幅と右寄せはtoolsの表示方針です。
@@ -113,6 +122,18 @@ bdChannelBoxを利用側から開く場合は`bd_tools.bd_channel_box.show()`を
 別ツールの実装で必要になる属性列挙や一括編集は、bdChannelBoxのcontrollerを経由せず
 utilを直接利用します。画面寸法の定数はtools内部の調整箇所で、保存設定や公開APIではありません。
 
+複数属性への数値直接入力と「この値に揃える」は、toolsのcontrollerが各行の対象と入力値を決め、
+utilの`MayaFloatValueEdit` / `MayaBoolValueEdit` / `MayaEnumValueEdit`へまとめます。
+`apply_plugs_values()`が全件の事前検証、書込み失敗時の復旧、1回のUndoを所有します。
+数値直接入力は各行の表示単位で換算し、「この値に揃える」は各行自身の基準ノード値を使います。
+将来の上下操作・Slider・bool・enumの複数属性操作も、選択操作とこの書込み経路を組み合わせて拡張します。
+現段階の通常の上下・Step・Slider・bool・enum操作は、操作した1行の対応ノードだけが対象です。
+
+一覧を参照するコードは`widget.table_view`を使います。`scroll_area`は同じ
+`ChannelTableView`への参照として残しますが、`QScrollArea.widget()`の代わりに`viewport()`を使います。
+`row_widgets`と既存Viewの`editor`は維持します。`ChannelRow` / `ChannelStateRow`の
+`target_names`は対応ノード名を保持し、選択属性のメニューが操作先を再解決するために使います。
+
 enumも同じ責務分担です。実定義の取得と比較用の値型はutilの`read_enum_definition()`と
 `EnumDefinition`を使用します。controllerが代表と定義の一致する対象を選び、
 `MayaEnumPlugsBinding`へ渡します。混在・Undo・定義変更時の入力停止はutil、
@@ -128,6 +149,9 @@ toolsは値編集／表示・ロックのモード、基準属性の表示状態
 フィルターは両モードへ適用し、後続ノードとの対応付けは表示状態で除外しません。
 表示フラグの通知時はQtの次のイベントで再評価し、状態の一括操作中にBindingを破棄しません。
 状態編集ではenum値を変更しないため、enum定義の一致による対象除外を行いません。
+この判定は値編集モードの状態メニューにも適用します。複数選択した属性の状態操作は、
+各行の基準に対する制約を判定したうえで操作可能なplugを集約し、utilの状態Bindingへ渡します。
+標準Channel Boxの選択状態や`channelBoxCommand`には依存しません。
 
 なぞり操作の座標・通過順・中断判定はutilの`RadioButtonSweep`と`CheckBoxSweep`の
 内部共通処理、一操作のUndo管理は`MayaEditSession`が担当します。

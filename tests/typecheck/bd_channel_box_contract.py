@@ -25,6 +25,7 @@ from bd_tools.bd_channel_box.widget import (
     AttributeStateRowWidget,
     ChannelBoxWidget,
 )
+from bd_tools.bd_channel_box.table import ChannelTableView
 
 assert_type(bd_channel_box.show(), bd_channel_box.ChannelBoxWindow)
 assert_type(bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
@@ -79,3 +80,14 @@ assert_type(
 )
 assert_type(bd_channel_box.show().widget.controller.set_mode("states"), None)
 assert_type(bd_channel_box.show().widget.row_widgets[0].context_menu, qt.QMenu)
+table = bd_channel_box.show().widget.table_view
+assert_type(table, ChannelTableView)
+assert_type(table.selected_keys(), tuple[tuple[str, str], ...])
+keys = (("translate.translateX", "distance"), ("rotate.rotateX", "angle"))
+assert_type(table.select_keys(keys), None)
+controller = bd_channel_box.show().widget.controller
+assert_type(controller.apply_numeric_values(keys, 5.0), bool)
+assert_type(controller.align_selected_values(keys), bool)
+assert_type(controller.set_selected_locked(keys, True), bool)
+assert_type(controller.set_selected_display(keys, "hidden"), bool)
+assert_type(controller.rows[0].target_names, tuple[str, ...])

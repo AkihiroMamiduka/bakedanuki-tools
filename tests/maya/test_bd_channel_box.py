@@ -326,7 +326,7 @@ def test_context_menu_refresh_only_reads_values(
         menu = row.context_menu
         action = row.refresh_action
     else:
-        target = editor.scroll_area.widget()
+        target = editor.table_view.viewport()
         assert target is not None
         menu = editor.context_menu
         action = editor.refresh_action

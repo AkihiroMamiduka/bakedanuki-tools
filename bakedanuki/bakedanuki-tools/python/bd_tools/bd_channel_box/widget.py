@@ -26,6 +26,7 @@ from bd_util.ui import (
 )
 
 from .controller import ChannelBoxController, ChannelRow, ChannelStateRow
+from .table import ChannelTableView, TableRow
 
 __all__ = [
     "AttributeRowWidget",
@@ -107,11 +108,13 @@ class AttributeRowWidget(qt.QWidget):
         parent: qt.QWidget,
         *,
         single_step: float | None = None,
+        align_callback: Callable[[], None] | None = None,
     ) -> None:
         """初期値を書き込まず、Bindingと表示部品を接続する。"""
         super().__init__(parent)
         self.row = row
         self.selection_count = selection_count
+        self._align_callback = align_callback
         self.setObjectName(f"channel_{row.attribute.path}")
         self.name_label = _AttributeNameLabel(row.attribute.nice_name, self)
         self.name_label.setAlignment(
@@ -253,6 +256,9 @@ class AttributeRowWidget(qt.QWidget):
 
     def _align_values(self) -> None:
         """メニューから明示した場合だけ、対象を基準ノードの値へ揃える。"""
+        if self._align_callback is not None:
+            self._align_callback()
+            return
         try:
             self.row.binding.apply_representative_value()
         except (ValueError, RuntimeError):
@@ -453,6 +459,7 @@ class ChannelBoxWidget(qt.QWidget):
             AttributeRowWidget | AttributeStateRowWidget, ...
         ] = ()
         self._scroll_anchor: tuple[str, int] | None = None
+        self._table_node_ids: tuple[str, ...] = ()
         self._scroll_timer = qt.QTimer(self)
         self._scroll_timer.setSingleShot(True)
         self._scroll_timer.timeout.connect(self._restore_scroll_anchor)
@@ -509,19 +516,8 @@ class ChannelBoxWidget(qt.QWidget):
         self.message_label = qt.QLabel(self)
         self.message_label.setWordWrap(True)
         self.message_label.hide()
-        self.scroll_area = qt.QScrollArea(self)
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setFrameShape(qt.QFrame.Shape.NoFrame)
-        # 内容が収まるときは縦スクロールバーの領域を名前列へ戻す
-        self.scroll_area.setVerticalScrollBarPolicy(
-            qt.Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-        self._contents = qt.QWidget(self.scroll_area)
-        self._rows_layout = qt.QVBoxLayout(self._contents)
-        self._rows_layout.setContentsMargins(0, 0, 4, 0)
-        self._rows_layout.setSpacing(0)
-        self._rows_layout.addStretch()
-        self.scroll_area.setWidget(self._contents)
+        self.table_view = ChannelTableView(self)
+        self.scroll_area = self.table_view
         self.empty_label = qt.QLabel("", self)
         self.empty_label.setWordWrap(True)
         layout = qt.QVBoxLayout(self)
@@ -535,6 +531,10 @@ class ChannelBoxWidget(qt.QWidget):
 
         # 選択・表示更新と、ユーザーによる値変更の経路を分離する
         self.controller = ChannelBoxController(self)
+        self.table_view.numeric_input_requested.connect(
+            self._apply_numeric_input
+        )
+        self.table_view.numeric_input_rejected.connect(self._show_error)
         self.state_sweep = RadioButtonSweep(self.scroll_area)
         self.lock_sweep = CheckBoxSweep(self.scroll_area)
         for sweep in (self.state_sweep, self.lock_sweep):
@@ -542,7 +542,11 @@ class ChannelBoxWidget(qt.QWidget):
             sweep.finished.connect(self.controller.state_edit_session.finish)
             self.controller.state_edit_session.finished.connect(sweep.finish)
         self.controller.rows_changed.connect(self._rebuild_rows)
+        self.controller.rows_about_to_change.connect(
+            self._cancel_transient_input
+        )
         self.controller.error_occurred.connect(self._show_error)
+        self.controller.operation_reported.connect(self._show_operation_report)
         self.controller.mode_changed.connect(self._sync_mode)
         self.controller.filter_changed.connect(self._sync_filter)
         self.mode_combo.currentIndexChanged.connect(self._change_mode)
@@ -566,15 +570,15 @@ class ChannelBoxWidget(qt.QWidget):
         """行の入力を確定し、再構築前のスクロール位置を保持する。"""
         self.state_sweep.finish()
         self.lock_sweep.finish()
+        self.table_view.finish_numeric_edit(commit=True)
         focus_widget = cast(
             Callable[[], qt.QWidget | None],
             getattr(qt.QApplication, "focusWidget"),
         )
         focused = focus_widget()
-        if focused is not None and self._contents.isAncestorOf(focused):
+        if focused is not None and self.table_view.isAncestorOf(focused):
             focused.clearFocus()
         self._remember_scroll_anchor()
-        self.message_label.hide()
 
     def _sync_mode(self) -> None:
         """controllerからのモード変更を属性へ入力せず表示へ反映する。"""
@@ -598,12 +602,11 @@ class ChannelBoxWidget(qt.QWidget):
 
     def _remember_scroll_anchor(self) -> None:
         """表示先頭の属性pathを記録して、設定行の増減後も位置を保つ。"""
-        position = self.scroll_area.verticalScrollBar().value()
         self._scroll_anchor = next(
             (
-                (w.row.attribute.path, w.y() - position)
+                (w.row.attribute.path, w.y())
                 for w in self.row_widgets
-                if w.y() + w.height() > position
+                if w.y() + w.height() > 0
             ),
             None,
         )
@@ -617,7 +620,9 @@ class ChannelBoxWidget(qt.QWidget):
         for widget in self.row_widgets:
             if widget.row.attribute.path == path:
                 self.scroll_area.verticalScrollBar().setValue(
-                    widget.y() - offset
+                    self.scroll_area.verticalScrollBar().value()
+                    + widget.y()
+                    - offset
                 )
                 return
 
@@ -640,6 +645,97 @@ class ChannelBoxWidget(qt.QWidget):
         self.message_label.setText(f"変更できませんでした: {message}")
         self.message_label.show()
 
+    def _show_operation_report(self, message: str) -> None:
+        """一括操作で対象外にした属性を通知し、理由がなければ表示を閉じる。"""
+        self.message_label.setText(message)
+        self.message_label.setVisible(bool(message))
+
+    def _cancel_transient_input(self) -> None:
+        """Bindingを破棄する前に、古い選択への入力とメニューを終了する。"""
+        self.table_view.finish_numeric_edit(commit=False)
+        self.context_menu.close()
+        for widget in self.row_widgets:
+            widget.context_menu.close()
+            if isinstance(widget.editor, EnumComboBox):
+                widget.editor.hidePopup()
+
+    def _apply_numeric_input(self, keys: object, value: float) -> None:
+        """Qtの明示入力通知を受け、凍結した選択行へ一度だけ書き込む。"""
+        selected = cast(tuple[tuple[str, str], ...], keys)
+        try:
+            self.controller.apply_numeric_values(selected, value)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _action_keys(
+        self, key: tuple[str, str]
+    ) -> tuple[tuple[str, str], ...]:
+        """選択内の行は全選択を対象にし、未選択行の操作はその行だけにする。"""
+        selected = self.table_view.selected_keys()
+        return selected if key in selected else (key,)
+
+    def _run_selected_action(self, action: str, key: tuple[str, str]) -> None:
+        """右クリックの明示操作を、入力部品と独立した選択編集入口へ渡す。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        selected = self._action_keys(key)
+        try:
+            if action == "align":
+                self.controller.align_selected_values(selected)
+            elif action in ("lock", "unlock"):
+                self.controller.set_selected_locked(selected, action == "lock")
+            elif action in ("keyable", "channel_box", "hidden"):
+                self.controller.set_selected_display(selected, action)
+            else:
+                raise ValueError(f"未対応の選択操作です: {action}")
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _prepare_row_menu(
+        self, widget: AttributeRowWidget | AttributeStateRowWidget
+    ) -> None:
+        """右クリックした行を選択対象に含め、全選択の状態でメニューを準備する。"""
+        key = (widget.row.attribute.path, widget.row.attribute.kind)
+        if key not in self.table_view.selected_keys():
+            self.table_view.select_key(key)
+        if isinstance(widget, AttributeRowWidget):
+            selected = set(self.table_view.selected_keys())
+            widget.align_action.setEnabled(
+                any(
+                    isinstance(row, ChannelRow)
+                    and (row.attribute.path, row.attribute.kind) in selected
+                    and row.binding.is_mixed
+                    and row.binding.view_model.set_value_command.can_execute
+                    and (
+                        not isinstance(row.binding, MayaEnumPlugsBinding)
+                        or row.binding.is_value_defined
+                    )
+                    for row in self.controller.rows
+                )
+            )
+
+    def _add_selection_menu(
+        self, widget: AttributeRowWidget | AttributeStateRowWidget
+    ) -> None:
+        """値編集と状態編集の両モードに、選択属性の状態操作を追加する。"""
+        key = (widget.row.attribute.path, widget.row.attribute.kind)
+        menu = widget.context_menu
+        menu.addSeparator()
+        for action, label in (
+            ("lock", "ロック"),
+            ("unlock", "ロック解除"),
+            ("keyable", "Keyable"),
+            ("channel_box", "ChannelBox"),
+            ("hidden", "Hide"),
+        ):
+            item = qt.QAction(label, menu)
+            item.setObjectName(f"selected_{action}")
+            item.triggered.connect(
+                partial(self._run_selected_action, action, key)
+            )
+            cast(_MenuActions, menu).addAction(item)
+        menu.aboutToShow.connect(partial(self._prepare_row_menu, widget))
+
     def _rebuild_rows(self) -> None:
         """古いViewを破棄して、新しい選択の入力行を配置する。"""
         self.state_sweep.clear()
@@ -648,9 +744,7 @@ class ChannelBoxWidget(qt.QWidget):
             widget.context_menu.close()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
-            self._rows_layout.removeWidget(widget)
             widget.hide()
-            widget.deleteLater()
         self.row_widgets = ()
         names = self.controller.node_names
         if names:
@@ -669,7 +763,7 @@ class ChannelBoxWidget(qt.QWidget):
                     widget = AttributeStateRowWidget(
                         row,
                         len(names),
-                        self._contents,
+                        self.table_view.viewport(),
                         edit_session=self.controller.state_edit_session,
                     )
                     for button in widget.display_buttons.values():
@@ -682,19 +776,43 @@ class ChannelBoxWidget(qt.QWidget):
                     widget = AttributeRowWidget(
                         row,
                         len(names),
-                        self._contents,
+                        self.table_view.viewport(),
                         single_step=self._steps.get(key),
+                        align_callback=partial(
+                            self._run_selected_action, "align", key
+                        ),
                     )
                     widget.step_changed.connect(
                         partial(self._remember_step, key)
                     )
                 widget.refresh_requested.connect(self.refresh)
+                self._add_selection_menu(widget)
                 widgets.append(widget)
-                self._rows_layout.insertWidget(len(widgets) - 1, widget)
         except Exception:
             self.controller.dispose()
             raise
         self.row_widgets = tuple(widgets)
+        self.table_view.set_rows(
+            [
+                TableRow(
+                    key=(widget.row.attribute.path, widget.row.attribute.kind),
+                    widget=widget,
+                    name_label=widget.name_label,
+                    value_field=(
+                        widget.editor.spin_box
+                        if isinstance(
+                            widget.editor,
+                            (FloatSliderSpinBox, FloatValueStepSpinBox),
+                        )
+                        else None
+                    ),
+                )
+                for widget in widgets
+            ],
+            preserve_selection=self._table_node_ids
+            == self.controller.node_ids,
+        )
+        self._table_node_ids = self.controller.node_ids
         # 行の配置が確定してから、残っている属性のスクロール位置を復元する
         self._scroll_timer.start(0)
         self.empty_label.setVisible(not widgets)
@@ -719,3 +837,4 @@ class ChannelBoxWidget(qt.QWidget):
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
         self.controller.dispose()
+        self.table_view.dispose()

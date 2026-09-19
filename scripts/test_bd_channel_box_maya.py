@@ -13,9 +13,10 @@ import sys
 import tempfile
 import time
 import traceback
+from collections.abc import Callable
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from bd_tools.bd_channel_box.ui import ChannelBoxWindow
@@ -99,6 +100,7 @@ class _MayaSmokeSession:
             self._return_to_values,
             self._inspect_filters,
             self._inspect_attribute_order,
+            self._inspect_multi_attribute_selection,
             self._inspect_state_sweep,
             self._inspect_lock_sweep,
             self._close,
@@ -979,6 +981,104 @@ class _MayaSmokeSession:
         self._select_combo_item(widget.mode_combo, 0)
         self._select_combo_item(
             widget.filter_combo, widget.filter_combo.findData("visible")
+        )
+
+    def _inspect_multi_attribute_selection(self) -> None:
+        """実画面で六行を選択し、直接入力・選択メニュー・一Undoを確認する。"""
+        from maya import cmds
+
+        from bd_util.ui import FloatValueStepSpinBox, qt
+
+        widget = self._require_window().widget
+        attributes = tuple(
+            f"{parent}{axis}"
+            for parent in ("translate", "rotate")
+            for axis in "XYZ"
+        )
+        keys = tuple(
+            (f"{parent}.{parent}{axis}", kind)
+            for parent, kind in (
+                ("translate", "distance"),
+                ("rotate", "angle"),
+            )
+            for axis in "XYZ"
+        )
+        before = {
+            name: tuple(cmds.getAttr(f"{node}.{name}") for node in self.nodes)
+            for name in attributes
+        }
+        first = self._row("translate.translateX").name_label
+        last = self._row("rotate.rotateZ").name_label
+        widget.table_view.ensureWidgetVisible(first)
+        self._flush_gui()
+        cmds.flushUndo()
+
+        # 名前欄のドラッグを実際のtable選択として処理する
+        self._mouse(
+            first, qt.QEvent.Type.MouseButtonPress, first.rect().center()
+        )
+        end = first.mapFromGlobal(last.mapToGlobal(last.rect().center()))
+        self._mouse(first, qt.QEvent.Type.MouseMove, end)
+        self._mouse(first, qt.QEvent.Type.MouseButtonRelease, end)
+        if widget.table_view.selected_keys() != keys:
+            raise AssertionError("六属性のドラッグ選択に失敗しました")
+        self._capture("25-multi-attribute-selection.png")
+        view = self._row("rotate.rotateZ").editor
+        if not isinstance(view, FloatValueStepSpinBox):
+            raise AssertionError("数値の入力Viewがありません")
+        self._key(view.spin_box, qt.Qt.Key.Key_5, text="5")
+        focused = cast(
+            Callable[[], qt.QWidget | None],
+            getattr(qt.QApplication, "focusWidget"),
+        )()
+        if (
+            not isinstance(focused, qt.QLineEdit)
+            or focused.objectName() != "channel_batch_numeric_editor"
+        ):
+            raise AssertionError("一括入力欄が開きません")
+        for name in attributes:
+            self._assert_values(name, before[name])
+        self._capture("26-multi-attribute-typing.png")
+        self._key(focused, qt.Qt.Key.Key_Return)
+        self._flush_gui()
+        for name in attributes:
+            self._assert_values(name, (5.0, 5.0))
+        self._capture("27-multi-attribute-applied.png")
+        cmds.undo()
+        self._flush_gui()
+        for name in attributes:
+            self._assert_values(name, before[name])
+        if widget.table_view.selected_keys() != keys:
+            raise AssertionError("Undoで属性選択が失われました")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("複数属性の数値入力が一Undoになっていません")
+
+        # 選択内の右クリックから全属性をロックし、一回で復元する
+        row = self._row("translate.translateX")
+        self._open_context_menu(row.name_label)
+        lock_action = next(
+            action
+            for action in row.context_menu.actions()
+            if action.objectName() == "selected_lock"
+        )
+        row.context_menu.setActiveAction(lock_action)
+        menu_path = self.output / "28-multi-attribute-menu.png"
+        if not row.context_menu.grab().save(str(menu_path)):
+            raise RuntimeError("選択属性メニューの画像を保存できません")
+        self.screenshots.append(str(menu_path))
+        self._key(row.context_menu, qt.Qt.Key.Key_Return)
+        for node in self.nodes:
+            for name in attributes:
+                if not cmds.getAttr(f"{node}.{name}", lock=True):
+                    raise AssertionError(
+                        "選択メニューの一括ロックに失敗しました"
+                    )
+        cmds.undo()
+        self._flush_gui()
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("複数属性のロックが一Undoになっていません")
+        self.steps.append(
+            "multi_attribute_selection_numeric_input_menu_and_undo"
         )
 
     def _inspect_state_sweep(self) -> None:

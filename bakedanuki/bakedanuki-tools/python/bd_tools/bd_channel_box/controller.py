@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Sequence
 from functools import partial
 from typing import Literal, TypeAlias
 
@@ -15,13 +16,19 @@ from bd_util.maya.node.inspection import (
     selected_node_names,
 )
 from bd_util.maya.ui import (
+    ChannelDisplayState,
+    MayaBoolValueEdit,
     MayaBoolPlugsBinding,
     MayaCallbackRegistry,
     MayaChannelStateBinding,
     MayaChannelStatePlug,
     MayaEnumPlugsBinding,
+    MayaEnumValueEdit,
     MayaEditSession,
     MayaFloatPlugsBinding,
+    MayaFloatValueEdit,
+    MayaPlugsValueEdit,
+    apply_plugs_values,
     read_enum_definition,
     resolve_bool_plug,
     resolve_enum_plug,
@@ -68,6 +75,7 @@ class ChannelRow:
     attribute: ScalarAttributeInfo
     binding: ChannelBinding
     excluded: tuple[str, ...]
+    target_names: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -77,13 +85,16 @@ class ChannelStateRow:
     attribute: ScalarAttributeInfo
     state_binding: MayaChannelStateBinding
     excluded: tuple[str, ...]
+    target_names: tuple[str, ...]
 
 
 class ChannelBoxController(qt.QObject):
     """選択・属性構成の変更時だけ入力行を組み直す。"""
 
     rows_changed = qt.Signal()
+    rows_about_to_change = qt.Signal()
     error_occurred = qt.Signal(str)
+    operation_reported = qt.Signal(str)
     mode_changed = qt.Signal()
     filter_changed = qt.Signal()
 
@@ -92,12 +103,14 @@ class ChannelBoxController(qt.QObject):
         super().__init__(parent)
         self.rows: tuple[ChannelRow | ChannelStateRow, ...] = ()
         self.node_names: tuple[str, ...] = ()
+        self.node_ids: tuple[str, ...] = ()
         self._mode: ChannelBoxMode = "values"
         self._filters: dict[ChannelBoxMode, ChannelAttributeFilter] = {
             "values": "visible",
             "states": "all",
         }
         self._disposed = False
+        self._active_state_binding: MayaChannelStateBinding | None = None
         self.state_edit_session = MayaEditSession(
             self, chunk_name="SweepChannelStates"
         )
@@ -280,6 +293,10 @@ class ChannelBoxController(qt.QObject):
             attributes = tuple(inspect_scalar_attributes(n) for n in names)
             self._dispose_rows()
             self.node_names = names
+            self.node_ids = tuple(
+                om.MFnDependencyNode(self._node_object(name)).uuid().asString()
+                for name in names
+            )
             self._watch_nodes()
             self.rows = self._create_rows(attributes)
         except Exception as error:
@@ -333,7 +350,10 @@ class ChannelBoxController(qt.QObject):
                     state_binding.edit_failed.connect(self.error_occurred.emit)
                     rows.append(
                         ChannelStateRow(
-                            attribute, state_binding, tuple(excluded)
+                            attribute,
+                            state_binding,
+                            tuple(excluded),
+                            tuple(targets),
                         )
                     )
                     continue
@@ -359,7 +379,11 @@ class ChannelBoxController(qt.QObject):
                         parent=self,
                     )
                 binding.edit_failed.connect(self.error_occurred.emit)
-                rows.append(ChannelRow(attribute, binding, tuple(excluded)))
+                rows.append(
+                    ChannelRow(
+                        attribute, binding, tuple(excluded), tuple(targets)
+                    )
+                )
         except Exception:
             for row in rows:
                 self._dispose_row(row)
@@ -408,10 +432,183 @@ class ChannelBoxController(qt.QObject):
     def _dispose_rows(self) -> None:
         """Qtの遅延削除を待たず、すべての入力とMaya監視を終了する。"""
         self._filter_refresh_pending = False
+        self.rows_about_to_change.emit()
+        if self._active_state_binding is not None:
+            self._active_state_binding.dispose()
         self.state_edit_session.finish()
         rows, self.rows = self.rows, ()
         for row in rows:
             self._dispose_row(row)
+
+    @staticmethod
+    def _node_object(name: str) -> om.MObject:
+        """改名に依存しない選択識別子を取得するためnodeを解決する。"""
+        selection = om.MSelectionList()
+        selection.add(name)
+        return selection.getDependNode(0)
+
+    def _selected_rows(
+        self, keys: Sequence[tuple[str, str]]
+    ) -> tuple[ChannelRow | ChannelStateRow, ...]:
+        """表示中の正式pathと型だけを受け付け、古い選択への入力を拒否する。"""
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        if self._active_state_binding is not None:
+            raise RuntimeError(
+                "選択属性の状態変更中には別の操作を開始できません"
+            )
+        lookup = {(r.attribute.path, r.attribute.kind): r for r in self.rows}
+        unique = tuple(dict.fromkeys(keys))
+        if any(key not in lookup for key in unique):
+            raise RuntimeError(
+                "属性の構成が変わりました。選択し直してください"
+            )
+        return tuple(lookup[key] for key in unique)
+
+    def apply_numeric_values(
+        self, keys: Sequence[tuple[str, str]], display_value: float
+    ) -> bool:
+        """明示入力した表示数値を、選択行ごとの単位へ変換して一括適用する。"""
+        rows = self._selected_rows(keys)
+        edits: list[MayaPlugsValueEdit] = []
+        excluded: list[str] = []
+        # 行単位の対象選別を保ち、全行の検証と書込みはutilへ委譲する
+        for row in rows:
+            if not isinstance(row, ChannelRow) or not isinstance(
+                row.binding, MayaFloatPlugsBinding
+            ):
+                excluded.append(f"{row.attribute.nice_name}: 数値入力の対象外")
+                continue
+            row.binding.refresh()
+            if not row.binding.view_model.set_value_command.can_execute:
+                excluded.append(
+                    f"{row.attribute.nice_name}: 値を編集できません"
+                )
+                continue
+            edits.append(
+                MayaFloatValueEdit(
+                    row.binding,
+                    row.binding.view_model.presentation.from_display(
+                        display_value
+                    ),
+                )
+            )
+        changed = apply_plugs_values(edits)
+        self._report_excluded(excluded)
+        return changed
+
+    def align_selected_values(self, keys: Sequence[tuple[str, str]]) -> bool:
+        """各選択行をそれぞれの基準ノードの未丸め値へ、一操作で揃える。"""
+        edits: list[MayaPlugsValueEdit] = []
+        excluded: list[str] = []
+        for row in self._selected_rows(keys):
+            if not isinstance(row, ChannelRow):
+                continue
+            binding = row.binding
+            binding.refresh()
+            if not binding.view_model.set_value_command.can_execute:
+                excluded.append(
+                    f"{row.attribute.nice_name}: 値を編集できません"
+                )
+                continue
+            if isinstance(binding, MayaEnumPlugsBinding):
+                if not binding.is_value_defined:
+                    excluded.append(
+                        f"{row.attribute.nice_name}: enumの値が未定義です"
+                    )
+                    continue
+                edits.append(MayaEnumValueEdit(binding, binding.value))
+            elif isinstance(binding, MayaBoolPlugsBinding):
+                edits.append(MayaBoolValueEdit(binding, binding.value))
+            else:
+                edits.append(MayaFloatValueEdit(binding, binding.value))
+        changed = apply_plugs_values(edits)
+        self._report_excluded(excluded)
+        return changed
+
+    def _selected_state_plugs(
+        self, keys: Sequence[tuple[str, str]], *, display: bool
+    ) -> tuple[list[MayaChannelStatePlug], list[str]]:
+        """各行の基準属性の制約を維持して、操作可能な状態編集先を集約する。"""
+        plugs: list[MayaChannelStatePlug] = []
+        excluded: list[str] = []
+        for row in self._selected_rows(keys):
+            targets = [
+                self._resolve_state_plug(n, row.attribute)
+                for n in row.target_names
+            ]
+            probe = MayaChannelStateBinding(targets, parent=self)
+            try:
+                state = probe.state
+                if not (
+                    state.can_set_display if display else state.can_set_locked
+                ):
+                    excluded.append(
+                        f"{row.attribute.nice_name}: 状態を変更できません"
+                    )
+                    continue
+                for plug, target in zip(targets, state.targets, strict=True):
+                    if (
+                        target.can_set_display
+                        if display
+                        else target.can_set_locked
+                    ):
+                        plugs.append(plug)
+                    else:
+                        reason = (
+                            target.display_reason
+                            if display
+                            else target.lock_reason
+                        )
+                        excluded.append(f"{target.plug_name}: {reason}")
+            finally:
+                probe.dispose()
+                probe.deleteLater()
+        return plugs, excluded
+
+    def set_selected_locked(
+        self, keys: Sequence[tuple[str, str]], locked: bool
+    ) -> bool:
+        """選択属性自身のロックを一括変更し、compound祖先は変更しない。"""
+        plugs, excluded = self._selected_state_plugs(keys, display=False)
+        if not plugs:
+            self._report_excluded(excluded)
+            return False
+        binding = MayaChannelStateBinding(plugs, parent=self)
+        self._active_state_binding = binding
+        try:
+            changed = binding.set_locked(locked)
+        finally:
+            self._active_state_binding = None
+            binding.dispose()
+            binding.deleteLater()
+        self._report_excluded(excluded)
+        return changed
+
+    def set_selected_display(
+        self, keys: Sequence[tuple[str, str]], state: ChannelDisplayState
+    ) -> bool:
+        """選択属性の表示状態を一括変更し、完了後にフィルターを更新する。"""
+        plugs, excluded = self._selected_state_plugs(keys, display=True)
+        if not plugs:
+            self._report_excluded(excluded)
+            return False
+        binding = MayaChannelStateBinding(plugs, parent=self)
+        self._active_state_binding = binding
+        try:
+            changed = binding.set_display_state(state)
+        finally:
+            self._active_state_binding = None
+            binding.dispose()
+            binding.deleteLater()
+        self._report_excluded(excluded)
+        return changed
+
+    def _report_excluded(self, reasons: Sequence[str]) -> None:
+        """一括操作で除外した属性の理由を、成功対象と区別して表示する。"""
+        self.operation_reported.emit(
+            "対象外: " + " / ".join(reasons) if reasons else ""
+        )
 
     @staticmethod
     def _dispose_row(row: ChannelRow | ChannelStateRow) -> None:
