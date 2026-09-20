@@ -8,6 +8,7 @@ from typing import cast
 import pytest
 from maya import cmds
 
+from bd_util.maya.ui import MayaScalarValueClipboard
 from bd_util.ui import (
     BoolCheckBox,
     EnumComboBox,
@@ -23,6 +24,15 @@ def _events() -> None:
     for _ in range(3):
         qt.QApplication.processEvents()
         qt.QApplication.sendPostedEvents(None, qt.QEvent.Type.DeferredDelete)
+
+
+def _saved_clipboard() -> qt.QtCore.QMimeData:
+    """現在のOS clipboardをtest後に復元できる形で複製する。"""
+    saved = qt.QtCore.QMimeData()
+    original = qt.QApplication.clipboard().mimeData()
+    for mime_type in original.formats():
+        saved.setData(mime_type, original.data(mime_type))
+    return saved
 
 
 def _set_value(path: str, value: float) -> None:
@@ -198,6 +208,11 @@ def _click(
             modifiers,
         )
         qt.QApplication.sendEvent(widget, event)
+
+
+def _show_row_menu(row: AttributeRowWidget) -> None:
+    """実表示前と同じaboutToShow通知でaction状態を更新する。"""
+    row.context_menu.aboutToShow.emit()
 
 
 def test_control_shift_selection_only_reads(editor: ChannelBoxWidget) -> None:
@@ -869,3 +884,156 @@ def test_slider_bool_enum_apply_to_selected_compatible_rows(
         assert cmds.getAttr(node + ".mode") == 2
     assert cmds.getAttr("multiA.translateX") == 10.0
     assert cmds.getAttr("multiB.translateX") == 10.0
+
+
+def test_copy_selected_values_uses_reference_node_and_does_not_write(
+    editor: ChannelBoxWidget,
+) -> None:
+    """選択行の基準node値だけをOSへ保存し、sceneとUndoを変更しない。"""
+    clipboard = qt.QApplication.clipboard()
+    saved = _saved_clipboard()
+    try:
+        _set_value("multiA.translateX", 5.25)
+        _set_value("multiA.gain", 4.5)
+        _set_value("multiA.mode", 2)
+        selected = _keys(editor, "translateX", "gain", "mode")
+        editor.table_view.select_keys(selected)
+        row = _row(editor, "translateX")
+        _show_row_menu(row)
+        assert row.copy_values_action.isEnabled()
+        cmds.flushUndo()
+
+        row.copy_values_action.trigger()
+        transfer = MayaScalarValueClipboard().read()
+        values = {
+            snapshot.path: snapshot.value
+            for snapshot in transfer.nodes[0].values
+        }
+        assert values == {
+            "translate.translateX": 5.25,
+            "gain": 4.5,
+            "mode": 2,
+        }
+        assert len(transfer.nodes) == 1
+        assert cmds.getAttr("multiB.translateX") == 9.0
+        assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+        assert "3属性" in editor.message_label.text()
+    finally:
+        clipboard.setMimeData(saved)
+
+
+def test_paste_matches_formal_paths_across_nodes_and_hidden_rows(
+    editor: ChannelBoxWidget,
+) -> None:
+    """clipboard値を表示行順と無関係に同pathへ貼り、対象外を報告する。"""
+    clipboard = qt.QApplication.clipboard()
+    saved = _saved_clipboard()
+    try:
+        _set_value("multiA.translateX", 5.25)
+        _set_value("multiA.gain", 4.5)
+        _set_value("multiA.mode", 2)
+        _set_value("multiA.enabled", True)
+        editor.table_view.select_keys(
+            _keys(editor, "translateX", "gain", "mode", "enabled")
+        )
+        source_row = _row(editor, "translateX")
+        _show_row_menu(source_row)
+        source_row.copy_values_action.trigger()
+
+        for node, mode_definition in (
+            ("pasteA", "A:B:C"),
+            ("pasteB", "A:B:D"),
+        ):
+            cmds.createNode("transform", name=node)
+            cmds.addAttr(
+                node,
+                longName="gain",
+                attributeType="double",
+                keyable=True,
+            )
+            cmds.addAttr(
+                node,
+                longName="mode",
+                attributeType="enum",
+                enumName=mode_definition,
+                keyable=True,
+            )
+            cmds.addAttr(
+                node,
+                longName="enabled",
+                attributeType="bool",
+                keyable=False,
+            )
+            _set_value(node + ".gain", 1.0)
+            _set_value(node + ".enabled", False)
+        cmds.setAttr("pasteB.gain", lock=True)
+        cmds.select("pasteA", "pasteB", replace=True)
+        _events()
+        assert not any(
+            widget.row.attribute.name == "enabled"
+            for widget in editor.row_widgets
+        )
+        cmds.flushUndo()
+
+        target_row = _row(editor, "translateX")
+        _show_row_menu(target_row)
+        assert target_row.paste_values_action.isEnabled()
+        target_row.paste_values_action.trigger()
+        _events()
+
+        assert cmds.getAttr("pasteA.translateX") == 5.25
+        assert cmds.getAttr("pasteB.translateX") == 5.25
+        assert cmds.getAttr("pasteA.gain") == 4.5
+        assert cmds.getAttr("pasteB.gain") == 1.0
+        assert cmds.getAttr("pasteA.mode") == 2
+        assert cmds.getAttr("pasteB.mode") == 0
+        assert cmds.getAttr("pasteA.enabled") is True
+        assert cmds.getAttr("pasteB.enabled") is True
+        assert "貼り付け対象: 6属性" in editor.message_label.text()
+        assert "enum定義" in editor.message_label.text()
+        assert "ロック" in editor.message_label.text()
+
+        cmds.undo()
+        _events()
+        assert cmds.getAttr("pasteA.translateX") == 0
+        assert cmds.getAttr("pasteB.translateX") == 0
+        assert cmds.getAttr("pasteA.gain") == 1.0
+        assert cmds.getAttr("pasteA.mode") == 0
+        assert cmds.getAttr("pasteA.enabled") is False
+        assert cmds.getAttr("pasteB.enabled") is False
+        assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    finally:
+        clipboard.setMimeData(saved)
+
+
+def test_invalid_clipboard_data_reports_error_without_writing(
+    editor: ChannelBoxWidget,
+) -> None:
+    """識別済みでも壊れた外部JSONは画面へ通知し、値とUndoを変えない。"""
+    clipboard = qt.QApplication.clipboard()
+    saved = _saved_clipboard()
+    try:
+        mime_data = qt.QtCore.QMimeData()
+        mime_data.setText("BAKEDANUKI_MAYA_SCALAR_VALUES/1\n{broken")
+        clipboard.setMimeData(mime_data)
+        row = _row(editor, "translateX")
+        _show_row_menu(row)
+        assert row.paste_values_action.isEnabled()
+        before = tuple(
+            cmds.getAttr(node + ".translateX") for node in ("multiA", "multiB")
+        )
+        cmds.flushUndo()
+
+        row.paste_values_action.trigger()
+        assert (
+            tuple(
+                cmds.getAttr(node + ".translateX")
+                for node in ("multiA", "multiB")
+            )
+            == before
+        )
+        assert editor.message_label.isVisible()
+        assert "JSON" in editor.message_label.text()
+        assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    finally:
+        clipboard.setMimeData(saved)

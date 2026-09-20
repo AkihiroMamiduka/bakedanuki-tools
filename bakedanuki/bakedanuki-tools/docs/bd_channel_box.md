@@ -11,6 +11,7 @@
 
 bool・float系・enumの複数ノード編集、step操作、表示・ロックの切替、5種類の表示フィルター、
 表示状態とlockのなぞり操作、設定可能な属性優先順、ドッキングと再起動復元に対応しています。
+選択属性値はOSクリップボードを介して別のMayaへ搬送できます。
 値同期と選択切替の負荷も改善しました。将来の任意候補は
 [Roadmap](roadmap.md#bdchannelboxの拡張候補)、変更ごとの確認結果は[検証](#検証)を参照してください。
 
@@ -295,9 +296,34 @@ boolは選択したbool属性を操作後のON／OFFへ揃えます。enumは操
 数値・bool・有効なenumを混ぜて選べます。編集不可の行や未定義enum値は除外し、理由を表示します。
 この操作も全対象を事前検証し、書込み失敗時は復旧し、成功時は1回のUndoへまとめます。
 
+### 属性値のOSクリップボードCopy/Paste
+
+値編集モードの属性名メニューには「選択属性値をコピー」と
+「同じpathへ属性値を貼り付け」があります。
+
+Copyは選択した属性について、現在の基準ノードの値を実行時点で取得します。値は表示文字列へ
+丸めず、distanceはcm、angleはdegree、通常数値は単位なしの公開単位で保存します。
+bool、enumの実整数と項目定義も型付きで保存します。CopyはsceneとUndo履歴を変更しません。
+
+PasteはOSクリップボード内の全属性を、現在選択中の1個または複数nodeへ適用します。
+表示中の行、属性の選択状態、行順は貼り付け先の対応付けに使いません。
+`translate.translateX`のような正式な相対pathと型・単位区分が一致する属性だけを対象とするため、
+現在のフィルターで非表示の属性も貼り付けられます。属性がないnodeへ追加はしません。
+
+enumは整数値と項目名の対応が一致する場合だけ対象にし、表示順だけの違いは許容します。
+属性なし、型・単位違い、enum定義違い、lock・入力接続などの編集不可属性は対象外として
+画面へ理由を表示します。残った全対象の型・hard limitを先に検証し、一回のUndoで変更します。
+途中失敗は操作前の値へ復旧し、全対象が同値ならUndo項目を作りません。
+
+custom MIMEとmarker付きtextへversion付きJSONを保存するため、別のMaya processからも
+貼り付けられます。未対応version、壊れたJSON、過大data、未知の型は値を書き込む前に拒否します。
+現在は一つの基準nodeから選択属性をコピーし、同じpathへ貼り付ける範囲です。
+複数source nodeの対応付け、node全属性の一括copy、一値を異なる複数pathへ配る操作は
+[Roadmap](roadmap.md#bdchannelboxの拡張候補)で別段階として扱います。
+
 「表示を更新」は一覧全体を再取得します。余白のメニューは従来どおり表示更新だけを提供し、
 値・step欄の右クリックはQt標準の編集メニューを使用します。
-Maya標準Channel Boxの選択やメニューには連動しません。値のCopy/Pasteメニュー、
+Maya標準Channel Boxの選択やメニューには連動しません。
 キー編集、接続解除、Freeze、Graph Editor連携はこの段階の対象外です。
 
 ## 範囲、単位、編集不可
@@ -993,5 +1019,29 @@ camelCase名も移行しました。v1.0.0未満のため旧名のaliasは追加
 Maya本体ではWindowsの`WM_MOUSEWHEEL`を送り、Qtの自動フォーカス取得を含む実入力経路を
 確認しました。結果と30枚の画像は`%TEMP%/bd-channel-box-maya2025-mdtb6hhi`へ保存しました。
 Maya 2026 / 2027本体の画面操作は今回は実施していません。
+
+toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=True)`を使用します。
+
+### 属性値のOSクリップボードCopy/Paste（2026-09-20）
+
+基準nodeの選択属性値をOSクリップボードへコピーし、現在選択中の1個または複数nodeの
+同一正式pathへ貼り付ける初回範囲を実装しました。行順による対応付けは追加していません。
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsのBlack・Pyright・unit test | 成功。unit 8件、Pyrightのerrorは0件 |
+| Maya 2025 / 2026 / 2027のtools runtime test | 各157件成功 |
+| utilの`verify.cmd` | 終了code 0。Maya 2025全体4,256件成功・739件skip、各versionのQt 843件・Maya UI 372件が成功 |
+| Maya 2025本体の初回process | `result.json`の`success`はTrue。Copy/Pasteを含む45工程と31枚の画像を確認 |
+| Maya 2025本体の別process | `result-restart.json`の`success`はTrue。前process終了後の属性値読取りと元clipboardの復元を確認 |
+
+utilではcustom MIMEとmarker付きtextのJSON、型付きsnapshot、公開単位、enum定義、
+同path適用を検証しました。欠落・型違い・enum定義違い・lockを対象外として報告し、
+hard limit違反では全候補を変更しないこと、適用成功時は一回のUndoになることを確認しています。
+
+Maya本体の結果と画像は
+`%TEMP%/bd-channel-box-maya2025-vch4wi8d`へ保存しました。初回と再起動後の両processが
+終了code 0で正常終了しています。検証前のOSクリップボードは形式ごとのbyte列を退避し、
+別processでの読取り後に復元しました。Maya 2026 / 2027本体の画面操作は実施していません。
 
 toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=True)`を使用します。

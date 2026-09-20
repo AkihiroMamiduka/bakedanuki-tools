@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import faulthandler
 import json
 import os
@@ -104,6 +105,7 @@ class _MayaSmokeSession:
             self._inspect_attribute_order,
             self._inspect_multi_attribute_selection,
             self._inspect_multi_value_controls,
+            self._inspect_clipboard_value_transfer,
             self._inspect_state_sweep,
             self._inspect_lock_sweep,
             self._close,
@@ -1454,6 +1456,103 @@ class _MayaSmokeSession:
         self._capture("29-multi-attribute-value-controls.png")
         self.steps.append("multi_attribute_value_controls_and_undo")
 
+    def _inspect_clipboard_value_transfer(self) -> None:
+        """実メニューから選択属性をCopyし、同pathへ一UndoでPasteする。"""
+        from maya import cmds
+
+        from bd_util.maya.ui import MayaScalarValueClipboard
+        from bd_util.ui import qt
+
+        widget = self._require_window().widget
+        clipboard = qt.QApplication.clipboard()
+        saved = qt.QtCore.QMimeData()
+        original_mime = clipboard.mimeData()
+        serialized_mime: list[dict[str, str]] = []
+        for mime_type in original_mime.formats():
+            data = original_mime.data(mime_type)
+            saved.setData(mime_type, data)
+            serialized_mime.append(
+                {
+                    "format": mime_type,
+                    "data": base64.b64encode(bytes(data)).decode("ascii"),
+                }
+            )
+        original_values = {
+            name: tuple(cmds.getAttr(f"{node}.{name}") for node in self.nodes)
+            for name in ("weight", "enabled", "mode")
+        }
+        try:
+            rows = tuple(
+                self._row(path) for path in ("weight", "enabled", "mode")
+            )
+            widget.table_view.select_keys(
+                tuple(
+                    (row.row.attribute.path, row.row.attribute.kind)
+                    for row in rows
+                )
+            )
+            source_row = rows[0]
+            cmds.flushUndo()
+            self._open_context_menu(source_row.name_label)
+            if not source_row.copy_values_action.isEnabled():
+                raise AssertionError("選択属性値のCopyが有効になりません")
+            source_row.context_menu.setActiveAction(
+                source_row.copy_values_action
+            )
+            menu_path = self.output / "32-clipboard-value-menu.png"
+            if not source_row.context_menu.grab().save(str(menu_path)):
+                raise RuntimeError(
+                    "属性値Copy/Pasteメニュー画像を保存できません"
+                )
+            self.screenshots.append(str(menu_path))
+            self._key(source_row.context_menu, qt.Qt.Key.Key_Return)
+            transfer = MayaScalarValueClipboard().read()
+            copied = {
+                snapshot.path: snapshot.value
+                for snapshot in transfer.nodes[0].values
+            }
+            if copied != {"weight": 0.25, "enabled": False, "mode": 5}:
+                raise AssertionError(f"基準nodeのCopy値が不正です: {copied}")
+            if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+                raise AssertionError("CopyでUndo履歴が増えました")
+
+            # Copy後のsceneを変え、snapshot値が全選択nodeへ貼られることを確認する
+            for node in self.nodes:
+                cmds.setAttr(f"{node}.weight", 0.9)
+                cmds.setAttr(f"{node}.enabled", True)
+                cmds.setAttr(f"{node}.mode", 10)
+            cmds.flushUndo()
+            self._open_context_menu(self._row("weight").name_label)
+            paste_action = self._row("weight").paste_values_action
+            if not paste_action.isEnabled():
+                raise AssertionError("対応clipboardのPasteが有効になりません")
+            paste_action.trigger()
+            self._flush_gui()
+            self._assert_values("weight", (0.25, 0.25))
+            self._assert_values("enabled", (False, False))
+            self._assert_values("mode", (5, 5))
+            cmds.undo()
+            self._flush_gui()
+            self._assert_values("weight", (0.9, 0.9))
+            self._assert_values("enabled", (True, True))
+            self._assert_values("mode", (10, 10))
+            if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+                raise AssertionError("Pasteが一回のUndoになっていません")
+        finally:
+            if os.environ.get(_PREPARE_RESTART_VARIABLE) == "1":
+                _write_json(
+                    self.output / "clipboard-original.json",
+                    serialized_mime,
+                )
+            else:
+                clipboard.setMimeData(saved)
+            for name, values in original_values.items():
+                for node, value in zip(self.nodes, values, strict=True):
+                    cmds.setAttr(f"{node}.{name}", value)
+            cmds.flushUndo()
+            self._flush_gui()
+        self.steps.append("clipboard_copy_and_same_path_paste")
+
     def _inspect_state_sweep(self) -> None:
         """実画面で三行をなぞり、即時反映、絞り込み保留と一回Undoを確認する。"""
         from maya import cmds
@@ -1836,6 +1935,7 @@ class _MayaSmokeSession:
         from bd_tools import bd_channel_box
         from bd_util.ui import qt
 
+        self._inspect_clipboard_across_maya_processes()
         name = bd_channel_box.WORKSPACE_CONTROL_NAME
         if not cmds.workspaceControl(name, query=True, exists=True):
             raise AssertionError(
@@ -1864,6 +1964,37 @@ class _MayaSmokeSession:
         if bd_channel_box.show() is not self.window:
             raise AssertionError("再起動後のshowでWindowが重複しました")
         self.steps.append("maya_restart_restores_workspace_and_content")
+
+    def _inspect_clipboard_across_maya_processes(self) -> None:
+        """前のMayaがOSへ残した属性値を読取り、元のclipboardへ復元する。"""
+        from bd_util.maya.ui import MayaScalarValueClipboard
+        from bd_util.ui import qt
+
+        saved_path = self.output / "clipboard-original.json"
+        if not saved_path.is_file():
+            raise AssertionError("再起動前のclipboard退避dataがありません")
+        saved_items = json.loads(saved_path.read_text(encoding="utf-8"))
+        clipboard = qt.QApplication.clipboard()
+        restored = qt.QtCore.QMimeData()
+        for item in saved_items:
+            restored.setData(
+                item["format"],
+                qt.QByteArray(base64.b64decode(item["data"])),
+            )
+        try:
+            transfer = MayaScalarValueClipboard().read()
+            copied = {
+                snapshot.path: snapshot.value
+                for snapshot in transfer.nodes[0].values
+            }
+            if copied != {"weight": 0.25, "enabled": False, "mode": 5}:
+                raise AssertionError(
+                    f"別Maya processのclipboard値が不正です: {copied}"
+                )
+        finally:
+            clipboard.setMimeData(restored)
+            self._flush_gui()
+        self.steps.append("clipboard_transfer_across_maya_processes")
 
     def _edit_after_restart(self) -> None:
         """復元したUIが新しい選択と一括入力へ追従することを確認する。"""

@@ -121,6 +121,9 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 - `29-multi-attribute-value-controls.png`: 上下・Slider・bool・enumの複数属性入力後の表示。
 - `30-wheel-settings-menu.png`、`31-wheel-setting-off.png`:
   ホイール編集の設定メニューと、OFFを反映した値編集画面。
+- `32-clipboard-value-menu.png`: 選択属性値のCopyと同一path Pasteを含むメニュー。
+- `result-restart.json`、`clipboard-original.json`: 別Maya processでのOSクリップボード読取り結果と、
+  検証後に復元する元のMIME data。
 - `progress.json`: 実行中の段階と完了済みの操作。
 - `maya-initial.log`、`process-initial.log`、`python-stacks-initial.log`: Mayaの出力と、長時間停止した場合の
   Python stack。
@@ -155,6 +158,12 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。
   上下・Slider・bool・互換enumの選択属性への適用と、未選択行だけの単独操作。
 - 選択メニュー: 各属性をそれぞれの基準値へ揃えること、ロック／解除と3種類の表示状態、
   状態操作ではenum定義の不一致を理由にノードを除外しないこと、親ロックを自動解除しないこと。
+- OSクリップボード: Copyが基準nodeの選択属性だけを未丸め値・型・単位・enum定義付きで保存し、
+  sceneとUndoを変更しないこと。Pasteが1個／複数nodeの同一正式pathへ、表示行と行順に依存せず
+  非表示属性も適用すること。欠落・型違い・enum定義違い・readonly対象の除外理由、hard limitの
+  全体拒否、一回Undo、同値時の無Undo、壊れたdataと未対応versionの無書込みを確認する。
+  Windowsでは二つのMaya process間でCopy/Pasteし、custom MIMEまたはmarker付きtextが
+  OSクリップボードを介して維持されることも確認する。
 - 入力・対応型: 選択／更新で無書込み、外部変更の非伝播、混在値への一括入力、1回Undo、編集不可対象の扱い。
 - 値同期の負荷: 表示フィルターや入力経路に関わらず、無関係な行の再読取りを発生させない。
   接続・親属性・アニメーションによるdirtyの同期はutilの通知回帰testでも検証する。

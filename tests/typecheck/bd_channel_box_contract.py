@@ -49,6 +49,8 @@ if isinstance(row, AttributeRowWidget):
         | FloatValueStepSpinBox,
     )
     assert_type(row.align_action, qt.QAction)
+    assert_type(row.copy_values_action, qt.QAction)
+    assert_type(row.paste_values_action, qt.QAction)
     assert_type(row.set_wheel_editing_without_focus(True), None)
 else:
     assert_type(row.row, ChannelStateRow)
@@ -105,5 +107,8 @@ assert_type(controller.begin_value_edit(), None)
 assert_type(controller.finish_value_edit(), None)
 assert_type(controller.align_selected_values(keys), bool)
 assert_type(controller.set_selected_locked(keys, True), bool)
+assert_type(controller.can_paste_values(), bool)
+assert_type(controller.copy_selected_values(keys), int)
+assert_type(controller.paste_copied_values(), bool)
 assert_type(controller.set_selected_display(keys, "hidden"), bool)
 assert_type(controller.rows[0].target_names, tuple[str, ...])

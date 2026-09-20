@@ -29,7 +29,11 @@ from bd_util.maya.ui import (
     MayaFloatOffsetEdit,
     MayaFloatValueEdit,
     MayaPlugsValueEdit,
+    MayaScalarValueClipboard,
+    MayaScalarValueTransfer,
+    apply_scalar_value_transfer,
     apply_plugs_values,
+    capture_scalar_node_values,
     read_enum_definition,
     resolve_bool_plug,
     resolve_enum_plug,
@@ -118,6 +122,7 @@ class ChannelBoxController(qt.QObject):
         self.value_edit_session = MayaEditSession(
             self, chunk_name="EditSelectedAttributes"
         )
+        self._value_clipboard = MayaScalarValueClipboard()
         self.state_edit_session.finished.connect(self._finish_state_edit)
         self._filter_refresh_pending = False
         self._events = MayaCallbackRegistry(self)
@@ -649,6 +654,48 @@ class ChannelBoxController(qt.QObject):
         changed = apply_plugs_values(edits)
         self._report_excluded(excluded)
         return changed
+
+    def can_paste_values(self) -> bool:
+        """対応する属性値dataが現在のOS clipboardにあるか返す。"""
+        return not self._disposed and self._value_clipboard.contains()
+
+    def copy_selected_values(self, keys: Sequence[tuple[str, str]]) -> int:
+        """基準nodeの選択属性値を、型と正式path付きでOSへコピーする。"""
+        rows = self._selected_rows(keys)
+        if not self.node_names:
+            raise RuntimeError("コピー元のノードが選択されていません")
+        attributes = tuple(
+            row.attribute for row in rows if isinstance(row, ChannelRow)
+        )
+        if not attributes:
+            raise ValueError("コピーする値属性を選択してください")
+        snapshot = capture_scalar_node_values(self.node_names[0], attributes)
+        self._value_clipboard.write(MayaScalarValueTransfer((snapshot,)))
+        count = len(snapshot.values)
+        self.operation_reported.emit(
+            f"基準ノードから{count}属性の値をコピーしました"
+        )
+        return count
+
+    def paste_copied_values(self) -> bool:
+        """OS clipboardの属性値を、全選択nodeの同じ正式pathへ貼り付ける。"""
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        if not self.node_names:
+            raise RuntimeError("貼り付け先のノードが選択されていません")
+        if self._active_state_binding is not None:
+            raise RuntimeError(
+                "選択属性の状態変更中には別の操作を開始できません"
+            )
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        transfer = self._value_clipboard.read()
+        result = apply_scalar_value_transfer(self.node_names, transfer)
+        message = f"貼り付け対象: {result.eligible_count}属性"
+        if result.excluded:
+            message += " / 対象外: " + " / ".join(result.excluded)
+        self.operation_reported.emit(message)
+        return result.changed
 
     def _selected_state_plugs(
         self, keys: Sequence[tuple[str, str]], *, display: bool
