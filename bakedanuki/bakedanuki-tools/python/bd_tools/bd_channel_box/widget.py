@@ -142,6 +142,15 @@ class AttributeRowWidget(qt.QWidget):
         self.paste_values_action.setToolTip(
             "コピーした値を選択ノードの同じ正式pathへ貼り付け"
         )
+        self.paste_value_to_selected_action = qt.QAction(
+            "コピーした値を選択属性へ貼り付け", self
+        )
+        self.paste_value_to_selected_action.setObjectName(
+            "paste_single_value_to_selected_attributes"
+        )
+        self.paste_value_to_selected_action.setToolTip(
+            "コピーした一つの値を選択属性と選択ノードへ貼り付け"
+        )
         self.refresh_action = qt.QAction("表示を更新", self)
         self.refresh_action.triggered.connect(self.refresh_requested.emit)
         menu_actions = cast(_MenuActions, self.context_menu)
@@ -149,6 +158,7 @@ class AttributeRowWidget(qt.QWidget):
         self.context_menu.addSeparator()
         menu_actions.addAction(self.copy_values_action)
         menu_actions.addAction(self.paste_values_action)
+        menu_actions.addAction(self.paste_value_to_selected_action)
         self.context_menu.addSeparator()
         menu_actions.addAction(self.refresh_action)
         self.editor = self._create_editor(
@@ -863,6 +873,8 @@ class ChannelBoxWidget(qt.QWidget):
                 self.controller.align_selected_values(selected)
             elif action == "copy_values":
                 self.controller.copy_selected_values(selected)
+            elif action == "paste_value_to_selected":
+                self.controller.paste_copied_value_to_selected(selected)
             elif action in ("lock", "unlock"):
                 self.controller.set_selected_locked(selected, action == "lock")
             elif action in ("keyable", "channel_box", "hidden"):
@@ -894,6 +906,11 @@ class ChannelBoxWidget(qt.QWidget):
             widget.paste_values_action.setEnabled(
                 bool(self.controller.node_names)
                 and self.controller.can_paste_values()
+            )
+            widget.paste_value_to_selected_action.setEnabled(
+                bool(selected)
+                and bool(self.controller.node_names)
+                and self.controller.can_paste_single_value()
             )
             widget.align_action.setEnabled(
                 any(
@@ -988,6 +1005,13 @@ class ChannelBoxWidget(qt.QWidget):
                     )
                     widget.paste_values_action.triggered.connect(
                         self._paste_copied_values
+                    )
+                    widget.paste_value_to_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action,
+                            "paste_value_to_selected",
+                            key,
+                        )
                     )
                     self._configure_value_input(widget, key)
                 widget.refresh_requested.connect(self.refresh)

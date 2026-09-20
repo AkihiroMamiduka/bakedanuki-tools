@@ -915,9 +915,50 @@ def test_copy_selected_values_uses_reference_node_and_does_not_write(
             "mode": 2,
         }
         assert len(transfer.nodes) == 1
+        _show_row_menu(row)
+        assert not row.paste_value_to_selected_action.isEnabled()
         assert cmds.getAttr("multiB.translateX") == 9.0
         assert cmds.undoInfo(query=True, undoQueueEmpty=True)
         assert "3属性" in editor.message_label.text()
+    finally:
+        clipboard.setMimeData(saved)
+
+
+def test_single_copied_value_pastes_to_selected_paths_and_nodes(
+    editor: ChannelBoxWidget,
+) -> None:
+    """一属性のclipboard値を選択した複数pathと全nodeへ一回で貼る。"""
+    clipboard = qt.QApplication.clipboard()
+    saved = _saved_clipboard()
+    try:
+        _set_value("multiA.translateX", 6.25)
+        editor.table_view.select_keys(_keys(editor, "translateX"))
+        source_row = _row(editor, "translateX")
+        _show_row_menu(source_row)
+        source_row.copy_values_action.trigger()
+
+        editor.table_view.select_keys(
+            _keys(editor, "translateY", "translateZ")
+        )
+        target_row = _row(editor, "translateY")
+        _show_row_menu(target_row)
+        assert target_row.paste_value_to_selected_action.isEnabled()
+        cmds.flushUndo()
+
+        target_row.paste_value_to_selected_action.trigger()
+        _events()
+        for node in ("multiA", "multiB"):
+            assert cmds.getAttr(node + ".translateY") == 6.25
+            assert cmds.getAttr(node + ".translateZ") == 6.25
+        assert "選択属性への貼り付け対象: 4属性" in editor.message_label.text()
+
+        cmds.undo()
+        _events()
+        assert cmds.getAttr("multiA.translateY") == 1.0
+        assert cmds.getAttr("multiB.translateY") == 3.0
+        assert cmds.getAttr("multiA.translateZ") == 0.0
+        assert cmds.getAttr("multiB.translateZ") == 0.0
+        assert cmds.undoInfo(query=True, undoQueueEmpty=True)
     finally:
         clipboard.setMimeData(saved)
 
@@ -1019,6 +1060,7 @@ def test_invalid_clipboard_data_reports_error_without_writing(
         row = _row(editor, "translateX")
         _show_row_menu(row)
         assert row.paste_values_action.isEnabled()
+        assert not row.paste_value_to_selected_action.isEnabled()
         before = tuple(
             cmds.getAttr(node + ".translateX") for node in ("multiA", "multiB")
         )

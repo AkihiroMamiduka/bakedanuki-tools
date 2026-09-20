@@ -121,7 +121,7 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 - `29-multi-attribute-value-controls.png`: 上下・Slider・bool・enumの複数属性入力後の表示。
 - `30-wheel-settings-menu.png`、`31-wheel-setting-off.png`:
   ホイール編集の設定メニューと、OFFを反映した値編集画面。
-- `32-clipboard-value-menu.png`: 選択属性値のCopyと同一path Pasteを含むメニュー。
+- `32-clipboard-value-menu.png`: 同一path Pasteと、一つの値を選択属性へ貼る操作を含むメニュー。
 - `result-restart.json`、`clipboard-original.json`: 別Maya processでのOSクリップボード読取り結果と、
   検証後に復元する元のMIME data。
 - `progress.json`: 実行中の段階と完了済みの操作。
@@ -162,6 +162,8 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。
   sceneとUndoを変更しないこと。Pasteが1個／複数nodeの同一正式pathへ、表示行と行順に依存せず
   非表示属性も適用すること。欠落・型違い・enum定義違い・readonly対象の除外理由、hard limitの
   全体拒否、一回Undo、同値時の無Undo、壊れたdataと未対応versionの無書込みを確認する。
+  一属性値だけの場合は選択した複数の同型pathと全選択nodeへ展開し、複数値や型・単位・
+  enum定義が異なる対象へ誤って適用しないことも確認する。
   Windowsでは二つのMaya process間でCopy/Pasteし、custom MIMEまたはmarker付きtextが
   OSクリップボードを介して維持されることも確認する。
 - 入力・対応型: 選択／更新で無書込み、外部変更の非伝播、混在値への一括入力、1回Undo、編集不可対象の扱い。

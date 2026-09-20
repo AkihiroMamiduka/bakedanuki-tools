@@ -1457,7 +1457,7 @@ class _MayaSmokeSession:
         self.steps.append("multi_attribute_value_controls_and_undo")
 
     def _inspect_clipboard_value_transfer(self) -> None:
-        """実メニューから選択属性をCopyし、同pathへ一UndoでPasteする。"""
+        """実メニューからCopyし、同pathと選択pathへ一UndoでPasteする。"""
         from maya import cmds
 
         from bd_util.maya.ui import MayaScalarValueClipboard
@@ -1479,9 +1479,66 @@ class _MayaSmokeSession:
             )
         original_values = {
             name: tuple(cmds.getAttr(f"{node}.{name}") for node in self.nodes)
-            for name in ("weight", "enabled", "mode")
+            for name in (
+                "translateX",
+                "translateY",
+                "translateZ",
+                "weight",
+                "enabled",
+                "mode",
+            )
         }
         try:
+            # 一つの値だけをCopyし、選択した異なる同型pathへ展開する
+            cmds.setAttr(f"{self.nodes[0]}.translateX", 4.25)
+            source = self._row("translate.translateX")
+            widget.table_view.select_keys(
+                ((source.row.attribute.path, source.row.attribute.kind),)
+            )
+            cmds.flushUndo()
+            self._open_context_menu(source.name_label)
+            source.context_menu.setActiveAction(source.copy_values_action)
+            self._key(source.context_menu, qt.Qt.Key.Key_Return)
+            targets = tuple(
+                self._row(path)
+                for path in (
+                    "translate.translateY",
+                    "translate.translateZ",
+                )
+            )
+            widget.table_view.select_keys(
+                tuple(
+                    (row.row.attribute.path, row.row.attribute.kind)
+                    for row in targets
+                )
+            )
+            self._open_context_menu(targets[0].name_label)
+            selected_paste = targets[0].paste_value_to_selected_action
+            if not selected_paste.isEnabled():
+                raise AssertionError(
+                    "一つのclipboard値を選択属性へ貼る操作が有効になりません"
+                )
+            menu_path = self.output / "32-clipboard-value-menu.png"
+            if not targets[0].context_menu.grab().save(str(menu_path)):
+                raise RuntimeError(
+                    "一値を選択属性へ貼るメニュー画像を保存できません"
+                )
+            self.screenshots.append(str(menu_path))
+            targets[0].context_menu.setActiveAction(selected_paste)
+            self._key(targets[0].context_menu, qt.Qt.Key.Key_Return)
+            self._flush_gui()
+            self._assert_values("translateY", (4.25, 4.25))
+            self._assert_values("translateZ", (4.25, 4.25))
+            cmds.undo()
+            self._flush_gui()
+            self._assert_values("translateY", original_values["translateY"])
+            self._assert_values("translateZ", original_values["translateZ"])
+            if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+                raise AssertionError(
+                    "一値から選択属性へのPasteが一回のUndoになっていません"
+                )
+
+            # 複数値Copyの従来操作は同pathへだけ貼り付ける
             rows = tuple(
                 self._row(path) for path in ("weight", "enabled", "mode")
             )
@@ -1499,12 +1556,6 @@ class _MayaSmokeSession:
             source_row.context_menu.setActiveAction(
                 source_row.copy_values_action
             )
-            menu_path = self.output / "32-clipboard-value-menu.png"
-            if not source_row.context_menu.grab().save(str(menu_path)):
-                raise RuntimeError(
-                    "属性値Copy/Pasteメニュー画像を保存できません"
-                )
-            self.screenshots.append(str(menu_path))
             self._key(source_row.context_menu, qt.Qt.Key.Key_Return)
             transfer = MayaScalarValueClipboard().read()
             copied = {
@@ -1551,7 +1602,7 @@ class _MayaSmokeSession:
                     cmds.setAttr(f"{node}.{name}", value)
             cmds.flushUndo()
             self._flush_gui()
-        self.steps.append("clipboard_copy_and_same_path_paste")
+        self.steps.append("clipboard_copy_and_two_paste_modes")
 
     def _inspect_state_sweep(self) -> None:
         """実画面で三行をなぞり、即時反映、絞り込み保留と一回Undoを確認する。"""

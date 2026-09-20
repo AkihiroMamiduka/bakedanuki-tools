@@ -32,6 +32,7 @@ from bd_util.maya.ui import (
     MayaScalarValueClipboard,
     MayaScalarValueTransfer,
     apply_scalar_value_transfer,
+    apply_scalar_value_to_paths,
     apply_plugs_values,
     capture_scalar_node_values,
     read_enum_definition,
@@ -659,6 +660,16 @@ class ChannelBoxController(qt.QObject):
         """対応する属性値dataが現在のOS clipboardにあるか返す。"""
         return not self._disposed and self._value_clipboard.contains()
 
+    def can_paste_single_value(self) -> bool:
+        """clipboardに検証済みの一属性値だけがあるか返す。"""
+        if self._disposed or not self._value_clipboard.contains():
+            return False
+        try:
+            transfer = self._value_clipboard.read()
+        except (TypeError, ValueError, RuntimeError):
+            return False
+        return len(transfer.nodes) == 1 and len(transfer.nodes[0].values) == 1
+
     def copy_selected_values(self, keys: Sequence[tuple[str, str]]) -> int:
         """基準nodeの選択属性値を、型と正式path付きでOSへコピーする。"""
         rows = self._selected_rows(keys)
@@ -692,6 +703,39 @@ class ChannelBoxController(qt.QObject):
         transfer = self._value_clipboard.read()
         result = apply_scalar_value_transfer(self.node_names, transfer)
         message = f"貼り付け対象: {result.eligible_count}属性"
+        if result.excluded:
+            message += " / 対象外: " + " / ".join(result.excluded)
+        self.operation_reported.emit(message)
+        return result.changed
+
+    def paste_copied_value_to_selected(
+        self, keys: Sequence[tuple[str, str]]
+    ) -> bool:
+        """OS clipboardの一値を、選択属性pathと全選択nodeへ貼り付ける。"""
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        if not self.node_names:
+            raise RuntimeError("貼り付け先のノードが選択されていません")
+        if self._active_state_binding is not None:
+            raise RuntimeError(
+                "選択属性の状態変更中には別の操作を開始できません"
+            )
+        paths = tuple(
+            row.attribute.path
+            for row in self._selected_rows(keys)
+            if isinstance(row, ChannelRow)
+        )
+        if not paths:
+            raise ValueError("貼り付け先の値属性を選択してください")
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        transfer = self._value_clipboard.read()
+        result = apply_scalar_value_to_paths(
+            self.node_names,
+            paths,
+            transfer,
+        )
+        message = f"選択属性への貼り付け対象: {result.eligible_count}属性"
         if result.excluded:
             message += " / 対象外: " + " / ".join(result.excluded)
         self.operation_reported.emit(message)

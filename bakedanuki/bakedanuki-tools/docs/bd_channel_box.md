@@ -298,8 +298,8 @@ boolは選択したbool属性を操作後のON／OFFへ揃えます。enumは操
 
 ### 属性値のOSクリップボードCopy/Paste
 
-値編集モードの属性名メニューには「選択属性値をコピー」と
-「同じpathへ属性値を貼り付け」があります。
+値編集モードの属性名メニューには「選択属性値をコピー」「同じpathへ属性値を貼り付け」
+「コピーした値を選択属性へ貼り付け」があります。
 
 Copyは選択した属性について、現在の基準ノードの値を実行時点で取得します。値は表示文字列へ
 丸めず、distanceはcm、angleはdegree、通常数値は単位なしの公開単位で保存します。
@@ -310,6 +310,11 @@ PasteはOSクリップボード内の全属性を、現在選択中の1個また
 `translate.translateX`のような正式な相対pathと型・単位区分が一致する属性だけを対象とするため、
 現在のフィルターで非表示の属性も貼り付けられます。属性がないnodeへ追加はしません。
 
+「コピーした値を選択属性へ貼り付け」は、クリップボードに一属性値だけがある場合に有効です。
+現在選択している属性pathそれぞれへ同じ値を展開し、さらに全選択nodeへ適用します。
+number・distance・angle・boolは同じ型区分同士に限定し、enumは整数値と項目名の定義が
+一致する属性だけを対象にします。コピー元pathと貼り付け先pathの一致は要求しません。
+
 enumは整数値と項目名の対応が一致する場合だけ対象にし、表示順だけの違いは許容します。
 属性なし、型・単位違い、enum定義違い、lock・入力接続などの編集不可属性は対象外として
 画面へ理由を表示します。残った全対象の型・hard limitを先に検証し、一回のUndoで変更します。
@@ -317,8 +322,8 @@ enumは整数値と項目名の対応が一致する場合だけ対象にし、�
 
 custom MIMEとmarker付きtextへversion付きJSONを保存するため、別のMaya processからも
 貼り付けられます。未対応version、壊れたJSON、過大data、未知の型は値を書き込む前に拒否します。
-現在は一つの基準nodeから選択属性をコピーし、同じpathへ貼り付ける範囲です。
-複数source nodeの対応付け、node全属性の一括copy、一値を異なる複数pathへ配る操作は
+現在は一つの基準nodeから選択属性をコピーし、同じpathへ貼るか、一値を選択pathへ配る範囲です。
+複数source nodeの対応付け、node全属性の一括copyは
 [Roadmap](roadmap.md#bdchannelboxの拡張候補)で別段階として扱います。
 
 「表示を更新」は一覧全体を再取得します。余白のメニューは従来どおり表示更新だけを提供し、
@@ -1043,5 +1048,30 @@ Maya本体の結果と画像は
 `%TEMP%/bd-channel-box-maya2025-vch4wi8d`へ保存しました。初回と再起動後の両processが
 終了code 0で正常終了しています。検証前のOSクリップボードは形式ごとのbyte列を退避し、
 別processでの読取り後に復元しました。Maya 2026 / 2027本体の画面操作は実施していません。
+
+toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=True)`を使用します。
+
+### 一つのコピー値を選択属性へ貼り付け（2026-09-21）
+
+OSクリップボードに一属性値だけがある場合に、その値を選択中の複数属性pathと
+全選択nodeへ展開する操作を追加しました。異なる型区分、enum定義違い、readonly属性は
+既存の同path Pasteと同様に対象外として報告し、適用候補は一回のUndoへまとめます。
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsのBlack・Pyright・unit test | 成功。unit 8件、Pyrightのerrorは0件 |
+| Maya 2025 / 2026 / 2027のtools runtime test | 各158件成功 |
+| utilの`verify.cmd` | 終了code 0。Maya 2025全体4,259件成功・739件skip、各versionのQt 843件・Maya UI 375件が成功 |
+| Maya 2025本体の操作 | `result.json`の`success`はTrue。新旧Pasteを含む45工程と31枚の画像を確認 |
+| メニュー表示 | Copy、同path Paste、一値の選択属性Pasteを文字切れなく表示 |
+
+Maya本体ではTranslate Xの一値を選択したTranslate Y / Zと両nodeへ貼り、
+一回のUndoで各元値へ戻ることを確認しました。同じ実装に対する最初の本体実行では
+初回processと別processがともに終了code 0となり、OSクリップボード搬送と元dataの復元も成功しました。
+最終資料の再取得では45工程完了後に既知のMaya終了待ちタイムアウトが再発したため、
+`result.json`の機能結果とrunnerの終了codeを分けて記録します。
+
+最終の結果と画像は`%TEMP%/bd-channel-box-maya2025-pe1n1023`です。
+Maya 2026 / 2027本体の画面操作は実施していません。
 
 toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=True)`を使用します。
