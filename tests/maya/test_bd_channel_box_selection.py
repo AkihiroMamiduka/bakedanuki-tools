@@ -483,6 +483,63 @@ def test_step_wheel_without_focus_aligns_selected_rows(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
+def test_wheel_menu_option_updates_value_and_step_fields(
+    editor: ChannelBoxWidget,
+) -> None:
+    """設定メニューで未フォーカス時の数値欄とStep欄をまとめて切り替える。"""
+    translate_x = _row(editor, "translateX").editor
+    limited = _row(editor, "limited").editor
+    assert isinstance(translate_x, FloatValueStepSpinBox)
+    assert isinstance(limited, FloatSliderSpinBox)
+    assert editor.menu_bar is not None
+    assert editor.settings_menu.title() == "設定"
+    assert editor.wheel_editing_action.isCheckable()
+    assert editor.wheel_editing_action.isChecked()
+    assert not translate_x.spin_box.wheelRequiresFocus()
+    assert not translate_x.step_spin_box.wheelRequiresFocus()
+    assert not limited.spin_box.wheelRequiresFocus()
+
+    # OFFでは未フォーカスのホイールを値変更に使わない
+    editor.wheel_editing_action.setChecked(False)
+    editor.filter_combo.setFocus()
+    _events()
+    assert translate_x.spin_box.wheelRequiresFocus()
+    assert translate_x.step_spin_box.wheelRequiresFocus()
+    assert limited.spin_box.wheelRequiresFocus()
+    before_value = cmds.getAttr("multiA.translateX")
+    before_step = translate_x.singleStep()
+    _wheel(translate_x.spin_box)
+    _wheel(translate_x.step_spin_box)
+    assert cmds.getAttr("multiA.translateX") == before_value
+    assert translate_x.singleStep() == before_step
+
+    # 行を再構築してもOFFを維持し、再度ONにすると現在行へ即時反映する
+    editor.refresh()
+    _events()
+    rebuilt = _row(editor, "translateX").editor
+    rebuilt_limited = _row(editor, "limited").editor
+    assert isinstance(rebuilt, FloatValueStepSpinBox)
+    assert isinstance(rebuilt_limited, FloatSliderSpinBox)
+    assert rebuilt.spin_box.wheelRequiresFocus()
+    assert rebuilt.step_spin_box.wheelRequiresFocus()
+    assert rebuilt_limited.spin_box.wheelRequiresFocus()
+    limited_before = (
+        cmds.getAttr("multiA.limited"),
+        cmds.getAttr("multiB.limited"),
+    )
+    editor.filter_combo.setFocus()
+    _wheel(rebuilt_limited.spin_box)
+    assert (
+        cmds.getAttr("multiA.limited"),
+        cmds.getAttr("multiB.limited"),
+    ) == limited_before
+    editor.wheel_editing_action.setChecked(True)
+    assert not rebuilt.spin_box.wheelRequiresFocus()
+    assert not rebuilt.step_spin_box.wheelRequiresFocus()
+    assert not rebuilt_limited.spin_box.wheelRequiresFocus()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
 def test_value_arrows_add_source_step_to_each_selected_value(
     editor: ChannelBoxWidget,
 ) -> None:

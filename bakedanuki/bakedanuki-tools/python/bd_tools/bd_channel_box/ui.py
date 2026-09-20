@@ -9,6 +9,8 @@ from bd_util.maya.ui import (
     DockRestoreSpec,
     MayaDockableWindow,
     MayaDockableWindowController,
+    MayaUiStateTracker,
+    create_ui_state_manager,
     reset_and_show_ui_layout,
 )
 from bd_util.ui import qt
@@ -19,6 +21,7 @@ from .widget import ChannelBoxWidget
 # 入力欄の幅を維持したまま、属性名の左側に残る余白を調整する
 _INITIAL_WIDTH = 320
 _MINIMUM_WIDTH = 280
+_PREFERENCES_SETTINGS_PATH = "bd_channel_box/preferences/main"
 
 
 class ChannelBoxWindow(MayaDockableWindow):
@@ -40,6 +43,17 @@ class ChannelBoxWindow(MayaDockableWindow):
         # Maya側のcloseとcontroller破棄は子WidgetのcloseEventに依存しない
         self.dock_closed.connect(self.widget.dispose)
         self.dock_about_to_dispose.connect(self.widget.dispose)
+
+        # 配置とは別に入力操作の好みを保存し、Maya再起動時にも復元する
+        self.ui_state = create_ui_state_manager(_PREFERENCES_SETTINGS_PATH)
+        self.ui_state.register_checkable_action(
+            "wheel_editing_without_focus",
+            self.widget.wheel_editing_action,
+        )
+        self.ui_state_tracker = MayaUiStateTracker.for_dockable(
+            self.ui_state,
+            self,
+        )
 
     def closeEvent(self, event: qt.QCloseEvent) -> None:
         """close時に、遅延削除より先に編集とMaya監視を終了する。"""

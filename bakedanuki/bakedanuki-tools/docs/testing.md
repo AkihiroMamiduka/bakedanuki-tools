@@ -70,6 +70,11 @@ enumの選択肢表示・マウス選択・飛び番入力、右クリックメ�
 ドッキングからfloatingへの切替、Mayaへのタブ再配置、Maya側のcloseによる破棄も確認します。
 step欄のキー入力が値とUndoを変更しないこと、変更後の刻み幅で値入力できること、
 値をUndoしてもstepが保持されることも確認します。
+ホイールはWindowsの`WM_MOUSEWHEEL`を専用MayaのWindowへ送り、Qtによる自動フォーカス
+移動も含めて検証します。通常の値欄・Slider付きの値欄でOFF→ON→OFFを切り替え、
+OFFかつ未フォーカス時の無書込み、フォーカス後とON時の編集、値欄・Step欄から
+一覧へのスクロール伝達を確認します。`QApplication.sendEvent()`だけではホイールによる
+自動フォーカス取得を再現できないため、この検証の代用にはしません。
 上部ComboBoxから値編集と表示・ロックを切り替え、非表示属性の追加によって
 Window幅が変わらず、値編集156 px・設定200 pxの操作欄が収まることを確認します。
 縦スクロールバーは必要時だけ表示し、その出入りによる名前列幅・入力列位置の変化は許容します。
@@ -113,6 +118,9 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 - `25-multi-attribute-selection.png`、`26-multi-attribute-typing.png`、
   `27-multi-attribute-applied.png`: 六属性の選択、一括数値入力中、適用後の表示。
 - `28-multi-attribute-menu.png`: 選択属性の操作メニュー。独立したpopupのためメニュー自身を描画して保存する。
+- `29-multi-attribute-value-controls.png`: 上下・Slider・bool・enumの複数属性入力後の表示。
+- `30-wheel-settings-menu.png`、`31-wheel-setting-off.png`:
+  ホイール編集の設定メニューと、OFFを反映した値編集画面。
 - `progress.json`: 実行中の段階と完了済みの操作。
 - `maya-initial.log`、`process-initial.log`、`python-stacks-initial.log`: Mayaの出力と、長時間停止した場合の
   Python stack。
@@ -157,6 +165,10 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。
 - step: 値／Undoを変更しないこと、型別初期値、選択行への同じ表示stepの反映、
   増減方式と対象ごとのキャッシュ維持、Step欄のない行の除外、非フォーカス時のホイール、
   close後の初期化。
+- ホイール設定: 初期ON、値欄とStep欄への即時反映、OFF時の未フォーカス入力停止、
+  行再構築・Window再表示・Maya再起動後の復元、配置リセット後の維持、scene・Undoへの無書込み。
+  通常の値欄・Slider付きの値欄の自動フォーカス取得防止、フォーカス後の編集、
+  ONへの復帰と再度OFFにした場合の動作、一覧へのスクロール伝達をWindows入力経路で検証する。
 - 表示・ロック: 既存Hide属性の列挙・復帰、Keyable／ChannelBox／Hide、ロック／解除、
   各項目の混在と独立操作、1回UndoとRedo、接続済み属性・親ロックの扱い。
   表示状態の混在は3ボタンとも未選択にし、印・tooltipを確認する。

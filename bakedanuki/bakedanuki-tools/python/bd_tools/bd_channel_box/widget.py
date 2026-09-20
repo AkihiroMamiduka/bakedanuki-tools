@@ -110,8 +110,13 @@ class AttributeRowWidget(qt.QWidget):
         *,
         single_step: float | None = None,
         align_callback: Callable[[], None] | None = None,
+        wheel_editing_without_focus: bool = True,
     ) -> None:
         """初期値を書き込まず、Bindingと表示部品を接続する。"""
+        if type(wheel_editing_without_focus) is not bool:
+            raise TypeError(
+                "wheel_editing_without_focusにはboolを指定してください"
+            )
         super().__init__(parent)
         self.row = row
         self.selection_count = selection_count
@@ -131,7 +136,10 @@ class AttributeRowWidget(qt.QWidget):
         menu_actions.addAction(self.align_action)
         self.context_menu.addSeparator()
         menu_actions.addAction(self.refresh_action)
-        self.editor = self._create_editor(single_step)
+        self.editor = self._create_editor(
+            single_step,
+            wheel_editing_without_focus,
+        )
         # 入力グループを固定幅にし、余剰幅は属性名側へ配分する
         self.editor.setFixedWidth(_EDITOR_WIDTH)
         if isinstance(
@@ -160,6 +168,7 @@ class AttributeRowWidget(qt.QWidget):
     def _create_editor(
         self,
         single_step: float | None,
+        wheel_editing_without_focus: bool,
     ) -> (
         BoolCheckBox
         | EnumComboBox
@@ -186,6 +195,9 @@ class AttributeRowWidget(qt.QWidget):
                 layout_order="value_slider",
             )
             editor.spin_box.setUnitVisible(False)
+            editor.spin_box.setWheelRequiresFocus(
+                not wheel_editing_without_focus
+            )
             editor.spin_box.setFixedWidth(_VALUE_FIELD_WIDTH)
             editor.slider.setFixedWidth(_AUXILIARY_FIELD_WIDTH)
             return editor
@@ -199,12 +211,25 @@ class AttributeRowWidget(qt.QWidget):
             step_mode=mode,
             step_increment=increment,
             step_show_unit=False,
-            step_wheel_requires_focus=False,
+            value_wheel_requires_focus=not wheel_editing_without_focus,
+            step_wheel_requires_focus=not wheel_editing_without_focus,
             value_width=_VALUE_FIELD_WIDTH,
             step_width=_AUXILIARY_FIELD_WIDTH,
         )
         value_editor.spin_box.setUnitVisible(False)
         return value_editor
+
+    def set_wheel_editing_without_focus(self, enabled: bool) -> None:
+        """数値の値欄とStep欄へ、未フォーカス時のホイール方針を反映する。"""
+        if type(enabled) is not bool:
+            raise TypeError("enabledにはboolを指定してください")
+        requires_focus = not enabled
+        editor = self.editor
+        if isinstance(editor, FloatSliderSpinBox):
+            editor.spin_box.setWheelRequiresFocus(requires_focus)
+        elif isinstance(editor, FloatValueStepSpinBox):
+            editor.spin_box.setWheelRequiresFocus(requires_focus)
+            editor.step_spin_box.setWheelRequiresFocus(requires_focus)
 
     def _step_defaults(self) -> tuple[float, FloatStepMode, float]:
         """Slider以外の属性に、名前・型に応じた刻み幅を割り当てる。"""
@@ -466,6 +491,25 @@ class ChannelBoxWidget(qt.QWidget):
         self._scroll_timer = qt.QTimer(self)
         self._scroll_timer.setSingleShot(True)
         self._scroll_timer.timeout.connect(self._restore_scroll_anchor)
+        self.menu_bar = qt.QMenuBar(self)
+        self.menu_bar.setNativeMenuBar(False)
+        self.settings_menu = qt.QMenu("設定", self.menu_bar)
+        self.menu_bar.addMenu(self.settings_menu)
+        self.wheel_editing_action = qt.QAction(
+            "未フォーカス時のホイール編集", self
+        )
+        self.wheel_editing_action.setObjectName(
+            "wheelEditingWithoutFocusAction"
+        )
+        self.wheel_editing_action.setCheckable(True)
+        self.wheel_editing_action.setChecked(True)
+        self.wheel_editing_action.setToolTip(
+            "フォーカスのない値欄・Step欄にマウスを重ねた状態で、"
+            "ホイールによる値変更を有効にします。"
+        )
+        cast(_MenuActions, self.settings_menu).addAction(
+            self.wheel_editing_action
+        )
         self.mode_combo = qt.QComboBox(self)
         self.mode_combo.addItem("値編集", "values")
         self.mode_combo.addItem("表示・ロック", "states")
@@ -526,6 +570,7 @@ class ChannelBoxWidget(qt.QWidget):
         layout = qt.QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
+        layout.setMenuBar(self.menu_bar)
         layout.addLayout(controls_layout)
         layout.addWidget(self.header_label)
         layout.addWidget(self.empty_label)
@@ -554,8 +599,17 @@ class ChannelBoxWidget(qt.QWidget):
         self.controller.filter_changed.connect(self._sync_filter)
         self.mode_combo.currentIndexChanged.connect(self._change_mode)
         self.filter_combo.currentIndexChanged.connect(self._change_filter)
+        self.wheel_editing_action.toggled.connect(
+            self._set_wheel_editing_without_focus
+        )
         self._sync_filter()
         self.controller.refresh()
+
+    def _set_wheel_editing_without_focus(self, enabled: bool) -> None:
+        """表示中の全数値行へ、メニューで選んだホイール方針を反映する。"""
+        for widget in self.row_widgets:
+            if isinstance(widget, AttributeRowWidget):
+                widget.set_wheel_editing_without_focus(enabled)
 
     def _change_mode(self, index: int) -> None:
         """編集中の値を通常のフォーカス移動で確定してから表示を切り替える。"""
@@ -884,6 +938,9 @@ class ChannelBoxWidget(qt.QWidget):
                         single_step=self._steps.get(key),
                         align_callback=partial(
                             self._run_selected_action, "align", key
+                        ),
+                        wheel_editing_without_focus=(
+                            self.wheel_editing_action.isChecked()
                         ),
                     )
                     widget.step_changed.connect(

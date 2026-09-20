@@ -3,7 +3,11 @@
 
 from typing import Literal, assert_type
 
-from bd_util.maya.ui import ChannelDisplayState, MayaEditSession
+from bd_util.maya.ui import (
+    ChannelDisplayState,
+    MayaEditSession,
+    MayaUiStateTracker,
+)
 from bd_util.ui import (
     BoolCheckBox,
     CheckBoxSweep,
@@ -11,6 +15,7 @@ from bd_util.ui import (
     FloatSliderSpinBox,
     FloatValueStepSpinBox,
     RadioButtonSweep,
+    UiStateManager,
     qt,
 )
 
@@ -30,6 +35,8 @@ from bd_tools.bd_channel_box.table import ChannelTableView
 assert_type(bd_channel_box.show(), bd_channel_box.ChannelBoxWindow)
 assert_type(bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
 assert_type(bd_channel_box.show().widget, ChannelBoxWidget)
+assert_type(bd_channel_box.show().ui_state, UiStateManager)
+assert_type(bd_channel_box.show().ui_state_tracker, MayaUiStateTracker)
 row = bd_channel_box.show().widget.row_widgets[0]
 assert_type(row, AttributeRowWidget | AttributeStateRowWidget)
 if isinstance(row, AttributeRowWidget):
@@ -42,6 +49,7 @@ if isinstance(row, AttributeRowWidget):
         | FloatValueStepSpinBox,
     )
     assert_type(row.align_action, qt.QAction)
+    assert_type(row.set_wheel_editing_without_focus(True), None)
 else:
     assert_type(row.row, ChannelStateRow)
     assert_type(row.editor, qt.QWidget)
@@ -56,6 +64,9 @@ assert_type(bd_channel_box.restore(), bd_channel_box.ChannelBoxWindow)
 assert_type(bd_channel_box.reset_layout(), bd_channel_box.ChannelBoxWindow)
 assert_type(bd_channel_box.WORKSPACE_CONTROL_NAME, str)
 assert_type(bd_channel_box.show().widget.refresh_action, qt.QAction)
+assert_type(bd_channel_box.show().widget.menu_bar, qt.QMenuBar)
+assert_type(bd_channel_box.show().widget.settings_menu, qt.QMenu)
+assert_type(bd_channel_box.show().widget.wheel_editing_action, qt.QAction)
 assert_type(bd_channel_box.show().widget.mode_combo, qt.QComboBox)
 assert_type(bd_channel_box.show().widget.filter_combo, qt.QComboBox)
 assert_type(bd_channel_box.show().widget.mode_label, qt.QLabel)

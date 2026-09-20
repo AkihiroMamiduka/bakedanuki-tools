@@ -72,6 +72,8 @@ class _MayaSmokeSession:
             self._setup_scene,
             self._show,
             self._inspect,
+            self._inspect_wheel_setting,
+            self._inspect_native_wheel_controls,
             self._float_dock,
             self._inspect_floating,
             self._redock,
@@ -287,6 +289,169 @@ class _MayaSmokeSession:
         self._capture("01-multiple-selection.png")
         self.steps.append("inspect_rendered_views")
 
+    def _inspect_wheel_setting(self) -> None:
+        """設定メニューを表示し、OFFでは未フォーカスのホイール入力を止める。"""
+        from maya import cmds
+
+        from bd_util.ui import FloatValueStepSpinBox, qt
+
+        widget = self._require_window().widget
+        action = widget.wheel_editing_action
+        if not action.isChecked():
+            raise AssertionError("ホイール編集設定の初期値がONではありません")
+        if action not in widget.settings_menu.actions():
+            raise AssertionError("設定メニューにホイール編集項目がありません")
+
+        # 実メニューのチェック表示を独立したpopup画像として保存する
+        menu_position = widget.menu_bar.mapToGlobal(
+            qt.QPoint(0, widget.menu_bar.height())
+        )
+        widget.settings_menu.popup(menu_position)
+        self._flush_gui()
+        menu_path = self.output / "30-wheel-settings-menu.png"
+        if not widget.settings_menu.grab().save(str(menu_path)):
+            raise RuntimeError("設定メニュー画像を保存できません")
+        self.screenshots.append(str(menu_path))
+        widget.settings_menu.close()
+
+        # OFFへ切り替え、値欄とStep欄へ未フォーカスのwheelを送る
+        view = self._row("translate.translateX").editor
+        if not isinstance(view, FloatValueStepSpinBox):
+            raise AssertionError("translateXに値とStepのViewがありません")
+        action.setChecked(False)
+        widget.mode_combo.setFocus()
+        self._flush_gui()
+        if (
+            not view.spin_box.wheelRequiresFocus()
+            or not view.step_spin_box.wheelRequiresFocus()
+        ):
+            raise AssertionError(
+                "ホイール編集設定のOFFが数値欄へ反映されません"
+            )
+        value_before = tuple(
+            cmds.getAttr(f"{node}.translateX") for node in self.nodes
+        )
+        step_before = view.singleStep()
+        cmds.flushUndo()
+        self._wheel(view.spin_box)
+        self._wheel(view.step_spin_box)
+        self._flush_gui()
+        self._assert_values("translateX", value_before)
+        if view.singleStep() != step_before:
+            raise AssertionError(
+                "OFF中の未フォーカスwheelでStepが変わりました"
+            )
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("OFF中の未フォーカスwheelでUndoが増えました")
+        self._capture("31-wheel-setting-off.png")
+        self.steps.append("wheel_setting_menu_and_unfocused_input")
+
+    def _inspect_native_wheel_controls(self) -> None:
+        """値欄のネイティブ入力で設定切替・フォーカス・スクロールを確認する。"""
+        from maya import cmds
+
+        from bd_util.ui import FloatSliderSpinBox, FloatValueStepSpinBox, qt
+
+        widget = self._require_window().widget
+        action = widget.wheel_editing_action
+        for path, attribute in (
+            ("translate.translateX", "translateX"),
+            ("weight", "weight"),
+        ):
+            # OFF→ON→OFFを同じ値欄へ反映し、Undoでsceneを元に戻す
+            for enabled, focused in (
+                (False, False),
+                (False, True),
+                (True, False),
+                (False, False),
+            ):
+                action.setChecked(enabled)
+                view = self._row(path).editor
+                if not isinstance(
+                    view, (FloatValueStepSpinBox, FloatSliderSpinBox)
+                ):
+                    raise AssertionError(f"数値欄がありません: {path}")
+                spin = view.spin_box
+                widget.mode_combo.setFocus()
+                if focused:
+                    spin.setFocus()
+                self._flush_gui()
+                if spin.hasFocus() != focused:
+                    raise AssertionError(f"検証前のフォーカスが不正: {path}")
+                before = tuple(
+                    cmds.getAttr(f"{node}.{attribute}") for node in self.nodes
+                )
+                cmds.flushUndo()
+                self._wheel(spin)
+                self._flush_gui()
+                if enabled or focused:
+                    self._assert_values(
+                        attribute,
+                        tuple(value + spin.singleStep() for value in before),
+                    )
+                    cmds.undo()
+                    self._flush_gui()
+                else:
+                    if spin.hasFocus():
+                        raise AssertionError(
+                            f"OFF中のwheelがフォーカスを取得しました: {path}"
+                        )
+                    if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+                        raise AssertionError(
+                            f"OFF中にUndoが増えました: {path}"
+                        )
+                self._assert_values(attribute, before)
+
+        # 行数に対して表示域を狭め、値欄から親の一覧へwheelが届くことを確認する
+        table = widget.table_view
+        previous_maximum = table.maximumHeight()
+        try:
+            table.setMaximumHeight(140)
+            self._flush_gui()
+            for path in ("translate.translateX", "weight"):
+                row = self._row(path)
+                view = row.editor
+                if not isinstance(
+                    view, (FloatValueStepSpinBox, FloatSliderSpinBox)
+                ):
+                    raise AssertionError(f"数値欄がありません: {path}")
+                fields = (
+                    (view.spin_box, view.step_spin_box)
+                    if isinstance(view, FloatValueStepSpinBox)
+                    else (view.spin_box,)
+                )
+                model = table.model()
+                if model is None:
+                    raise AssertionError("一覧のmodelがありません")
+                index = model.index(widget.row_widgets.index(row), 0)
+                for field in fields:
+                    table.scrollTo(
+                        index,
+                        qt.QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop,
+                    )
+                    widget.mode_combo.setFocus()
+                    self._flush_gui()
+                    scrollbar = table.verticalScrollBar()
+                    scroll_before = scrollbar.value()
+                    value_before = field.value()
+                    if scroll_before <= scrollbar.minimum():
+                        raise AssertionError(
+                            "検証用のスクロール余地がありません"
+                        )
+                    self._wheel(field)
+                    self._flush_gui()
+                    if field.value() != value_before or field.hasFocus():
+                        raise AssertionError(
+                            "OFF中のスクロールが値欄を操作しました"
+                        )
+                    if scrollbar.value() >= scroll_before:
+                        raise AssertionError("値欄のwheelが一覧へ伝わりません")
+        finally:
+            table.setMaximumHeight(previous_maximum)
+            table.verticalScrollBar().setValue(0)
+            self._flush_gui()
+        self.steps.append("native_wheel_value_focus_toggle_and_parent_scroll")
+
     def _float_dock(self) -> None:
         """初回の右ドックを確認し、Maya標準のfloatingへ切り替える。"""
         from maya import cmds
@@ -350,7 +515,7 @@ class _MayaSmokeSession:
         """配置resetが旧入力を破棄し、新しい右ドックへ戻すことを確認する。"""
         from maya import cmds
         from bd_tools import bd_channel_box
-        from bd_util.ui import qt
+        from bd_util.ui import FloatSliderSpinBox, qt
 
         old_window = self._require_window()
         old_controller = old_window.widget.controller
@@ -364,6 +529,21 @@ class _MayaSmokeSession:
             bd_channel_box.WORKSPACE_CONTROL_NAME, query=True, floating=True
         ):
             raise AssertionError("配置reset後に右ドックへ戻りません")
+        if self._require_window().widget.wheel_editing_action.isChecked():
+            raise AssertionError(
+                "配置resetでホイール編集設定が初期化されました"
+            )
+        self._assert_values("weight", (0.25, 0.75))
+        slider_view = self._row("weight").editor
+        if not isinstance(slider_view, FloatSliderSpinBox):
+            raise AssertionError("weight行にSlider付きViewがありません")
+        if not slider_view.spin_box.wheelRequiresFocus():
+            raise AssertionError(
+                "配置reset後のSlider値欄へホイール編集設定が反映されません"
+            )
+        self._require_window().widget.mode_combo.setFocus()
+        self._wheel(slider_view.spin_box)
+        self._flush_gui()
         self._assert_values("weight", (0.25, 0.75))
         self.steps.append("reset_layout_recreates_right_dock")
 
@@ -1369,6 +1549,9 @@ class _MayaSmokeSession:
         if self._callback_counts() != self.baseline_callbacks:
             raise AssertionError("close後にnode callbackが残っています")
         self.window = bd_channel_box.show()
+        self._flush_gui()
+        if self.window.widget.wheel_editing_action.isChecked():
+            raise AssertionError("再表示後にホイール編集設定を復元できません")
         self.steps.append("reopen_without_callback_leak")
 
     def _change_selection(self) -> None:
@@ -1419,6 +1602,8 @@ class _MayaSmokeSession:
         """reload後の表示結果を保存し、負荷測定前に入力Windowを終了する。"""
         from bd_tools import bd_channel_box
 
+        if self._require_window().widget.wheel_editing_action.isChecked():
+            raise AssertionError("reload後にホイール編集設定を復元できません")
         self._capture("03-after-reload.png")
         bd_channel_box.dispose()
 
@@ -1851,6 +2036,38 @@ class _MayaSmokeSession:
             qt.Qt.KeyboardModifier.NoModifier,
         )
         qt.QApplication.sendEvent(widget, event)
+
+    @staticmethod
+    def _wheel(widget: qt.QWidget) -> None:
+        """Windowsの入力経路で、Qtの自動フォーカス処理を含めて検証する。"""
+        import ctypes
+        from ctypes import wintypes
+
+        # sendEventではspontaneousにならず、WheelFocusの自動移動を再現しない
+        window = widget.window()
+        position = widget.mapTo(window, widget.rect().center())
+        ratio = window.devicePixelRatioF()
+        point = wintypes.POINT(
+            round(position.x() * ratio), round(position.y() * ratio)
+        )
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.ClientToScreen.argtypes = (
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.POINT),
+        )
+        user32.ClientToScreen.restype = wintypes.BOOL
+        user32.SendMessageW.argtypes = (
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+        )
+        user32.SendMessageW.restype = wintypes.LPARAM
+        handle = int(window.winId())
+        if not user32.ClientToScreen(handle, ctypes.byref(point)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        coordinates = (point.x & 0xFFFF) | ((point.y & 0xFFFF) << 16)
+        user32.SendMessageW(handle, 0x020A, 120 << 16, coordinates)
 
     def _capture(self, filename: str) -> None:
         """現在のWindowをQtからPNGとして保存する。"""

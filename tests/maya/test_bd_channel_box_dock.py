@@ -165,3 +165,25 @@ def test_ui_script_restore_and_layout_reset(dock_host: _WorkspaceHost) -> None:
     new_window.widget.refresh()
     _events()
     assert new_window.widget.row_widgets
+
+
+def test_wheel_preference_persists_and_layout_reset_keeps_it(
+    dock_host: _WorkspaceHost,
+) -> None:
+    """ホイール設定を再生成後へ復元し、配置リセットでは削除しない。"""
+    from bd_tools import bd_channel_box
+
+    first = bd_channel_box.show()
+    _events()
+    assert first.widget.wheel_editing_action.isChecked()
+    first.widget.wheel_editing_action.setChecked(False)
+    bd_channel_box.close()
+    _events()
+
+    reopened = bd_channel_box.show()
+    _events()
+    assert not reopened.widget.wheel_editing_action.isChecked()
+    reset = bd_channel_box.reset_layout()
+    _events()
+    assert reset is dock_host.window
+    assert not reset.widget.wheel_editing_action.isChecked()

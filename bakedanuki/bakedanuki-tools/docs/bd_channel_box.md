@@ -256,8 +256,24 @@ Step欄の直接入力と上下操作では、選択中でStep欄を持つ属性
 距離・角度・通常数値が混在していても、各行の現在の表示単位で同じ数値を使用します。
 各行のmultiplicative／additive方式は変更しません。Slider・bool・enumなどStep欄のない行は
 対象外として理由を表示し、未選択行のStep欄を操作した場合はその行だけを変更します。
-Step欄はフォーカスがなくても、マウスオーバー中のホイールを受け付けます。
-この位置では一覧をスクロールせず、Stepを変更します。値欄も従来どおり同じ操作が可能です。
+初期状態ではStep欄はフォーカスがなくても、マウスオーバー中のホイールを受け付けます。
+この位置では一覧をスクロールせず、Stepを変更します。値欄も同じ操作が可能です。
+
+### ホイール編集の設定
+
+画面上部の「設定」メニューには、チェック可能な「未フォーカス時のホイール編集」があります。
+初期値はONです。ONでは数値の値欄とStep欄にマウスを重ねるだけでホイール編集できます。
+OFFでは各欄をクリック・Tabなどでフォーカスを得た場合だけ値を変更し、未フォーカス時の
+ホイールを属性一覧のスクロールへ渡します。通常の`[値][Step]`行とSlider付き行の値欄は、
+ホイール入力だけで自動的にフォーカスを取得しません。ON時の従来動作は維持します。
+Slider本体、bool、enumはこの設定の対象外です。
+
+変更は表示中の全数値行へ即時反映し、選択・モード・フィルター変更による行の再構築後も
+維持します。設定は`bd_channel_box/preferences/main`へ保存し、Windowの再表示とMaya再起動後に
+復元します。sceneとUndo履歴には書き込まず、`reset_layout()`でも削除しません。
+
+値欄のフォーカス制御はutilの共通部品で扱います。反映にはtoolsとutilを更新し、
+`bd_tools.reload_package(reload_util=True)`で再読み込みしてください。
 
 Sliderは選択した数値属性を操作位置と同じ表示値へ揃え、1回のドラッグを1回のUndoへまとめます。
 boolは選択したbool属性を操作後のON／OFFへ揃えます。enumは操作元と整数値・項目名の定義が
@@ -911,3 +927,46 @@ Step欄のマウスオーバー中は、クリック前でもホイールによ�
 既存行Viewと配置寸法は変更していません。Maya本体の画面操作による確認は利用者確認前の段階では
 実施していません。toolsとutilの変更で、`bd_tools.reload_package(reload_util=True)`により
 再読み込みできます。
+
+### ホイール編集設定メニュー（2026-09-20）
+
+上部へ「設定」メニューを追加し、「未フォーカス時のホイール編集」で数値の値欄とStep欄を
+まとめて切り替えられるようにしました。初期値はONです。選択は配置とは別の
+`bd_channel_box/preferences/main`へ保存し、Window再表示、Maya再起動、reload後に復元します。
+配置リセット、scene、Undo履歴には影響しません。Slider本体、bool、enumは対象外です。
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsのBlack・Pyright・unit test | 成功。unit 8件、Pyrightのerrorは0件 |
+| Maya 2025 / 2026 / 2027のtools runtime test | 各154件成功 |
+| utilのBlack・Pyright | 成功。Maya 2025 / 2026 / 2027のPyright errorは0件 |
+| utilのUI state test | Maya 2025 / 2026 / 2027で各17件成功。checkable QActionの保存・復元を含む |
+| Maya 2025本体の操作 | `result.json`の`success`はTrue。42工程成功、正常終了 |
+| 追加した本体工程 | メニュー描画、通常・Slider付き値欄とStep欄のOFF、配置reset・再表示・reload後の復元が成功 |
+| 本体の保存画像 | メニューバー、チェック付き設定メニュー、OFF反映後の画面を確認。文字切れなし |
+
+本体の結果と30枚の画像は`%TEMP%/bd-channel-box-maya2025-0n245r0a`へ保存しました。
+toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=True)`を使用します。
+
+### ホイールによる値欄の自動フォーカス取得の修正（2026-09-20）
+
+設定OFFでも通常の値欄とSlider付き値欄が編集される問題を修正しました。
+値欄の`WheelFocus`では、Qtが`wheelEvent()`より先にフォーカスを移し、未フォーカス判定を
+通り抜けていました。共有部品`FloatSpinBox`をOFF時は`StrongFocus`へ切り替え、
+クリック・Tab後の編集と、ON時の従来動作を維持します。
+
+メニュー導入時のテストは`QApplication.sendEvent()`による入力で、この自動フォーカスを
+再現していませんでした。Windowsの`WM_MOUSEWHEEL`へ変更したrunnerで、修正前はOFFでも
+translateXが両ノードとも0から1へ変わる失敗を確認しました。
+修正前の結果は`%TEMP%/bd-channel-box-maya2025-skc4n4ql`へ保存しています。
+
+- Maya 2025本体の43工程が成功し、runnerも終了code 0で正常終了。
+  通常・Slider付き値欄でOFF→ON→OFF、未フォーカス時の無書込みとフォーカス保持、
+  フォーカス後の編集・Undo、値欄とStep欄から一覧へのスクロール伝達を確認。
+- toolsのBlack・Pyright・unit 8件と、Maya 2025 / 2026 / 2027のruntime各154件が成功。
+- utilの`verify.cmd`が終了code 0。Black・3版Pyright、Maya 2025全体4,247 passed / 731 skipped、
+  3版の専用Qt/UI各832件・Maya UI各366件が成功。全体実行でskipするUIも専用processで確認。
+
+修正後の結果と画像は`%TEMP%/bd-channel-box-maya2025-gcts1_cg`へ保存しました。
+Maya 2026 / 2027本体の画面操作は今回は実施していません。
+utilも変更しているため、反映には`bd_tools.reload_package(reload_util=True)`を使用します。
