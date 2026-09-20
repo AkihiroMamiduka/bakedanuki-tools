@@ -46,7 +46,7 @@
 - [x] 利用者による複数行同時編集の動作確認
 - [x] 上下操作の共通増減量、Slider・bool・互換enumの複数属性入力と操作単位のUndo
 - [x] 選択中でStep欄を持つ属性への同じ表示stepの入力、増減方式とWindow内キャッシュの維持
-- [x] 未フォーカス時の値・Stepホイール編集を切り替える設定メニューとuser preferencesへの保存
+- [x] 未フォーカス時の値・Step・enumホイール編集を切り替える設定メニューとuser preferencesへの保存
 
 ### bdChannelBoxの拡張候補
 

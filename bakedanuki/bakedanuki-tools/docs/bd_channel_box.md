@@ -256,21 +256,22 @@ Step欄の直接入力と上下操作では、選択中でStep欄を持つ属性
 距離・角度・通常数値が混在していても、各行の現在の表示単位で同じ数値を使用します。
 各行のmultiplicative／additive方式は変更しません。Slider・bool・enumなどStep欄のない行は
 対象外として理由を表示し、未選択行のStep欄を操作した場合はその行だけを変更します。
-初期状態ではStep欄はフォーカスがなくても、マウスオーバー中のホイールを受け付けます。
+設定をONにすると、Step欄はフォーカスがなくてもマウスオーバー中のホイールを受け付けます。
 この位置では一覧をスクロールせず、Stepを変更します。値欄も同じ操作が可能です。
 
 ### ホイール編集の設定
 
 画面上部の「設定」メニューには、チェック可能な「未フォーカス時のホイール編集」があります。
-初期値はONです。ONでは数値の値欄とStep欄にマウスを重ねるだけでホイール編集できます。
+初期値はOFFです。ONでは数値の値欄・Step欄・enum欄にマウスを重ねるだけでホイール編集できます。
 OFFでは各欄をクリック・Tabなどでフォーカスを得た場合だけ値を変更し、未フォーカス時の
-ホイールを属性一覧のスクロールへ渡します。通常の`[値][Step]`行とSlider付き行の値欄は、
+ホイールを属性一覧のスクロールへ渡します。通常の`[値][Step]`行、Slider付き行の値欄、enum欄は、
 ホイール入力だけで自動的にフォーカスを取得しません。ON時の従来動作は維持します。
-Slider本体、bool、enumはこの設定の対象外です。
+Slider本体とboolはこの設定の対象外です。Slider本体はフォーカスのないホイールを常に一覧へ渡します。
 
-変更は表示中の全数値行へ即時反映し、選択・モード・フィルター変更による行の再構築後も
+変更は表示中の全値入力行へ即時反映し、選択・モード・フィルター変更による行の再構築後も
 維持します。設定は`bd_channel_box/preferences/main`へ保存し、Windowの再表示とMaya再起動後に
-復元します。sceneとUndo履歴には書き込まず、`reset_layout()`でも削除しません。
+復元します。保存済みの選択は初期値より優先します。sceneとUndo履歴には書き込まず、
+`reset_layout()`でも削除しません。
 
 値欄のフォーカス制御はutilの共通部品で扱います。反映にはtoolsとutilを更新し、
 `bd_tools.reload_package(reload_util=True)`で再読み込みしてください。
@@ -970,3 +971,27 @@ translateXが両ノードとも0から1へ変わる失敗を確認しました�
 修正後の結果と画像は`%TEMP%/bd-channel-box-maya2025-gcts1_cg`へ保存しました。
 Maya 2026 / 2027本体の画面操作は今回は実施していません。
 utilも変更しているため、反映には`bd_tools.reload_package(reload_util=True)`を使用します。
+
+### enumホイール編集と初期値OFF（2026-09-20）
+
+「未フォーカス時のホイール編集」をenum欄にも適用し、未フォーカスのenum上でも一覧を
+安全にスクロールできるようにしました。設定の初期値はOFFです。保存済みの利用者設定が
+ある場合はその選択を維持し、設定変更は既存行と再構築後の行へ即時反映します。
+
+共有部品の`EnumComboBox`に同じフォーカス制御を追加しました。独自APIはPEP 8に合わせて
+`wheel_requires_focus()`と`set_wheel_requires_focus()`へ統一し、数値・Step欄にあった
+camelCase名も移行しました。v1.0.0未満のため旧名のaliasは追加していません。
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsのBlack・Pyright・unit test | 成功。unit 8件、Pyrightのerrorは0件 |
+| Maya 2025 / 2026 / 2027のtools runtime test | 各154件成功 |
+| utilの`verify.cmd` | 終了code 0。Maya 2025全体4,247件成功・733件skip、各versionのQt 834件・Maya UI 366件が成功 |
+| Maya 2025本体の操作 | `result.json`の`success`はTrue。43工程成功し、検証用processも終了 |
+| 追加した本体確認 | メニュー初期OFF、数値・Step・Slider付き数値・enumのOFF→focus→ON→OFF、一覧スクロールが成功 |
+
+Maya本体ではWindowsの`WM_MOUSEWHEEL`を送り、Qtの自動フォーカス取得を含む実入力経路を
+確認しました。結果と30枚の画像は`%TEMP%/bd-channel-box-maya2025-mdtb6hhi`へ保存しました。
+Maya 2026 / 2027本体の画面操作は今回は実施していません。
+
+toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=True)`を使用します。

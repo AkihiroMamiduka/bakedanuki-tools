@@ -468,6 +468,7 @@ def test_step_wheel_without_focus_aligns_selected_rows(
     editor: ChannelBoxWidget,
 ) -> None:
     """Step欄のマウスオーバー中は、クリックせず選択行のStepを変更する。"""
+    editor.wheel_editing_action.setChecked(True)
     editor.table_view.select_keys(_keys(editor, "translateX", "translateY"))
     translate_x = _row(editor, "translateX").editor
     translate_y = _row(editor, "translateY").editor
@@ -486,43 +487,69 @@ def test_step_wheel_without_focus_aligns_selected_rows(
 def test_wheel_menu_option_updates_value_and_step_fields(
     editor: ChannelBoxWidget,
 ) -> None:
-    """設定メニューで未フォーカス時の数値欄とStep欄をまとめて切り替える。"""
+    """設定メニューで未フォーカス時の数値欄・Step欄・enumを切り替える。"""
     translate_x = _row(editor, "translateX").editor
     limited = _row(editor, "limited").editor
+    enum_mode = _row(editor, "mode").editor
     assert isinstance(translate_x, FloatValueStepSpinBox)
     assert isinstance(limited, FloatSliderSpinBox)
+    assert isinstance(enum_mode, EnumComboBox)
     assert editor.menu_bar is not None
     assert editor.settings_menu.title() == "設定"
     assert editor.wheel_editing_action.isCheckable()
-    assert editor.wheel_editing_action.isChecked()
-    assert not translate_x.spin_box.wheelRequiresFocus()
-    assert not translate_x.step_spin_box.wheelRequiresFocus()
-    assert not limited.spin_box.wheelRequiresFocus()
+    assert not editor.wheel_editing_action.isChecked()
+    assert translate_x.spin_box.wheel_requires_focus()
+    assert translate_x.step_spin_box.wheel_requires_focus()
+    assert limited.spin_box.wheel_requires_focus()
+    assert enum_mode.wheel_requires_focus()
 
-    # OFFでは未フォーカスのホイールを値変更に使わない
-    editor.wheel_editing_action.setChecked(False)
+    # OFFでは未フォーカスのホイールを全ての属性値で変更に使わない
+    _set_value("multiA.mode", 1)
+    _set_value("multiB.mode", 1)
+    _events()
+    cmds.flushUndo()
     editor.filter_combo.setFocus()
     _events()
-    assert translate_x.spin_box.wheelRequiresFocus()
-    assert translate_x.step_spin_box.wheelRequiresFocus()
-    assert limited.spin_box.wheelRequiresFocus()
     before_value = cmds.getAttr("multiA.translateX")
     before_step = translate_x.singleStep()
     _wheel(translate_x.spin_box)
     _wheel(translate_x.step_spin_box)
+    _wheel(enum_mode)
     assert cmds.getAttr("multiA.translateX") == before_value
     assert translate_x.singleStep() == before_step
+    assert cmds.getAttr("multiA.mode") == cmds.getAttr("multiB.mode") == 1
 
-    # 行を再構築してもOFFを維持し、再度ONにすると現在行へ即時反映する
+    # ONへ切り替えると全入力欄へ即時反映し、enumも未フォーカスで編集できる
+    editor.wheel_editing_action.setChecked(True)
+    assert not translate_x.spin_box.wheel_requires_focus()
+    assert not translate_x.step_spin_box.wheel_requires_focus()
+    assert not limited.spin_box.wheel_requires_focus()
+    assert not enum_mode.wheel_requires_focus()
+    editor.filter_combo.setFocus()
+    _wheel(enum_mode)
+    assert cmds.getAttr("multiA.mode") == cmds.getAttr("multiB.mode") == 0
+    cmds.undo()
+    _events()
+    assert cmds.getAttr("multiA.mode") == cmds.getAttr("multiB.mode") == 1
+
+    # 行を再構築してもONを維持し、再度OFFにすると現在行へ即時反映する
     editor.refresh()
     _events()
     rebuilt = _row(editor, "translateX").editor
     rebuilt_limited = _row(editor, "limited").editor
+    rebuilt_enum = _row(editor, "mode").editor
     assert isinstance(rebuilt, FloatValueStepSpinBox)
     assert isinstance(rebuilt_limited, FloatSliderSpinBox)
-    assert rebuilt.spin_box.wheelRequiresFocus()
-    assert rebuilt.step_spin_box.wheelRequiresFocus()
-    assert rebuilt_limited.spin_box.wheelRequiresFocus()
+    assert isinstance(rebuilt_enum, EnumComboBox)
+    assert not rebuilt.spin_box.wheel_requires_focus()
+    assert not rebuilt.step_spin_box.wheel_requires_focus()
+    assert not rebuilt_limited.spin_box.wheel_requires_focus()
+    assert not rebuilt_enum.wheel_requires_focus()
+    editor.wheel_editing_action.setChecked(False)
+    assert rebuilt.spin_box.wheel_requires_focus()
+    assert rebuilt.step_spin_box.wheel_requires_focus()
+    assert rebuilt_limited.spin_box.wheel_requires_focus()
+    assert rebuilt_enum.wheel_requires_focus()
     limited_before = (
         cmds.getAttr("multiA.limited"),
         cmds.getAttr("multiB.limited"),
@@ -533,10 +560,6 @@ def test_wheel_menu_option_updates_value_and_step_fields(
         cmds.getAttr("multiA.limited"),
         cmds.getAttr("multiB.limited"),
     ) == limited_before
-    editor.wheel_editing_action.setChecked(True)
-    assert not rebuilt.spin_box.wheelRequiresFocus()
-    assert not rebuilt.step_spin_box.wheelRequiresFocus()
-    assert not rebuilt_limited.spin_box.wheelRequiresFocus()
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 

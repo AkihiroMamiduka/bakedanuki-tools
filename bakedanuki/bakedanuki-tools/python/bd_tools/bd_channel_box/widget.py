@@ -110,7 +110,7 @@ class AttributeRowWidget(qt.QWidget):
         *,
         single_step: float | None = None,
         align_callback: Callable[[], None] | None = None,
-        wheel_editing_without_focus: bool = True,
+        wheel_editing_without_focus: bool = False,
     ) -> None:
         """初期値を書き込まず、Bindingと表示部品を接続する。"""
         if type(wheel_editing_without_focus) is not bool:
@@ -181,7 +181,11 @@ class AttributeRowWidget(qt.QWidget):
             # ラベルを重複させず、入力列の左端にチェックを表示する
             return BoolCheckBox(binding, parent=self)
         if isinstance(binding, MayaEnumPlugsBinding):
-            return EnumComboBox(binding, parent=self)
+            return EnumComboBox(
+                binding,
+                parent=self,
+                wheel_requires_focus=not wheel_editing_without_focus,
+            )
         presentation = binding.view_model.presentation
         minimum, maximum = presentation.minimum, presentation.maximum
         decimals = get_channel_box_precision()
@@ -195,7 +199,7 @@ class AttributeRowWidget(qt.QWidget):
                 layout_order="value_slider",
             )
             editor.spin_box.setUnitVisible(False)
-            editor.spin_box.setWheelRequiresFocus(
+            editor.spin_box.set_wheel_requires_focus(
                 not wheel_editing_without_focus
             )
             editor.spin_box.setFixedWidth(_VALUE_FIELD_WIDTH)
@@ -220,16 +224,18 @@ class AttributeRowWidget(qt.QWidget):
         return value_editor
 
     def set_wheel_editing_without_focus(self, enabled: bool) -> None:
-        """数値の値欄とStep欄へ、未フォーカス時のホイール方針を反映する。"""
+        """値欄・Step欄・enumへ、未フォーカス時のホイール方針を反映する。"""
         if type(enabled) is not bool:
             raise TypeError("enabledにはboolを指定してください")
         requires_focus = not enabled
         editor = self.editor
-        if isinstance(editor, FloatSliderSpinBox):
-            editor.spin_box.setWheelRequiresFocus(requires_focus)
+        if isinstance(editor, EnumComboBox):
+            editor.set_wheel_requires_focus(requires_focus)
+        elif isinstance(editor, FloatSliderSpinBox):
+            editor.spin_box.set_wheel_requires_focus(requires_focus)
         elif isinstance(editor, FloatValueStepSpinBox):
-            editor.spin_box.setWheelRequiresFocus(requires_focus)
-            editor.step_spin_box.setWheelRequiresFocus(requires_focus)
+            editor.spin_box.set_wheel_requires_focus(requires_focus)
+            editor.step_spin_box.set_wheel_requires_focus(requires_focus)
 
     def _step_defaults(self) -> tuple[float, FloatStepMode, float]:
         """Slider以外の属性に、名前・型に応じた刻み幅を割り当てる。"""
@@ -502,9 +508,9 @@ class ChannelBoxWidget(qt.QWidget):
             "wheelEditingWithoutFocusAction"
         )
         self.wheel_editing_action.setCheckable(True)
-        self.wheel_editing_action.setChecked(True)
+        self.wheel_editing_action.setChecked(False)
         self.wheel_editing_action.setToolTip(
-            "フォーカスのない値欄・Step欄にマウスを重ねた状態で、"
+            "フォーカスのない値欄・Step欄・enum欄にマウスを重ねた状態で、"
             "ホイールによる値変更を有効にします。"
         )
         cast(_MenuActions, self.settings_menu).addAction(
@@ -606,7 +612,7 @@ class ChannelBoxWidget(qt.QWidget):
         self.controller.refresh()
 
     def _set_wheel_editing_without_focus(self, enabled: bool) -> None:
-        """表示中の全数値行へ、メニューで選んだホイール方針を反映する。"""
+        """表示中の全値入力行へ、メニューで選んだホイール方針を反映する。"""
         for widget in self.row_widgets:
             if isinstance(widget, AttributeRowWidget):
                 widget.set_wheel_editing_without_focus(enabled)

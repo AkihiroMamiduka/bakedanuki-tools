@@ -175,15 +175,15 @@ def test_wheel_preference_persists_and_layout_reset_keeps_it(
 
     first = bd_channel_box.show()
     _events()
-    assert first.widget.wheel_editing_action.isChecked()
-    first.widget.wheel_editing_action.setChecked(False)
+    assert not first.widget.wheel_editing_action.isChecked()
+    first.widget.wheel_editing_action.setChecked(True)
     bd_channel_box.close()
     _events()
 
     reopened = bd_channel_box.show()
     _events()
-    assert not reopened.widget.wheel_editing_action.isChecked()
+    assert reopened.widget.wheel_editing_action.isChecked()
     reset = bd_channel_box.reset_layout()
     _events()
     assert reset is dock_host.window
-    assert not reset.widget.wheel_editing_action.isChecked()
+    assert reset.widget.wheel_editing_action.isChecked()

@@ -293,12 +293,12 @@ class _MayaSmokeSession:
         """設定メニューを表示し、OFFでは未フォーカスのホイール入力を止める。"""
         from maya import cmds
 
-        from bd_util.ui import FloatValueStepSpinBox, qt
+        from bd_util.ui import EnumComboBox, FloatValueStepSpinBox, qt
 
         widget = self._require_window().widget
         action = widget.wheel_editing_action
-        if not action.isChecked():
-            raise AssertionError("ホイール編集設定の初期値がONではありません")
+        if action.isChecked():
+            raise AssertionError("ホイール編集設定の初期値がOFFではありません")
         if action not in widget.settings_menu.actions():
             raise AssertionError("設定メニューにホイール編集項目がありません")
 
@@ -314,29 +314,37 @@ class _MayaSmokeSession:
         self.screenshots.append(str(menu_path))
         widget.settings_menu.close()
 
-        # OFFへ切り替え、値欄とStep欄へ未フォーカスのwheelを送る
+        # 初期OFFの値欄・Step欄・enum欄へ未フォーカスのwheelを送る
         view = self._row("translate.translateX").editor
+        enum_view = self._row("mode").editor
         if not isinstance(view, FloatValueStepSpinBox):
             raise AssertionError("translateXに値とStepのViewがありません")
-        action.setChecked(False)
+        if not isinstance(enum_view, EnumComboBox):
+            raise AssertionError("modeにenumのViewがありません")
         widget.mode_combo.setFocus()
         self._flush_gui()
         if (
-            not view.spin_box.wheelRequiresFocus()
-            or not view.step_spin_box.wheelRequiresFocus()
+            not view.spin_box.wheel_requires_focus()
+            or not view.step_spin_box.wheel_requires_focus()
+            or not enum_view.wheel_requires_focus()
         ):
             raise AssertionError(
-                "ホイール編集設定のOFFが数値欄へ反映されません"
+                "ホイール編集設定のOFFが属性入力欄へ反映されません"
             )
         value_before = tuple(
             cmds.getAttr(f"{node}.translateX") for node in self.nodes
+        )
+        enum_before = tuple(
+            cmds.getAttr(f"{node}.mode") for node in self.nodes
         )
         step_before = view.singleStep()
         cmds.flushUndo()
         self._wheel(view.spin_box)
         self._wheel(view.step_spin_box)
+        self._wheel(enum_view)
         self._flush_gui()
         self._assert_values("translateX", value_before)
+        self._assert_values("mode", enum_before)
         if view.singleStep() != step_before:
             raise AssertionError(
                 "OFF中の未フォーカスwheelでStepが変わりました"
@@ -350,7 +358,12 @@ class _MayaSmokeSession:
         """値欄のネイティブ入力で設定切替・フォーカス・スクロールを確認する。"""
         from maya import cmds
 
-        from bd_util.ui import FloatSliderSpinBox, FloatValueStepSpinBox, qt
+        from bd_util.ui import (
+            EnumComboBox,
+            FloatSliderSpinBox,
+            FloatValueStepSpinBox,
+            qt,
+        )
 
         widget = self._require_window().widget
         action = widget.wheel_editing_action
@@ -402,24 +415,57 @@ class _MayaSmokeSession:
                         )
                 self._assert_values(attribute, before)
 
+        # enum欄もOFF→ON→OFFで、フォーカス中またはONの場合だけ変更する
+        for enabled, focused in (
+            (False, False),
+            (False, True),
+            (True, False),
+            (False, False),
+        ):
+            action.setChecked(enabled)
+            enum_view = self._row("mode").editor
+            if not isinstance(enum_view, EnumComboBox):
+                raise AssertionError("modeにenumのViewがありません")
+            widget.mode_combo.setFocus()
+            if focused:
+                enum_view.setFocus()
+            self._flush_gui()
+            if enum_view.hasFocus() != focused:
+                raise AssertionError("enum検証前のフォーカスが不正です")
+            before = tuple(cmds.getAttr(f"{node}.mode") for node in self.nodes)
+            cmds.flushUndo()
+            self._wheel(enum_view)
+            self._flush_gui()
+            if enabled or focused:
+                self._assert_values("mode", (0, 0))
+                cmds.undo()
+                self._flush_gui()
+            else:
+                if enum_view.hasFocus():
+                    raise AssertionError(
+                        "OFF中のwheelがenum欄のフォーカスを取得しました"
+                    )
+                if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+                    raise AssertionError("OFF中のenum wheelでUndoが増えました")
+            self._assert_values("mode", before)
+
         # 行数に対して表示域を狭め、値欄から親の一覧へwheelが届くことを確認する
         table = widget.table_view
         previous_maximum = table.maximumHeight()
         try:
             table.setMaximumHeight(140)
             self._flush_gui()
-            for path in ("translate.translateX", "weight"):
+            for path in ("translate.translateX", "weight", "mode"):
                 row = self._row(path)
                 view = row.editor
-                if not isinstance(
-                    view, (FloatValueStepSpinBox, FloatSliderSpinBox)
-                ):
-                    raise AssertionError(f"数値欄がありません: {path}")
-                fields = (
-                    (view.spin_box, view.step_spin_box)
-                    if isinstance(view, FloatValueStepSpinBox)
-                    else (view.spin_box,)
-                )
+                if isinstance(view, FloatValueStepSpinBox):
+                    fields = (view.spin_box, view.step_spin_box)
+                elif isinstance(view, FloatSliderSpinBox):
+                    fields = (view.spin_box,)
+                elif isinstance(view, EnumComboBox):
+                    fields = (view,)
+                else:
+                    raise AssertionError(f"ホイール入力欄がありません: {path}")
                 model = table.model()
                 if model is None:
                     raise AssertionError("一覧のmodelがありません")
@@ -433,14 +479,23 @@ class _MayaSmokeSession:
                     self._flush_gui()
                     scrollbar = table.verticalScrollBar()
                     scroll_before = scrollbar.value()
-                    value_before = field.value()
+                    value_before = (
+                        field.currentIndex()
+                        if isinstance(field, EnumComboBox)
+                        else field.value()
+                    )
                     if scroll_before <= scrollbar.minimum():
                         raise AssertionError(
                             "検証用のスクロール余地がありません"
                         )
                     self._wheel(field)
                     self._flush_gui()
-                    if field.value() != value_before or field.hasFocus():
+                    value_after = (
+                        field.currentIndex()
+                        if isinstance(field, EnumComboBox)
+                        else field.value()
+                    )
+                    if value_after != value_before or field.hasFocus():
                         raise AssertionError(
                             "OFF中のスクロールが値欄を操作しました"
                         )
@@ -537,7 +592,7 @@ class _MayaSmokeSession:
         slider_view = self._row("weight").editor
         if not isinstance(slider_view, FloatSliderSpinBox):
             raise AssertionError("weight行にSlider付きViewがありません")
-        if not slider_view.spin_box.wheelRequiresFocus():
+        if not slider_view.spin_box.wheel_requires_focus():
             raise AssertionError(
                 "配置reset後のSlider値欄へホイール編集設定が反映されません"
             )
