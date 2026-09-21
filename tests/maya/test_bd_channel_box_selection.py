@@ -8,7 +8,11 @@ from typing import cast
 import pytest
 from maya import cmds
 
-from bd_util.maya.ui import MayaScalarValueClipboard
+from bd_util.maya.ui import (
+    MayaScalarValueClipboard,
+    MayaScalarValueTransfer,
+    capture_scalar_node_values,
+)
 from bd_util.ui import (
     BoolCheckBox,
     EnumComboBox,
@@ -16,7 +20,24 @@ from bd_util.ui import (
     FloatValueStepSpinBox,
     qt,
 )
+from bd_tools.bd_channel_box.controller import ChannelAttributeFilter
 from bd_tools.bd_channel_box.widget import AttributeRowWidget, ChannelBoxWidget
+
+
+class _StaticValueClipboard:
+    """OS clipboardを使わず固定した搬送値を返すtest用境界。"""
+
+    def __init__(self, transfer: MayaScalarValueTransfer) -> None:
+        """読み取る搬送値を保持する。"""
+        self._transfer = transfer
+
+    def contains(self) -> bool:
+        """対応dataが常に存在すると返す。"""
+        return True
+
+    def read(self) -> MayaScalarValueTransfer:
+        """固定した搬送値を返す。"""
+        return self._transfer
 
 
 def _events() -> None:
@@ -904,6 +925,17 @@ def test_copy_all_values_uses_reference_node_and_does_not_write(
         assert row.copy_all_values_action.isEnabled()
         assert row.copy_selected_values_action.isEnabled()
         assert row.paste_menu.title() == "ペースト"
+        assert row.paste_copied_values_menu.title() == "コピー元と同じ属性"
+        assert tuple(
+            action.text()
+            for action in row.paste_copied_values_actions.values()
+        ) == (
+            "全て",
+            "keyable + channelbox",
+            "keyable",
+            "channelbox",
+            "hide",
+        )
         assert editor.edit_menu.title() == "編集"
         assert editor.copy_menu.title() == "コピー"
         assert editor.paste_menu.title() == "ペースト"
@@ -1034,6 +1066,98 @@ def test_selected_values_paste_to_copied_paths_across_nodes(
         assert cmds.undoInfo(query=True, undoQueueEmpty=True)
     finally:
         clipboard.setMimeData(saved)
+
+
+def test_copied_path_paste_filters_by_reference_node_display_state(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """基準nodeの表示状態でCopy項目を絞り、同じpathを全選択nodeへ貼る。"""
+    _set_value("multiA.gain", 4.5)
+    _set_value("multiA.enabled", False)
+    _set_value("multiA.limited", 3.5)
+    attributes = tuple(
+        _row(editor, name).row.attribute
+        for name in ("gain", "enabled", "limited")
+    )
+    transfer = MayaScalarValueTransfer(
+        (capture_scalar_node_values("multiA", attributes),)
+    )
+    monkeypatch.setattr(
+        editor.controller,
+        "_value_clipboard",
+        _StaticValueClipboard(transfer),
+    )
+
+    # 基準nodeと後続nodeで表示状態を変え、基準側だけでpathを決める
+    cmds.setAttr("multiA.gain", keyable=True)
+    cmds.setAttr("multiA.enabled", keyable=False)
+    cmds.setAttr("multiA.enabled", channelBox=True)
+    cmds.setAttr("multiA.limited", keyable=False)
+    cmds.setAttr("multiA.limited", channelBox=False)
+    cmds.setAttr("multiB.gain", keyable=False)
+    cmds.setAttr("multiB.gain", channelBox=False)
+    cmds.setAttr("multiB.enabled", keyable=False)
+    cmds.setAttr("multiB.enabled", channelBox=False)
+    cmds.setAttr("multiB.limited", keyable=True)
+    for node in ("multiA", "multiB"):
+        _set_value(node + ".gain", 1.0)
+        _set_value(node + ".enabled", True)
+        _set_value(node + ".limited", 1.0)
+    _events()
+    editor.edit_menu.aboutToShow.emit()
+    assert editor.paste_copied_values_menu.isEnabled()
+    assert all(
+        action.isEnabled()
+        for action in editor.paste_copied_values_actions.values()
+    )
+    cmds.flushUndo()
+
+    cases: tuple[
+        tuple[
+            ChannelAttributeFilter,
+            tuple[float, bool, float],
+            int,
+            int,
+        ],
+        ...,
+    ] = (
+        ("keyable", (4.5, True, 1.0), 2, 2),
+        ("channel_box", (1.0, False, 1.0), 2, 2),
+        ("hidden", (1.0, True, 3.5), 2, 2),
+        ("visible", (4.5, False, 1.0), 4, 1),
+    )
+    for display_filter, expected, eligible_count, filtered_count in cases:
+        editor.paste_copied_values_actions[display_filter].trigger()
+        _events()
+        for node in ("multiA", "multiB"):
+            assert cmds.getAttr(node + ".gain") == expected[0]
+            assert cmds.getAttr(node + ".enabled") is expected[1]
+            assert cmds.getAttr(node + ".limited") == expected[2]
+        assert (
+            f"貼り付け対象: {eligible_count}属性"
+            in editor.message_label.text()
+        )
+        assert (
+            f"表示条件外: {filtered_count}項目" in editor.message_label.text()
+        )
+
+        cmds.undo()
+        _events()
+        for node in ("multiA", "multiB"):
+            assert cmds.getAttr(node + ".gain") == 1.0
+            assert cmds.getAttr(node + ".enabled") is True
+            assert cmds.getAttr(node + ".limited") == 1.0
+        assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    # 一項目も条件に合わない場合は値とUndoを変更しない
+    cmds.setAttr("multiA.enabled", channelBox=False)
+    cmds.setAttr("multiA.enabled", keyable=True)
+    cmds.setAttr("multiA.limited", keyable=True)
+    cmds.flushUndo()
+    editor.paste_copied_values_actions["channel_box"].trigger()
+    assert "貼り付け対象: 0属性" in editor.message_label.text()
+    assert "表示条件外: 3項目" in editor.message_label.text()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_paste_matches_only_selected_formal_paths_across_nodes(

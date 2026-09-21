@@ -11,8 +11,11 @@ from typing import Literal, TypeAlias
 from maya.api import OpenMaya as om
 
 from bd_util.maya.node.inspection import (
+    ScalarAttributeDisplayFilter,
     ScalarAttributeInfo,
+    filter_scalar_attribute_paths,
     inspect_scalar_attributes,
+    matches_scalar_attribute_display_filter,
     selected_node_names,
 )
 from bd_util.maya.ui import (
@@ -50,9 +53,7 @@ ChannelBinding: TypeAlias = (
     MayaBoolPlugsBinding | MayaFloatPlugsBinding | MayaEnumPlugsBinding
 )
 ChannelBoxMode: TypeAlias = Literal["values", "states"]
-ChannelAttributeFilter: TypeAlias = Literal[
-    "all", "visible", "keyable", "channel_box", "hidden"
-]
+ChannelAttributeFilter: TypeAlias = ScalarAttributeDisplayFilter
 
 __all__ = [
     "ChannelBinding",
@@ -416,16 +417,9 @@ class ChannelBoxController(qt.QObject):
 
     def _matches_filter(self, attribute: ScalarAttributeInfo) -> bool:
         """Keyableを優先する三状態分類で、基準属性の表示可否を返す。"""
-        selected = self.attribute_filter
-        if selected == "all":
-            return True
-        if selected == "visible":
-            return attribute.keyable or attribute.channel_box
-        if selected == "keyable":
-            return attribute.keyable
-        if selected == "channel_box":
-            return not attribute.keyable and attribute.channel_box
-        return not attribute.keyable and not attribute.channel_box
+        return matches_scalar_attribute_display_filter(
+            attribute, self.attribute_filter
+        )
 
     @staticmethod
     def _resolve_state_plug(
@@ -703,8 +697,18 @@ class ChannelBoxController(qt.QObject):
         )
         return count
 
-    def paste_copied_values(self) -> bool:
-        """OS clipboardの属性値を、全選択nodeの同じ正式pathへ貼り付ける。"""
+    def paste_copied_values(
+        self, display_filter: ChannelAttributeFilter = "all"
+    ) -> bool:
+        """OS clipboardの属性値を、表示条件で絞った同じ正式pathへ貼る。"""
+        if display_filter not in (
+            "all",
+            "visible",
+            "keyable",
+            "channel_box",
+            "hidden",
+        ):
+            raise ValueError("未対応の属性表示フィルターです")
         if self._disposed:
             raise RuntimeError("終了済みの画面には入力できません")
         if not self.node_names:
@@ -716,12 +720,66 @@ class ChannelBoxController(qt.QObject):
         self.state_edit_session.finish()
         self._finish_value_edit()
         transfer = self._value_clipboard.read()
-        result = apply_scalar_value_transfer(self.node_names, transfer)
-        message = f"貼り付け対象: {result.eligible_count}属性"
-        if result.excluded:
-            message += " / 対象外: " + " / ".join(result.excluded)
+        if display_filter == "all":
+            result = apply_scalar_value_transfer(self.node_names, transfer)
+            changed = result.changed
+            eligible_count = result.eligible_count
+            excluded = result.excluded
+            filtered_count = 0
+        else:
+            paths, filtered_count, base_excluded = (
+                self._paste_paths_for_display_filter(transfer, display_filter)
+            )
+            if paths:
+                result = apply_scalar_value_transfer_to_paths(
+                    self.node_names,
+                    paths,
+                    transfer,
+                )
+                changed = result.changed
+                eligible_count = result.eligible_count
+                excluded = base_excluded + result.excluded
+            else:
+                changed = False
+                eligible_count = 0
+                excluded = base_excluded
+        message = f"貼り付け対象: {eligible_count}属性"
+        if display_filter != "all":
+            message += f" / 表示条件外: {filtered_count}項目"
+        if excluded:
+            message += " / 対象外: " + " / ".join(excluded)
         self.operation_reported.emit(message)
-        return result.changed
+        return changed
+
+    def _paste_paths_for_display_filter(
+        self,
+        transfer: MayaScalarValueTransfer,
+        display_filter: ChannelAttributeFilter,
+    ) -> tuple[tuple[str, ...], int, tuple[str, ...]]:
+        """基準nodeの表示状態からPaste対象pathと正常な除外件数を求める。"""
+        if len(transfer.nodes) != 1:
+            raise ValueError("現在は一つのコピー元nodeだけ貼り付けられます")
+        base_name = self.node_names[0]
+        attributes = inspect_scalar_attributes(base_name)
+        by_path = {attribute.path: attribute for attribute in attributes}
+        matched_paths = set(
+            filter_scalar_attribute_paths(attributes, display_filter)
+        )
+        paths: list[str] = []
+        filtered_count = 0
+        excluded: list[str] = []
+
+        # コピー項目順を維持し、基準nodeにないpathは後続nodeへ適用しない
+        for snapshot in transfer.nodes[0].values:
+            if snapshot.path not in by_path:
+                excluded.append(
+                    f"{base_name}.{snapshot.path}: 対応する属性なし"
+                )
+            elif snapshot.path in matched_paths:
+                paths.append(snapshot.path)
+            else:
+                filtered_count += 1
+        return tuple(paths), filtered_count, tuple(excluded)
 
     def paste_copied_values_to_selected(
         self, keys: Sequence[tuple[str, str]]

@@ -53,6 +53,11 @@ if isinstance(row, AttributeRowWidget):
     assert_type(row.copy_all_values_action, qt.QAction)
     assert_type(row.copy_selected_values_action, qt.QAction)
     assert_type(row.paste_menu, qt.QMenu)
+    assert_type(row.paste_copied_values_menu, qt.QMenu)
+    assert_type(
+        row.paste_copied_values_actions,
+        dict[ChannelAttributeFilter, qt.QAction],
+    )
     assert_type(row.paste_copied_values_action, qt.QAction)
     assert_type(row.paste_selected_values_action, qt.QAction)
     assert_type(row.set_wheel_editing_without_focus(True), None)
@@ -78,6 +83,11 @@ assert_type(
     bd_channel_box.show().widget.copy_selected_values_action, qt.QAction
 )
 assert_type(bd_channel_box.show().widget.paste_menu, qt.QMenu)
+assert_type(bd_channel_box.show().widget.paste_copied_values_menu, qt.QMenu)
+assert_type(
+    bd_channel_box.show().widget.paste_copied_values_actions,
+    dict[ChannelAttributeFilter, qt.QAction],
+)
 assert_type(
     bd_channel_box.show().widget.paste_copied_values_action, qt.QAction
 )
@@ -129,6 +139,7 @@ assert_type(controller.can_paste_single_value(), bool)
 assert_type(controller.copy_all_values(), int)
 assert_type(controller.copy_selected_values(keys), int)
 assert_type(controller.paste_copied_values(), bool)
+assert_type(controller.paste_copied_values("keyable"), bool)
 assert_type(controller.paste_copied_values_to_selected(keys), bool)
 assert_type(controller.set_selected_display(keys, "hidden"), bool)
 assert_type(controller.rows[0].target_names, tuple[str, ...])

@@ -1457,7 +1457,7 @@ class _MayaSmokeSession:
         self.steps.append("multi_attribute_value_controls_and_undo")
 
     def _inspect_clipboard_value_transfer(self) -> None:
-        """実メニューのCopyと二つのPaste規則を一Undoまで確認する。"""
+        """実メニューのCopyと表示条件を含むPaste規則を一Undoまで確認する。"""
         from maya import cmds
 
         from bd_util.maya.ui import MayaScalarValueClipboard
@@ -1487,6 +1487,14 @@ class _MayaSmokeSession:
                 "enabled",
                 "mode",
             )
+        }
+        original_display_states = {
+            f"{node}.{name}": (
+                bool(cmds.getAttr(f"{node}.{name}", keyable=True)),
+                bool(cmds.getAttr(f"{node}.{name}", channelBox=True)),
+            )
+            for node in self.nodes
+            for name in ("weight", "enabled", "mode")
         }
         try:
             # 選択した一属性だけをCopyし、異なる同型pathへ展開する
@@ -1634,6 +1642,71 @@ class _MayaSmokeSession:
             self._assert_values("mode", (10, 10))
             if not cmds.undoInfo(query=True, undoQueueEmpty=True):
                 raise AssertionError("Pasteが一回のUndoになっていません")
+
+            # 基準nodeの表示状態でpathを決め、後続nodeにも同じpathを貼る
+            cmds.setAttr(f"{self.nodes[0]}.weight", keyable=True)
+            cmds.setAttr(f"{self.nodes[0]}.enabled", keyable=False)
+            cmds.setAttr(f"{self.nodes[0]}.enabled", channelBox=True)
+            cmds.setAttr(f"{self.nodes[0]}.mode", keyable=False)
+            cmds.setAttr(f"{self.nodes[0]}.mode", channelBox=False)
+            cmds.setAttr(f"{self.nodes[1]}.weight", keyable=False)
+            cmds.setAttr(f"{self.nodes[1]}.weight", channelBox=False)
+            cmds.setAttr(f"{self.nodes[1]}.enabled", keyable=False)
+            cmds.setAttr(f"{self.nodes[1]}.enabled", channelBox=False)
+            cmds.setAttr(f"{self.nodes[1]}.mode", keyable=True)
+            self._flush_gui()
+            target_row = self._row("translate.translateX")
+            self._open_context_menu(target_row.name_label)
+            expected_labels = (
+                "全て",
+                "keyable + channelbox",
+                "keyable",
+                "channelbox",
+                "hide",
+            )
+            actual_labels = tuple(
+                action.text()
+                for action in target_row.paste_copied_values_actions.values()
+            )
+            if actual_labels != expected_labels:
+                raise AssertionError(
+                    f"表示状態Pasteメニューが不正です: {actual_labels}"
+                )
+            target_row.paste_copied_values_menu.popup(
+                target_row.name_label.mapToGlobal(
+                    qt.QPoint(target_row.name_label.width(), 0)
+                )
+            )
+            self._flush_gui()
+            filter_menu_path = self.output / "33-clipboard-filter-menu.png"
+            if not target_row.paste_copied_values_menu.grab().save(
+                str(filter_menu_path)
+            ):
+                raise RuntimeError(
+                    "表示状態でPaste対象を選ぶメニュー画像を保存できません"
+                )
+            self.screenshots.append(str(filter_menu_path))
+            cmds.flushUndo()
+            target_row.paste_copied_values_actions["channel_box"].trigger()
+            target_row.paste_copied_values_menu.close()
+            target_row.paste_menu.close()
+            target_row.context_menu.close()
+            self._flush_gui()
+            self._assert_values("weight", (0.9, 0.9))
+            self._assert_values("enabled", (False, False))
+            self._assert_values("mode", (10, 10))
+            if "貼り付け対象: 2属性" not in widget.message_label.text():
+                raise AssertionError(
+                    "表示状態Pasteの対象数が表示されません: "
+                    + widget.message_label.text()
+                )
+            cmds.undo()
+            self._flush_gui()
+            self._assert_values("enabled", (True, True))
+            if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+                raise AssertionError(
+                    "表示状態Pasteが一回のUndoになっていません"
+                )
         finally:
             if os.environ.get(_PREPARE_RESTART_VARIABLE) == "1":
                 _write_json(
@@ -1645,9 +1718,12 @@ class _MayaSmokeSession:
             for name, values in original_values.items():
                 for node, value in zip(self.nodes, values, strict=True):
                     cmds.setAttr(f"{node}.{name}", value)
+            for path, state in original_display_states.items():
+                cmds.setAttr(path, keyable=state[0])
+                cmds.setAttr(path, channelBox=state[1])
             cmds.flushUndo()
             self._flush_gui()
-        self.steps.append("clipboard_copy_and_two_paste_modes")
+        self.steps.append("clipboard_copy_and_filtered_paste_modes")
 
     def _inspect_state_sweep(self) -> None:
         """実画面で三行をなぞり、即時反映、絞り込み保留と一回Undoを確認する。"""

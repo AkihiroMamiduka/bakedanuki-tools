@@ -302,7 +302,11 @@ boolは選択したbool属性を操作後のON／OFFへ揃えます。enumは操
 
 - `コピー > 全属性`: 現在の基準nodeで対応している全属性をコピーします。
 - `コピー > 選択属性`: 現在選択している属性だけをコピーします。
-- `ペースト > コピー元と同じ属性`: コピー情報に含まれる全正式pathへ貼り付けます。
+- `ペースト > コピー元と同じ属性 > 全て`: コピー情報に含まれる全正式pathへ貼り付けます。
+- `ペースト > コピー元と同じ属性 > keyable + channelbox`: 貼り付け時の基準nodeで
+  KeyableまたはChannelBoxのコピー項目へ絞ります。
+- `ペースト > コピー元と同じ属性 > keyable／channelbox／hide`: 貼り付け時の基準nodeで
+  各表示状態のコピー項目へ絞ります。
 - `ペースト > 選択属性`: コピー値が複数なら、現在選択した属性と同じ正式pathだけを
   貼り付けます。コピー値が一つなら、その値を現在選択した互換属性すべてへ貼り付けます。
 
@@ -312,9 +316,16 @@ Copyは現在の基準ノードからbool・number・distance・angle・enum属�
 公開単位で保存します。enumの実整数と項目定義も型付きで保存します。
 CopyはsceneとUndo履歴を変更しません。
 
-「コピー元と同じ属性」は、OSクリップボード内の全属性を現在選択中の1個または複数nodeの
-同じ正式pathへ適用します。貼り付け先の行選択とAttribute Filterには依存しないため、
-画面に出ていないコピー属性も対象になります。
+「コピー元と同じ属性」の`全て`は、OSクリップボード内の全属性を現在選択中の1個または
+複数nodeの同じ正式pathへ適用します。ほかの四項目は、現在の先頭選択nodeを基準に
+Paste時点の表示状態から対象pathを一度決め、その同じpathを全選択nodeへ適用します。
+後続nodeごとの表示状態では再判定しないため、一操作の一部nodeだけが条件外にはなりません。
+
+`keyable + channelbox`はKeyableまたはChannelBox、`keyable`はKeyable、`channelbox`は
+非KeyableかつChannelBox、`hide`はKeyableでもChannelBoxでもない属性です。画面上部の
+Attribute Filterとは独立して明示的に選び、選択した条件は保存しません。条件外のコピー項目数は
+通常の結果として表示し、属性なし・型違い・編集不可などの対象外理由とは分けます。
+対象pathが0件ならsceneとUndo履歴を変更しません。
 
 複数項目をコピーした後の「選択属性」は、OSクリップボード内の値から現在選択した属性と
 同じ正式pathだけを取り出します。`translate.translateX`のような正式な相対pathと
@@ -333,9 +344,8 @@ enumは整数値と項目名の対応が一致する場合だけ対象にし、�
 
 custom MIMEとmarker付きtextへversion付きJSONを保存するため、別のMaya processからも
 貼り付けられます。未対応version、壊れたJSON、過大data、未知の型は値を書き込む前に拒否します。
-現在は一つの基準nodeから全対応属性または選択属性をコピーし、コピー元と同じ属性または
-選択属性へ貼る範囲です。複数source nodeの対応付けとPaste対象の表示状態フィルターは
-[Roadmap](roadmap.md#bdchannelboxの拡張候補)で別段階として扱います。
+Copy元は一つの基準nodeに限定し、全対応属性または選択属性をコピーします。
+複数source nodeを行順・選択順で対応させるPasteは提供しません。
 
 「表示を更新」は一覧全体を再取得します。余白のメニューは従来どおり表示更新だけを提供し、
 値・step欄の右クリックはQt標準の編集メニューを使用します。
@@ -1130,6 +1140,33 @@ Maya本体では、Translate XだけのCopyから選択したTranslate Y / Zへ�
 各Pasteの一回Undoを確認しました。初回・再起動後とも操作結果は成功し、既知の
 Maya終了待ちタイムアウトが発生したため、runnerが専用processを停止しています。
 結果と32枚の画像は`%TEMP%/bd-channel-box-maya2025-gh5014j7`です。
+Maya 2026 / 2027本体の画面操作は実施していません。
+
+toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=True)`を使用します。
+
+### コピー元と同じ属性の表示状態フィルター（2026-09-21）
+
+「コピー元と同じ属性」に`全て`／`keyable + channelbox`／`keyable`／`channelbox`／`hide`を
+追加しました。Paste時の先頭選択nodeで対象pathを決め、同じpathを全選択nodeへ適用します。
+条件外件数を通常結果として分けて表示し、対象0件ではUndoを作りません。
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsのBlack・Pyright・unit test | 成功。unit 8件、Pyrightのerrorは0件 |
+| Maya 2025 / 2026 / 2027のtools runtime test | 各160件成功 |
+| utilのBlack・3 version型契約・Maya 2025 full pytest | 成功。Maya testは4,262件成功・739件skip |
+| Maya 2025本体の初回操作 | `result.json`の`success`はTrue。表示状態Pasteを含む45工程と32枚の画像を確認 |
+| Maya 2025本体の別process | `result-restart.json`の`success`はTrue。全属性clipboardの読取りを含む5工程と1枚の画像を確認 |
+| Pasteフィルターメニュー表示 | 5項目を文字切れなく表示 |
+
+Maya本体では基準nodeの`enabled`だけをChannelBox、後続nodeではHideにして、
+`channelbox` Pasteが両nodeの`enabled`へ適用されることと、一回のUndoを確認しました。
+別process側も操作結果は成功しましたが、既知のMaya終了待ちタイムアウトによりrunnerの
+終了codeは1でした。結果は`%TEMP%/bd-channel-box-maya2025-0qj3g0fp`です。
+
+utilの標準`verify.cmd`では上記の工程まで成功後、Maya 2025のQt/UI互換testでWindowsの
+OS clipboardが書込み直後に空を返し、既存clipboard test 3件が失敗しました。
+今回追加した表示分類testと、tools側のOS clipboard Copy/Paste testは成功しています。
 Maya 2026 / 2027本体の画面操作は実施していません。
 
 toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=True)`を使用します。
