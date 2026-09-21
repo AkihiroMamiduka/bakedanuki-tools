@@ -1457,7 +1457,7 @@ class _MayaSmokeSession:
         self.steps.append("multi_attribute_value_controls_and_undo")
 
     def _inspect_clipboard_value_transfer(self) -> None:
-        """実メニューからCopyし、同pathと選択pathへ一UndoでPasteする。"""
+        """実メニューのCopyと二つのPaste規則を一Undoまで確認する。"""
         from maya import cmds
 
         from bd_util.maya.ui import MayaScalarValueClipboard
@@ -1489,7 +1489,7 @@ class _MayaSmokeSession:
             )
         }
         try:
-            # 一つの値だけをCopyし、選択した異なる同型pathへ展開する
+            # 選択した一属性だけをCopyし、異なる同型pathへ展開する
             cmds.setAttr(f"{self.nodes[0]}.translateX", 4.25)
             source = self._row("translate.translateX")
             widget.table_view.select_keys(
@@ -1497,8 +1497,11 @@ class _MayaSmokeSession:
             )
             cmds.flushUndo()
             self._open_context_menu(source.name_label)
-            source.context_menu.setActiveAction(source.copy_values_action)
-            self._key(source.context_menu, qt.Qt.Key.Key_Return)
+            copy_selected = source.copy_selected_values_action
+            if not copy_selected.isEnabled():
+                raise AssertionError("選択属性のCopyが有効になりません")
+            copy_selected.trigger()
+            source.context_menu.close()
             targets = tuple(
                 self._row(path)
                 for path in (
@@ -1512,25 +1515,39 @@ class _MayaSmokeSession:
                     for row in targets
                 )
             )
-            self._open_context_menu(targets[0].name_label)
-            selected_paste = targets[0].paste_value_to_selected_action
+            target = targets[0]
+            self._open_context_menu(target.name_label)
+            selected_paste = target.paste_selected_values_action
             if not selected_paste.isEnabled():
                 raise AssertionError(
-                    "一つのclipboard値を選択属性へ貼る操作が有効になりません"
+                    "一つのコピー値を選択属性へ貼る操作が有効になりません"
                 )
+            target.paste_menu.popup(
+                target.name_label.mapToGlobal(
+                    qt.QPoint(target.name_label.width(), 0)
+                )
+            )
+            self._flush_gui()
             menu_path = self.output / "32-clipboard-value-menu.png"
-            if not targets[0].context_menu.grab().save(str(menu_path)):
+            if not target.paste_menu.grab().save(str(menu_path)):
                 raise RuntimeError(
                     "一値を選択属性へ貼るメニュー画像を保存できません"
                 )
             self.screenshots.append(str(menu_path))
-            targets[0].context_menu.setActiveAction(selected_paste)
-            self._key(targets[0].context_menu, qt.Qt.Key.Key_Return)
+            selected_paste.trigger()
+            target.paste_menu.close()
+            target.context_menu.close()
             self._flush_gui()
+            self._assert_values(
+                "translateX", (4.25, original_values["translateX"][1])
+            )
             self._assert_values("translateY", (4.25, 4.25))
             self._assert_values("translateZ", (4.25, 4.25))
             cmds.undo()
             self._flush_gui()
+            self._assert_values(
+                "translateX", (4.25, original_values["translateX"][1])
+            )
             self._assert_values("translateY", original_values["translateY"])
             self._assert_values("translateZ", original_values["translateZ"])
             if not cmds.undoInfo(query=True, undoQueueEmpty=True):
@@ -1538,7 +1555,7 @@ class _MayaSmokeSession:
                     "一値から選択属性へのPasteが一回のUndoになっていません"
                 )
 
-            # 複数値Copyの従来操作は同pathへだけ貼り付ける
+            # 選択属性だけをCopyし、Copy元と同じpathへ貼り付ける
             rows = tuple(
                 self._row(path) for path in ("weight", "enabled", "mode")
             )
@@ -1548,22 +1565,23 @@ class _MayaSmokeSession:
                     for row in rows
                 )
             )
-            source_row = rows[0]
             cmds.flushUndo()
-            self._open_context_menu(source_row.name_label)
-            if not source_row.copy_values_action.isEnabled():
-                raise AssertionError("選択属性値のCopyが有効になりません")
-            source_row.context_menu.setActiveAction(
-                source_row.copy_values_action
-            )
-            self._key(source_row.context_menu, qt.Qt.Key.Key_Return)
+            widget.edit_menu.aboutToShow.emit()
+            if not widget.copy_selected_values_action.isEnabled():
+                raise AssertionError("選択属性のCopyが有効になりません")
+            widget.copy_selected_values_action.trigger()
             transfer = MayaScalarValueClipboard().read()
             copied = {
                 snapshot.path: snapshot.value
                 for snapshot in transfer.nodes[0].values
             }
-            if copied != {"weight": 0.25, "enabled": False, "mode": 5}:
-                raise AssertionError(f"基準nodeのCopy値が不正です: {copied}")
+            expected = {"weight": 0.25, "enabled": False, "mode": 5}
+            if any(
+                copied.get(path) != value for path, value in expected.items()
+            ):
+                raise AssertionError(f"選択属性のCopy値が不正です: {copied}")
+            if len(copied) != len(expected):
+                raise AssertionError("選択外の属性までCopyされています")
             if not cmds.undoInfo(query=True, undoQueueEmpty=True):
                 raise AssertionError("CopyでUndo履歴が増えました")
 
@@ -1573,15 +1591,42 @@ class _MayaSmokeSession:
                 cmds.setAttr(f"{node}.enabled", True)
                 cmds.setAttr(f"{node}.mode", 10)
             cmds.flushUndo()
-            self._open_context_menu(self._row("weight").name_label)
-            paste_action = self._row("weight").paste_values_action
+            target_row = self._row("translate.translateX")
+            widget.table_view.select_keys(
+                (
+                    (
+                        target_row.row.attribute.path,
+                        target_row.row.attribute.kind,
+                    ),
+                )
+            )
+            self._open_context_menu(target_row.name_label)
+            paste_action = target_row.paste_copied_values_action
             if not paste_action.isEnabled():
                 raise AssertionError("対応clipboardのPasteが有効になりません")
             paste_action.trigger()
+            target_row.context_menu.close()
             self._flush_gui()
             self._assert_values("weight", (0.25, 0.25))
             self._assert_values("enabled", (False, False))
             self._assert_values("mode", (5, 5))
+
+            # 貼り付け後の全属性CopyをMaya再起動後のOS clipboard検証へ残す
+            widget.edit_menu.aboutToShow.emit()
+            if not widget.copy_all_values_action.isEnabled():
+                raise AssertionError(
+                    "基準nodeの全属性値Copyが有効になりません"
+                )
+            widget.copy_all_values_action.trigger()
+            copied = {
+                snapshot.path: snapshot.value
+                for snapshot in MayaScalarValueClipboard()
+                .read()
+                .nodes[0]
+                .values
+            }
+            if len(copied) <= len(expected):
+                raise AssertionError("全対応属性がCopyされていません")
             cmds.undo()
             self._flush_gui()
             self._assert_values("weight", (0.9, 0.9))
@@ -2038,9 +2083,16 @@ class _MayaSmokeSession:
                 snapshot.path: snapshot.value
                 for snapshot in transfer.nodes[0].values
             }
-            if copied != {"weight": 0.25, "enabled": False, "mode": 5}:
+            expected = {"weight": 0.25, "enabled": False, "mode": 5}
+            if any(
+                copied.get(path) != value for path, value in expected.items()
+            ):
                 raise AssertionError(
                     f"別Maya processのclipboard値が不正です: {copied}"
+                )
+            if len(copied) <= len(expected):
+                raise AssertionError(
+                    "別Maya processで全対応属性を読取れていません"
                 )
         finally:
             clipboard.setMimeData(restored)

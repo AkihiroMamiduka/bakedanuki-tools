@@ -130,35 +130,45 @@ class AttributeRowWidget(qt.QWidget):
         self.align_action = qt.QAction("この値に揃える", self)
         self.align_action.setToolTip("編集可能な対象を基準ノードの値に揃える")
         self.align_action.triggered.connect(self._align_values)
-        self.copy_values_action = qt.QAction("選択属性値をコピー", self)
-        self.copy_values_action.setObjectName("copy_selected_values")
-        self.copy_values_action.setToolTip(
-            "基準ノードの選択属性値をOSクリップボードへコピー"
+        self.copy_menu = qt.QMenu("コピー", self.context_menu)
+        self.copy_all_values_action = qt.QAction("全属性", self)
+        self.copy_all_values_action.setObjectName("copy_all_values")
+        self.copy_all_values_action.setToolTip(
+            "基準ノードの対応する全属性値をOSクリップボードへコピー"
         )
-        self.paste_values_action = qt.QAction(
-            "同じpathへ属性値を貼り付け", self
+        self.copy_selected_values_action = qt.QAction("選択属性", self)
+        self.copy_selected_values_action.setObjectName("copy_selected_values")
+        self.copy_selected_values_action.setToolTip(
+            "基準ノードで選択中の属性値をOSクリップボードへコピー"
         )
-        self.paste_values_action.setObjectName("paste_values_by_path")
-        self.paste_values_action.setToolTip(
-            "コピーした値を選択ノードの同じ正式pathへ貼り付け"
+        copy_actions = cast(_MenuActions, self.copy_menu)
+        copy_actions.addAction(self.copy_all_values_action)
+        copy_actions.addAction(self.copy_selected_values_action)
+        self.paste_menu = qt.QMenu("ペースト", self.context_menu)
+        self.paste_copied_values_action = qt.QAction(
+            "コピー元と同じ属性", self
         )
-        self.paste_value_to_selected_action = qt.QAction(
-            "コピーした値を選択属性へ貼り付け", self
+        self.paste_copied_values_action.setObjectName("paste_copied_values")
+        self.paste_copied_values_action.setToolTip(
+            "コピーした全項目を選択ノードの同じ正式pathへ貼り付け"
         )
-        self.paste_value_to_selected_action.setObjectName(
-            "paste_single_value_to_selected_attributes"
+        self.paste_selected_values_action = qt.QAction("選択属性", self)
+        self.paste_selected_values_action.setObjectName(
+            "paste_values_to_selected"
         )
-        self.paste_value_to_selected_action.setToolTip(
-            "コピーした一つの値を選択属性と選択ノードへ貼り付け"
+        self.paste_selected_values_action.setToolTip(
+            "コピーした値を選択属性へ貼り付け"
         )
+        paste_actions = cast(_MenuActions, self.paste_menu)
+        paste_actions.addAction(self.paste_copied_values_action)
+        paste_actions.addAction(self.paste_selected_values_action)
         self.refresh_action = qt.QAction("表示を更新", self)
         self.refresh_action.triggered.connect(self.refresh_requested.emit)
         menu_actions = cast(_MenuActions, self.context_menu)
         menu_actions.addAction(self.align_action)
         self.context_menu.addSeparator()
-        menu_actions.addAction(self.copy_values_action)
-        menu_actions.addAction(self.paste_values_action)
-        menu_actions.addAction(self.paste_value_to_selected_action)
+        self.context_menu.addMenu(self.copy_menu)
+        self.context_menu.addMenu(self.paste_menu)
         self.context_menu.addSeparator()
         menu_actions.addAction(self.refresh_action)
         self.editor = self._create_editor(
@@ -524,6 +534,50 @@ class ChannelBoxWidget(qt.QWidget):
         self._scroll_timer.timeout.connect(self._restore_scroll_anchor)
         self.menu_bar = qt.QMenuBar(self)
         self.menu_bar.setNativeMenuBar(False)
+        self.edit_menu = qt.QMenu("編集", self.menu_bar)
+        self.menu_bar.addMenu(self.edit_menu)
+        self.copy_menu = qt.QMenu("コピー", self.edit_menu)
+        self.copy_all_values_action = qt.QAction("全属性", self)
+        self.copy_all_values_action.setObjectName("copyAllValuesAction")
+        self.copy_all_values_action.setToolTip(
+            "基準ノードの対応する全属性値をOSクリップボードへコピー"
+        )
+        self.copy_all_values_action.setEnabled(False)
+        self.copy_selected_values_action = qt.QAction("選択属性", self)
+        self.copy_selected_values_action.setObjectName(
+            "copySelectedValuesAction"
+        )
+        self.copy_selected_values_action.setToolTip(
+            "基準ノードで選択中の属性値をOSクリップボードへコピー"
+        )
+        self.copy_selected_values_action.setEnabled(False)
+        copy_actions = cast(_MenuActions, self.copy_menu)
+        copy_actions.addAction(self.copy_all_values_action)
+        copy_actions.addAction(self.copy_selected_values_action)
+        self.edit_menu.addMenu(self.copy_menu)
+        self.paste_menu = qt.QMenu("ペースト", self.edit_menu)
+        self.paste_copied_values_action = qt.QAction(
+            "コピー元と同じ属性", self
+        )
+        self.paste_copied_values_action.setObjectName(
+            "pasteCopiedValuesAction"
+        )
+        self.paste_copied_values_action.setToolTip(
+            "コピーした全項目を選択ノードの同じ正式pathへ貼り付け"
+        )
+        self.paste_copied_values_action.setEnabled(False)
+        self.paste_selected_values_action = qt.QAction("選択属性", self)
+        self.paste_selected_values_action.setObjectName(
+            "pasteSelectedValuesAction"
+        )
+        self.paste_selected_values_action.setToolTip(
+            "コピーした値を選択属性へ貼り付け"
+        )
+        self.paste_selected_values_action.setEnabled(False)
+        paste_actions = cast(_MenuActions, self.paste_menu)
+        paste_actions.addAction(self.paste_copied_values_action)
+        paste_actions.addAction(self.paste_selected_values_action)
+        self.edit_menu.addMenu(self.paste_menu)
         self.settings_menu = qt.QMenu("設定", self.menu_bar)
         self.menu_bar.addMenu(self.settings_menu)
         self.wheel_editing_action = qt.QAction(
@@ -630,6 +684,17 @@ class ChannelBoxWidget(qt.QWidget):
         self.controller.filter_changed.connect(self._sync_filter)
         self.mode_combo.currentIndexChanged.connect(self._change_mode)
         self.filter_combo.currentIndexChanged.connect(self._change_filter)
+        self.copy_all_values_action.triggered.connect(self._copy_all_values)
+        self.copy_selected_values_action.triggered.connect(
+            self._copy_selected_values
+        )
+        self.paste_copied_values_action.triggered.connect(
+            self._paste_copied_values
+        )
+        self.paste_selected_values_action.triggered.connect(
+            self._paste_copied_values_to_selected
+        )
+        self.edit_menu.aboutToShow.connect(self._prepare_edit_menu)
         self.wheel_editing_action.toggled.connect(
             self._set_wheel_editing_without_focus
         )
@@ -871,16 +936,36 @@ class ChannelBoxWidget(qt.QWidget):
         try:
             if action == "align":
                 self.controller.align_selected_values(selected)
-            elif action == "copy_values":
+            elif action == "copy_selected":
                 self.controller.copy_selected_values(selected)
-            elif action == "paste_value_to_selected":
-                self.controller.paste_copied_value_to_selected(selected)
+            elif action == "paste_selected":
+                self.controller.paste_copied_values_to_selected(selected)
             elif action in ("lock", "unlock"):
                 self.controller.set_selected_locked(selected, action == "lock")
             elif action in ("keyable", "channel_box", "hidden"):
                 self.controller.set_selected_display(selected, action)
             else:
                 raise ValueError(f"未対応の選択操作です: {action}")
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _copy_selected_values(self) -> None:
+        """基準nodeで選択中の属性値をOS clipboardへコピーする。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        try:
+            self.controller.copy_selected_values(
+                self.table_view.selected_keys()
+            )
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _copy_all_values(self) -> None:
+        """基準nodeの対応する全属性値をOS clipboardへコピーする。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        try:
+            self.controller.copy_all_values()
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
@@ -893,6 +978,42 @@ class ChannelBoxWidget(qt.QWidget):
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
+    def _paste_copied_values_to_selected(self) -> None:
+        """OS clipboardの項目数に応じた規則で選択属性へ貼り付ける。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        try:
+            self.controller.paste_copied_values_to_selected(
+                self.table_view.selected_keys()
+            )
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _prepare_edit_menu(self) -> None:
+        """現在のnode・行選択・clipboardに合わせて編集メニューを準備する。"""
+        has_nodes = bool(self.controller.node_names)
+        has_value_selection = self.controller.mode == "values" and bool(
+            self.table_view.selected_keys()
+        )
+        can_paste = has_nodes and self.controller.can_paste_values()
+        self.copy_all_values_action.setEnabled(has_nodes)
+        self.copy_selected_values_action.setEnabled(
+            has_nodes and has_value_selection
+        )
+        self.paste_copied_values_action.setEnabled(can_paste)
+        self.paste_selected_values_action.setEnabled(
+            can_paste and has_value_selection
+        )
+        self._set_paste_selected_tooltip(self.paste_selected_values_action)
+
+    def _set_paste_selected_tooltip(self, action: qt.QAction) -> None:
+        """clipboardの項目数で変わる選択属性への貼り付け規則を説明する。"""
+        action.setToolTip(
+            "コピーした一つの値を選択属性へ貼り付け"
+            if self.controller.can_paste_single_value()
+            else "コピーした値から選択属性と同じ正式pathだけを貼り付け"
+        )
+
     def _prepare_row_menu(
         self, widget: AttributeRowWidget | AttributeStateRowWidget
     ) -> None:
@@ -902,15 +1023,19 @@ class ChannelBoxWidget(qt.QWidget):
             self.table_view.select_key(key)
         if isinstance(widget, AttributeRowWidget):
             selected = set(self.table_view.selected_keys())
-            widget.copy_values_action.setEnabled(bool(selected))
-            widget.paste_values_action.setEnabled(
-                bool(self.controller.node_names)
-                and self.controller.can_paste_values()
+            has_nodes = bool(self.controller.node_names)
+            has_selection = bool(selected)
+            can_paste = has_nodes and self.controller.can_paste_values()
+            widget.copy_all_values_action.setEnabled(has_nodes)
+            widget.copy_selected_values_action.setEnabled(
+                has_nodes and has_selection
             )
-            widget.paste_value_to_selected_action.setEnabled(
-                bool(selected)
-                and bool(self.controller.node_names)
-                and self.controller.can_paste_single_value()
+            widget.paste_copied_values_action.setEnabled(can_paste)
+            widget.paste_selected_values_action.setEnabled(
+                can_paste and has_selection
+            )
+            self._set_paste_selected_tooltip(
+                widget.paste_selected_values_action
             )
             widget.align_action.setEnabled(
                 any(
@@ -1000,16 +1125,23 @@ class ChannelBoxWidget(qt.QWidget):
                     widget.step_changed.connect(
                         partial(self._apply_step_value, key)
                     )
-                    widget.copy_values_action.triggered.connect(
-                        partial(self._run_selected_action, "copy_values", key)
+                    widget.copy_all_values_action.triggered.connect(
+                        self._copy_all_values
                     )
-                    widget.paste_values_action.triggered.connect(
-                        self._paste_copied_values
-                    )
-                    widget.paste_value_to_selected_action.triggered.connect(
+                    widget.copy_selected_values_action.triggered.connect(
                         partial(
                             self._run_selected_action,
-                            "paste_value_to_selected",
+                            "copy_selected",
+                            key,
+                        )
+                    )
+                    widget.paste_copied_values_action.triggered.connect(
+                        self._paste_copied_values
+                    )
+                    widget.paste_selected_values_action.triggered.connect(
+                        partial(
+                            self._run_selected_action,
+                            "paste_selected",
                             key,
                         )
                     )
@@ -1042,6 +1174,7 @@ class ChannelBoxWidget(qt.QWidget):
             == self.controller.node_ids,
         )
         self._table_node_ids = self.controller.node_ids
+        self._prepare_edit_menu()
         # 行の配置が確定してから、残っている属性のスクロール位置を復元する
         self._scroll_timer.start(0)
         self.empty_label.setVisible(not widgets)

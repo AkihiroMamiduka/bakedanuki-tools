@@ -47,8 +47,9 @@
 - [x] 上下操作の共通増減量、Slider・bool・互換enumの複数属性入力と操作単位のUndo
 - [x] 選択中でStep欄を持つ属性への同じ表示stepの入力、増減方式とWindow内キャッシュの維持
 - [x] 未フォーカス時の値・Step・enumホイール編集を切り替える設定メニューとuser preferencesへの保存
-- [x] OSクリップボードへ基準nodeの選択属性値をコピーし、1個または複数nodeの同一正式pathへ貼り付け
-- [x] OSクリップボードの一属性値を、同じ型区分の選択属性と全選択nodeへ貼り付け
+- [x] OSクリップボードへ基準nodeの全対応属性または選択属性をコピー
+- [x] コピー元と同じ正式pathへの一括Pasteと、複数コピー値から選択した同pathだけのPaste
+- [x] 一項目だけをコピーした場合に、同じ型区分の選択属性と全選択nodeへ値を展開するPaste
 
 ### bdChannelBoxの拡張候補
 
@@ -59,7 +60,7 @@
 | 候補 | 着手を検討する状況 | 設計時に確認する点 |
 | --- | --- | --- |
 | 複数source nodeのCopy/Paste | node集合の値を別のnode集合へ移したい | sourceとtargetを同名または明示IDで対応させ、行順・選択順による誤対応を作らない |
-| node単位の全属性Copy/Paste | 行選択なしでnode状態を移したい | 全属性／選択属性、all／visible／keyable／channelBox／hiddenの取得範囲を決める |
+| Paste対象の表示状態フィルター | コピー済みのnode状態から一部の表示区分だけを移したい | all／visible／keyable／channelBox／hiddenの指定場所と、Copy時点・Paste時点のどちらで判定するか決める |
 | 属性名による検索 | 実装済みの表示状態フィルターでも目的の行を探しにくい | 基準ノードと編集対象の決定を維持し、既存の5種類のフィルターとの組合せを決める |
 | step設定の永続化 | Windowを閉じるたびに同じstepを設定し直している | utilの保存基盤を使い、属性path・型・単位、初期値との優先順位、reset時の扱いを決める。sceneへは保存しない |
 

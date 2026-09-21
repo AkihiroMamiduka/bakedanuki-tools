@@ -886,40 +886,50 @@ def test_slider_bool_enum_apply_to_selected_compatible_rows(
     assert cmds.getAttr("multiB.translateX") == 10.0
 
 
-def test_copy_selected_values_uses_reference_node_and_does_not_write(
+def test_copy_all_values_uses_reference_node_and_does_not_write(
     editor: ChannelBoxWidget,
 ) -> None:
-    """選択行の基準node値だけをOSへ保存し、sceneとUndoを変更しない。"""
+    """行選択に依存せず基準nodeの全対応値を保存し、sceneとUndoを変えない。"""
     clipboard = qt.QApplication.clipboard()
     saved = _saved_clipboard()
     try:
         _set_value("multiA.translateX", 5.25)
         _set_value("multiA.gain", 4.5)
         _set_value("multiA.mode", 2)
-        selected = _keys(editor, "translateX", "gain", "mode")
+        selected = _keys(editor, "translateX")
         editor.table_view.select_keys(selected)
         row = _row(editor, "translateX")
         _show_row_menu(row)
-        assert row.copy_values_action.isEnabled()
+        assert row.copy_menu.title() == "コピー"
+        assert row.copy_all_values_action.isEnabled()
+        assert row.copy_selected_values_action.isEnabled()
+        assert row.paste_menu.title() == "ペースト"
+        assert editor.edit_menu.title() == "編集"
+        assert editor.copy_menu.title() == "コピー"
+        assert editor.paste_menu.title() == "ペースト"
+        editor.edit_menu.aboutToShow.emit()
+        assert editor.copy_all_values_action.isEnabled()
+        assert editor.copy_selected_values_action.isEnabled()
         cmds.flushUndo()
 
-        row.copy_values_action.trigger()
+        editor.copy_all_values_action.trigger()
         transfer = MayaScalarValueClipboard().read()
         values = {
             snapshot.path: snapshot.value
             for snapshot in transfer.nodes[0].values
         }
-        assert values == {
-            "translate.translateX": 5.25,
-            "gain": 4.5,
-            "mode": 2,
-        }
+        assert values["translate.translateX"] == 5.25
+        assert values["gain"] == 4.5
+        assert values["mode"] == 2
+        assert "translate.translateY" in values
+        assert len(values) > len(selected)
         assert len(transfer.nodes) == 1
         _show_row_menu(row)
-        assert not row.paste_value_to_selected_action.isEnabled()
+        assert row.paste_copied_values_action.isEnabled()
+        assert row.paste_selected_values_action.isEnabled()
         assert cmds.getAttr("multiB.translateX") == 9.0
         assert cmds.undoInfo(query=True, undoQueueEmpty=True)
-        assert "3属性" in editor.message_label.text()
+        assert f"全{len(values)}属性" in editor.message_label.text()
     finally:
         clipboard.setMimeData(saved)
 
@@ -927,7 +937,7 @@ def test_copy_selected_values_uses_reference_node_and_does_not_write(
 def test_single_copied_value_pastes_to_selected_paths_and_nodes(
     editor: ChannelBoxWidget,
 ) -> None:
-    """一属性のclipboard値を選択した複数pathと全nodeへ一回で貼る。"""
+    """一つだけコピーした値を、コピー元pathに依存せず複数属性へ貼る。"""
     clipboard = qt.QApplication.clipboard()
     saved = _saved_clipboard()
     try:
@@ -935,25 +945,35 @@ def test_single_copied_value_pastes_to_selected_paths_and_nodes(
         editor.table_view.select_keys(_keys(editor, "translateX"))
         source_row = _row(editor, "translateX")
         _show_row_menu(source_row)
-        source_row.copy_values_action.trigger()
+        assert source_row.copy_selected_values_action.isEnabled()
+        source_row.copy_selected_values_action.trigger()
+        assert editor.controller.can_paste_single_value()
 
         editor.table_view.select_keys(
             _keys(editor, "translateY", "translateZ")
         )
         target_row = _row(editor, "translateY")
         _show_row_menu(target_row)
-        assert target_row.paste_value_to_selected_action.isEnabled()
+        assert target_row.paste_selected_values_action.isEnabled()
+        assert "一つの値" in target_row.paste_selected_values_action.toolTip()
         cmds.flushUndo()
 
-        target_row.paste_value_to_selected_action.trigger()
+        target_row.paste_selected_values_action.trigger()
         _events()
         for node in ("multiA", "multiB"):
             assert cmds.getAttr(node + ".translateY") == 6.25
             assert cmds.getAttr(node + ".translateZ") == 6.25
-        assert "選択属性への貼り付け対象: 4属性" in editor.message_label.text()
+        assert cmds.getAttr("multiA.translateX") == 6.25
+        assert cmds.getAttr("multiB.translateX") == 9.0
+        assert (
+            "選択属性への一値貼り付け対象: 4属性"
+            in editor.message_label.text()
+        )
 
         cmds.undo()
         _events()
+        assert cmds.getAttr("multiA.translateX") == 6.25
+        assert cmds.getAttr("multiB.translateX") == 9.0
         assert cmds.getAttr("multiA.translateY") == 1.0
         assert cmds.getAttr("multiB.translateY") == 3.0
         assert cmds.getAttr("multiA.translateZ") == 0.0
@@ -963,10 +983,63 @@ def test_single_copied_value_pastes_to_selected_paths_and_nodes(
         clipboard.setMimeData(saved)
 
 
-def test_paste_matches_formal_paths_across_nodes_and_hidden_rows(
+def test_selected_values_paste_to_copied_paths_across_nodes(
     editor: ChannelBoxWidget,
 ) -> None:
-    """clipboard値を表示行順と無関係に同pathへ貼り、対象外を報告する。"""
+    """選択属性だけをコピーし、貼り付け先の行選択に依存せず同じpathへ貼る。"""
+    clipboard = qt.QApplication.clipboard()
+    saved = _saved_clipboard()
+    try:
+        _set_value("multiA.translateX", 5.25)
+        _set_value("multiA.gain", 4.5)
+        _set_value("multiA.mode", 2)
+        editor.table_view.select_keys(
+            _keys(editor, "translateX", "gain", "mode")
+        )
+        source_row = _row(editor, "translateX")
+        _show_row_menu(source_row)
+        source_row.copy_selected_values_action.trigger()
+        transfer = MayaScalarValueClipboard().read()
+        assert {snapshot.path for snapshot in transfer.nodes[0].values} == {
+            "translate.translateX",
+            "gain",
+            "mode",
+        }
+
+        for node in ("multiA", "multiB"):
+            _set_value(node + ".translateX", 0.0)
+            _set_value(node + ".gain", 1.0)
+            _set_value(node + ".mode", 0)
+        editor.table_view.select_keys(_keys(editor, "rotateX"))
+        target_row = _row(editor, "rotateX")
+        _show_row_menu(target_row)
+        assert target_row.paste_copied_values_action.isEnabled()
+        cmds.flushUndo()
+
+        target_row.paste_copied_values_action.trigger()
+        _events()
+        for node in ("multiA", "multiB"):
+            assert cmds.getAttr(node + ".translateX") == 5.25
+            assert cmds.getAttr(node + ".gain") == 4.5
+            assert cmds.getAttr(node + ".mode") == 2
+            assert cmds.getAttr(node + ".rotateX") == 0.0
+        assert "貼り付け対象: 6属性" in editor.message_label.text()
+
+        cmds.undo()
+        _events()
+        for node in ("multiA", "multiB"):
+            assert cmds.getAttr(node + ".translateX") == 0.0
+            assert cmds.getAttr(node + ".gain") == 1.0
+            assert cmds.getAttr(node + ".mode") == 0
+        assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    finally:
+        clipboard.setMimeData(saved)
+
+
+def test_paste_matches_only_selected_formal_paths_across_nodes(
+    editor: ChannelBoxWidget,
+) -> None:
+    """全属性clipboardから選択pathだけを貼り、型違いとlockを報告する。"""
     clipboard = qt.QApplication.clipboard()
     saved = _saved_clipboard()
     try:
@@ -974,12 +1047,9 @@ def test_paste_matches_formal_paths_across_nodes_and_hidden_rows(
         _set_value("multiA.gain", 4.5)
         _set_value("multiA.mode", 2)
         _set_value("multiA.enabled", True)
-        editor.table_view.select_keys(
-            _keys(editor, "translateX", "gain", "mode", "enabled")
-        )
         source_row = _row(editor, "translateX")
         _show_row_menu(source_row)
-        source_row.copy_values_action.trigger()
+        source_row.copy_all_values_action.trigger()
 
         for node, mode_definition in (
             ("pasteA", "A:B:C"),
@@ -1017,9 +1087,15 @@ def test_paste_matches_formal_paths_across_nodes_and_hidden_rows(
         cmds.flushUndo()
 
         target_row = _row(editor, "translateX")
+        editor.table_view.select_keys(
+            _keys(editor, "translateX", "gain", "mode")
+        )
         _show_row_menu(target_row)
-        assert target_row.paste_values_action.isEnabled()
-        target_row.paste_values_action.trigger()
+        assert target_row.paste_selected_values_action.isEnabled()
+        assert (
+            "同じ正式path" in target_row.paste_selected_values_action.toolTip()
+        )
+        target_row.paste_selected_values_action.trigger()
         _events()
 
         assert cmds.getAttr("pasteA.translateX") == 5.25
@@ -1028,9 +1104,12 @@ def test_paste_matches_formal_paths_across_nodes_and_hidden_rows(
         assert cmds.getAttr("pasteB.gain") == 1.0
         assert cmds.getAttr("pasteA.mode") == 2
         assert cmds.getAttr("pasteB.mode") == 0
-        assert cmds.getAttr("pasteA.enabled") is True
-        assert cmds.getAttr("pasteB.enabled") is True
-        assert "貼り付け対象: 6属性" in editor.message_label.text()
+        assert cmds.getAttr("pasteA.enabled") is False
+        assert cmds.getAttr("pasteB.enabled") is False
+        assert (
+            "選択属性への同path貼り付け対象: 4属性"
+            in editor.message_label.text()
+        )
         assert "enum定義" in editor.message_label.text()
         assert "ロック" in editor.message_label.text()
 
@@ -1040,8 +1119,6 @@ def test_paste_matches_formal_paths_across_nodes_and_hidden_rows(
         assert cmds.getAttr("pasteB.translateX") == 0
         assert cmds.getAttr("pasteA.gain") == 1.0
         assert cmds.getAttr("pasteA.mode") == 0
-        assert cmds.getAttr("pasteA.enabled") is False
-        assert cmds.getAttr("pasteB.enabled") is False
         assert cmds.undoInfo(query=True, undoQueueEmpty=True)
     finally:
         clipboard.setMimeData(saved)
@@ -1059,14 +1136,14 @@ def test_invalid_clipboard_data_reports_error_without_writing(
         clipboard.setMimeData(mime_data)
         row = _row(editor, "translateX")
         _show_row_menu(row)
-        assert row.paste_values_action.isEnabled()
-        assert not row.paste_value_to_selected_action.isEnabled()
+        assert row.paste_copied_values_action.isEnabled()
+        assert row.paste_selected_values_action.isEnabled()
         before = tuple(
             cmds.getAttr(node + ".translateX") for node in ("multiA", "multiB")
         )
         cmds.flushUndo()
 
-        row.paste_values_action.trigger()
+        row.paste_selected_values_action.trigger()
         assert (
             tuple(
                 cmds.getAttr(node + ".translateX")

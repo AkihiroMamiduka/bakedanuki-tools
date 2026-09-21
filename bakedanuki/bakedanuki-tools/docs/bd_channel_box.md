@@ -298,20 +298,31 @@ boolは選択したbool属性を操作後のON／OFFへ揃えます。enumは操
 
 ### 属性値のOSクリップボードCopy/Paste
 
-値編集モードの属性名メニューには「選択属性値をコピー」「同じpathへ属性値を貼り付け」
-「コピーした値を選択属性へ貼り付け」があります。
+メニューバーの「編集」と、値編集モードの属性名メニューには、同じ構成の操作があります。
 
-Copyは選択した属性について、現在の基準ノードの値を実行時点で取得します。値は表示文字列へ
-丸めず、distanceはcm、angleはdegree、通常数値は単位なしの公開単位で保存します。
-bool、enumの実整数と項目定義も型付きで保存します。CopyはsceneとUndo履歴を変更しません。
+- `コピー > 全属性`: 現在の基準nodeで対応している全属性をコピーします。
+- `コピー > 選択属性`: 現在選択している属性だけをコピーします。
+- `ペースト > コピー元と同じ属性`: コピー情報に含まれる全正式pathへ貼り付けます。
+- `ペースト > 選択属性`: コピー値が複数なら、現在選択した属性と同じ正式pathだけを
+  貼り付けます。コピー値が一つなら、その値を現在選択した互換属性すべてへ貼り付けます。
 
-PasteはOSクリップボード内の全属性を、現在選択中の1個または複数nodeへ適用します。
-表示中の行、属性の選択状態、行順は貼り付け先の対応付けに使いません。
-`translate.translateX`のような正式な相対pathと型・単位区分が一致する属性だけを対象とするため、
-現在のフィルターで非表示の属性も貼り付けられます。属性がないnodeへ追加はしません。
+Copyは現在の基準ノードからbool・number・distance・angle・enum属性を取得します。
+「全属性」は行選択や現在のAttribute Filterに依存せず、「選択属性」は表示中の行選択だけを
+対象にします。値は表示文字列へ丸めず、distanceはcm、angleはdegree、通常数値は単位なしの
+公開単位で保存します。enumの実整数と項目定義も型付きで保存します。
+CopyはsceneとUndo履歴を変更しません。
 
-「コピーした値を選択属性へ貼り付け」は、クリップボードに一属性値だけがある場合に有効です。
-現在選択している属性pathそれぞれへ同じ値を展開し、さらに全選択nodeへ適用します。
+「コピー元と同じ属性」は、OSクリップボード内の全属性を現在選択中の1個または複数nodeの
+同じ正式pathへ適用します。貼り付け先の行選択とAttribute Filterには依存しないため、
+画面に出ていないコピー属性も対象になります。
+
+複数項目をコピーした後の「選択属性」は、OSクリップボード内の値から現在選択した属性と
+同じ正式pathだけを取り出します。`translate.translateX`のような正式な相対pathと
+型・単位区分が一致する属性だけを対象とし、行順やクリック順による対応付けは行いません。
+選択pathがクリップボードにない場合は、コピー値なしとして対象外理由へ表示します。
+
+一項目だけをコピーした後の「選択属性」は、コピーした一値を現在選択している属性pathと
+全選択nodeへ展開します。Paste時にコピー元pathを右クリックする必要はありません。
 number・distance・angle・boolは同じ型区分同士に限定し、enumは整数値と項目名の定義が
 一致する属性だけを対象にします。コピー元pathと貼り付け先pathの一致は要求しません。
 
@@ -322,8 +333,8 @@ enumは整数値と項目名の対応が一致する場合だけ対象にし、�
 
 custom MIMEとmarker付きtextへversion付きJSONを保存するため、別のMaya processからも
 貼り付けられます。未対応version、壊れたJSON、過大data、未知の型は値を書き込む前に拒否します。
-現在は一つの基準nodeから選択属性をコピーし、同じpathへ貼るか、一値を選択pathへ配る範囲です。
-複数source nodeの対応付け、node全属性の一括copyは
+現在は一つの基準nodeから全対応属性または選択属性をコピーし、コピー元と同じ属性または
+選択属性へ貼る範囲です。複数source nodeの対応付けとPaste対象の表示状態フィルターは
 [Roadmap](roadmap.md#bdchannelboxの拡張候補)で別段階として扱います。
 
 「表示を更新」は一覧全体を再取得します。余白のメニューは従来どおり表示更新だけを提供し、
@@ -1072,6 +1083,53 @@ Maya本体ではTranslate Xの一値を選択したTranslate Y / Zと両nodeへ�
 `result.json`の機能結果とrunnerの終了codeを分けて記録します。
 
 最終の結果と画像は`%TEMP%/bd-channel-box-maya2025-pe1n1023`です。
+Maya 2026 / 2027本体の画面操作は実施していません。
+
+toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=True)`を使用します。
+
+### 全属性Copyと選択path Paste（2026-09-21）
+
+Copyを基準nodeの全対応scalar属性へ拡張し、Paste側で選択した正式pathとの共通部分だけを
+適用する構成へ変更しました。メニューバーへ「編集」を追加し、行選択なしでも全属性を
+Copyできます。既存の一値展開は、右クリックしたpathのコピー値を全属性clipboardから選ぶ
+操作へ変更し、一度のCopyで同path Pasteと異なる選択pathへの展開を使い分けられます。
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsのBlack・Pyright・unit test | 成功。unit 8件、Pyrightのerrorは0件 |
+| Maya 2025 / 2026 / 2027のtools runtime test | 各158件成功 |
+| utilの`verify.cmd` | 終了code 0。Maya 2025全体4,261件成功・739件skip、各versionのQt 843件・Maya UI 377件が成功 |
+| Maya 2025本体の初回操作 | `result.json`の`success`はTrue。Copy/Pasteを含む45工程と31枚の画像を確認 |
+| Maya 2025本体の別process | `result-restart.json`の`success`はTrue。全属性clipboardの読取りを含む5工程と1枚の画像を確認 |
+
+Maya本体では全属性Copy、選択した同pathだけの複数node Paste、右クリックしたpathの一値展開、
+各操作の一回Undoを確認しました。初回・再起動後とも操作結果の保存には成功し、既知の
+Maya終了待ちタイムアウトが発生したため、runnerが専用processを停止しています。
+結果と32枚の画像は`%TEMP%/bd-channel-box-maya2025-mglh23po`です。
+Maya 2026 / 2027本体の画面操作は実施していません。
+
+toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=True)`を使用します。
+
+### Copy/Pasteメニューと選択属性Pasteの整理（2026-09-21）
+
+Copyを「全属性」「選択属性」、Pasteを「コピー元と同じ属性」「選択属性」のサブメニューへ
+整理しました。「選択属性」Pasteはclipboardの項目数で動作を決め、一項目なら選択中の
+互換属性すべてへ同じ値を展開し、複数項目なら選択属性と同じ正式pathだけを適用します。
+Paste時にコピー元pathを右クリックし直す操作は削除しました。
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsのBlack・Pyright・unit test | 成功。unit 8件、Pyrightのerrorは0件 |
+| Maya 2025 / 2026 / 2027のtools runtime test | 各159件成功 |
+| Maya 2025本体の初回操作 | `result.json`の`success`はTrue。Copy/Pasteを含む45工程と31枚の画像を確認 |
+| Maya 2025本体の別process | `result-restart.json`の`success`はTrue。全属性clipboardの読取りを含む5工程と1枚の画像を確認 |
+| Pasteサブメニュー表示 | 「コピー元と同じ属性」「選択属性」を文字切れなく表示 |
+
+Maya本体では、Translate XだけのCopyから選択したTranslate Y / Zへの一値展開、
+選択したweight / enabled / modeのCopyから同じ正式pathへの複数node Paste、全属性Copy、
+各Pasteの一回Undoを確認しました。初回・再起動後とも操作結果は成功し、既知の
+Maya終了待ちタイムアウトが発生したため、runnerが専用processを停止しています。
+結果と32枚の画像は`%TEMP%/bd-channel-box-maya2025-gh5014j7`です。
 Maya 2026 / 2027本体の画面操作は実施していません。
 
 toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=True)`を使用します。

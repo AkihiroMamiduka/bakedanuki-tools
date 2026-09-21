@@ -32,8 +32,10 @@ from bd_util.maya.ui import (
     MayaScalarValueClipboard,
     MayaScalarValueTransfer,
     apply_scalar_value_transfer,
+    apply_scalar_value_transfer_to_paths,
     apply_scalar_value_to_paths,
     apply_plugs_values,
+    capture_all_scalar_node_values,
     capture_scalar_node_values,
     read_enum_definition,
     resolve_bool_plug,
@@ -670,21 +672,34 @@ class ChannelBoxController(qt.QObject):
             return False
         return len(transfer.nodes) == 1 and len(transfer.nodes[0].values) == 1
 
+    def copy_all_values(self) -> int:
+        """基準nodeの全対応属性値を、型と正式path付きでOSへコピーする。"""
+        if not self.node_names:
+            raise RuntimeError("コピー元のノードが選択されていません")
+        snapshot = capture_all_scalar_node_values(self.node_names[0])
+        self._value_clipboard.write(MayaScalarValueTransfer((snapshot,)))
+        count = len(snapshot.values)
+        self.operation_reported.emit(
+            f"基準ノードから全{count}属性の値をコピーしました"
+        )
+        return count
+
     def copy_selected_values(self, keys: Sequence[tuple[str, str]]) -> int:
-        """基準nodeの選択属性値を、型と正式path付きでOSへコピーする。"""
-        rows = self._selected_rows(keys)
+        """基準nodeで選択した対応属性値を、正式path付きでOSへコピーする。"""
         if not self.node_names:
             raise RuntimeError("コピー元のノードが選択されていません")
         attributes = tuple(
-            row.attribute for row in rows if isinstance(row, ChannelRow)
+            row.attribute
+            for row in self._selected_rows(keys)
+            if isinstance(row, ChannelRow)
         )
         if not attributes:
-            raise ValueError("コピーする値属性を選択してください")
+            raise ValueError("コピー元の値属性を選択してください")
         snapshot = capture_scalar_node_values(self.node_names[0], attributes)
         self._value_clipboard.write(MayaScalarValueTransfer((snapshot,)))
         count = len(snapshot.values)
         self.operation_reported.emit(
-            f"基準ノードから{count}属性の値をコピーしました"
+            f"基準ノードから選択した{count}属性の値をコピーしました"
         )
         return count
 
@@ -708,10 +723,10 @@ class ChannelBoxController(qt.QObject):
         self.operation_reported.emit(message)
         return result.changed
 
-    def paste_copied_value_to_selected(
+    def paste_copied_values_to_selected(
         self, keys: Sequence[tuple[str, str]]
     ) -> bool:
-        """OS clipboardの一値を、選択属性pathと全選択nodeへ貼り付ける。"""
+        """OS clipboardの項目数に応じた規則で選択属性へ貼り付ける。"""
         if self._disposed:
             raise RuntimeError("終了済みの画面には入力できません")
         if not self.node_names:
@@ -730,12 +745,23 @@ class ChannelBoxController(qt.QObject):
         self.state_edit_session.finish()
         self._finish_value_edit()
         transfer = self._value_clipboard.read()
-        result = apply_scalar_value_to_paths(
-            self.node_names,
-            paths,
-            transfer,
-        )
-        message = f"選択属性への貼り付け対象: {result.eligible_count}属性"
+        if len(transfer.nodes) != 1:
+            raise ValueError("現在は一つのコピー元nodeだけ貼り付けられます")
+        if len(transfer.nodes[0].values) == 1:
+            result = apply_scalar_value_to_paths(
+                self.node_names,
+                paths,
+                transfer,
+            )
+            operation = "選択属性への一値貼り付け"
+        else:
+            result = apply_scalar_value_transfer_to_paths(
+                self.node_names,
+                paths,
+                transfer,
+            )
+            operation = "選択属性への同path貼り付け"
+        message = f"{operation}対象: {result.eligible_count}属性"
         if result.excluded:
             message += " / 対象外: " + " / ".join(result.excluded)
         self.operation_reported.emit(message)
