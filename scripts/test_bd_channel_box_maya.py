@@ -1551,6 +1551,8 @@ class _MayaSmokeSession:
             )
             self._assert_values("translateY", (4.25, 4.25))
             self._assert_values("translateZ", (4.25, 4.25))
+            if widget.message_label.isVisible() or widget.message_label.text():
+                raise AssertionError("選択属性Paste後に操作通知が残っています")
             cmds.undo()
             self._flush_gui()
             self._assert_values(
@@ -1618,6 +1620,8 @@ class _MayaSmokeSession:
             self._assert_values("weight", (0.25, 0.25))
             self._assert_values("enabled", (False, False))
             self._assert_values("mode", (5, 5))
+            if widget.message_label.isVisible() or widget.message_label.text():
+                raise AssertionError("同path Paste後に操作通知が残っています")
 
             # 貼り付け後の全属性CopyをMaya再起動後のOS clipboard検証へ残す
             widget.edit_menu.aboutToShow.emit()
@@ -1695,11 +1699,8 @@ class _MayaSmokeSession:
             self._assert_values("weight", (0.9, 0.9))
             self._assert_values("enabled", (False, False))
             self._assert_values("mode", (10, 10))
-            if "貼り付け対象: 2属性" not in widget.message_label.text():
-                raise AssertionError(
-                    "表示状態Pasteの対象数が表示されません: "
-                    + widget.message_label.text()
-                )
+            if widget.message_label.isVisible() or widget.message_label.text():
+                raise AssertionError("表示状態Paste後に操作通知が残っています")
             cmds.undo()
             self._flush_gui()
             self._assert_values("enabled", (True, True))

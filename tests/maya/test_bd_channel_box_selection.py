@@ -988,19 +988,19 @@ def test_single_copied_value_pastes_to_selected_paths_and_nodes(
         _show_row_menu(target_row)
         assert target_row.paste_selected_values_action.isEnabled()
         assert "一つの値" in target_row.paste_selected_values_action.toolTip()
+        editor.edit_menu.aboutToShow.emit()
+        assert editor.paste_selected_values_action.isEnabled()
         cmds.flushUndo()
 
-        target_row.paste_selected_values_action.trigger()
+        editor.paste_selected_values_action.trigger()
         _events()
         for node in ("multiA", "multiB"):
             assert cmds.getAttr(node + ".translateY") == 6.25
             assert cmds.getAttr(node + ".translateZ") == 6.25
         assert cmds.getAttr("multiA.translateX") == 6.25
         assert cmds.getAttr("multiB.translateX") == 9.0
-        assert (
-            "選択属性への一値貼り付け対象: 4属性"
-            in editor.message_label.text()
-        )
+        assert not editor.message_label.isVisible()
+        assert editor.message_label.text() == ""
 
         cmds.undo()
         _events()
@@ -1055,7 +1055,8 @@ def test_selected_values_paste_to_copied_paths_across_nodes(
             assert cmds.getAttr(node + ".gain") == 4.5
             assert cmds.getAttr(node + ".mode") == 2
             assert cmds.getAttr(node + ".rotateX") == 0.0
-        assert "貼り付け対象: 6属性" in editor.message_label.text()
+        assert not editor.message_label.isVisible()
+        assert editor.message_label.text() == ""
 
         cmds.undo()
         _events()
@@ -1116,30 +1117,25 @@ def test_copied_path_paste_filters_by_reference_node_display_state(
         tuple[
             ChannelAttributeFilter,
             tuple[float, bool, float],
-            int,
-            int,
         ],
         ...,
     ] = (
-        ("keyable", (4.5, True, 1.0), 2, 2),
-        ("channel_box", (1.0, False, 1.0), 2, 2),
-        ("hidden", (1.0, True, 3.5), 2, 2),
-        ("visible", (4.5, False, 1.0), 4, 1),
+        ("keyable", (4.5, True, 1.0)),
+        ("channel_box", (1.0, False, 1.0)),
+        ("hidden", (1.0, True, 3.5)),
+        ("visible", (4.5, False, 1.0)),
     )
-    for display_filter, expected, eligible_count, filtered_count in cases:
+    editor.message_label.setText("以前の操作通知")
+    editor.message_label.show()
+    for display_filter, expected in cases:
         editor.paste_copied_values_actions[display_filter].trigger()
         _events()
         for node in ("multiA", "multiB"):
             assert cmds.getAttr(node + ".gain") == expected[0]
             assert cmds.getAttr(node + ".enabled") is expected[1]
             assert cmds.getAttr(node + ".limited") == expected[2]
-        assert (
-            f"貼り付け対象: {eligible_count}属性"
-            in editor.message_label.text()
-        )
-        assert (
-            f"表示条件外: {filtered_count}項目" in editor.message_label.text()
-        )
+        assert not editor.message_label.isVisible()
+        assert editor.message_label.text() == ""
 
         cmds.undo()
         _events()
@@ -1155,15 +1151,15 @@ def test_copied_path_paste_filters_by_reference_node_display_state(
     cmds.setAttr("multiA.limited", keyable=True)
     cmds.flushUndo()
     editor.paste_copied_values_actions["channel_box"].trigger()
-    assert "貼り付け対象: 0属性" in editor.message_label.text()
-    assert "表示条件外: 3項目" in editor.message_label.text()
+    assert not editor.message_label.isVisible()
+    assert editor.message_label.text() == ""
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_paste_matches_only_selected_formal_paths_across_nodes(
     editor: ChannelBoxWidget,
 ) -> None:
-    """全属性clipboardから選択pathだけを貼り、型違いとlockを報告する。"""
+    """全属性clipboardから選択pathだけを貼り、除外理由を画面へ出さない。"""
     clipboard = qt.QApplication.clipboard()
     saved = _saved_clipboard()
     try:
@@ -1230,12 +1226,8 @@ def test_paste_matches_only_selected_formal_paths_across_nodes(
         assert cmds.getAttr("pasteB.mode") == 0
         assert cmds.getAttr("pasteA.enabled") is False
         assert cmds.getAttr("pasteB.enabled") is False
-        assert (
-            "選択属性への同path貼り付け対象: 4属性"
-            in editor.message_label.text()
-        )
-        assert "enum定義" in editor.message_label.text()
-        assert "ロック" in editor.message_label.text()
+        assert not editor.message_label.isVisible()
+        assert editor.message_label.text() == ""
 
         cmds.undo()
         _events()
@@ -1262,6 +1254,8 @@ def test_invalid_clipboard_data_reports_error_without_writing(
         _show_row_menu(row)
         assert row.paste_copied_values_action.isEnabled()
         assert row.paste_selected_values_action.isEnabled()
+        editor.message_label.setText("以前の操作通知")
+        editor.message_label.show()
         before = tuple(
             cmds.getAttr(node + ".translateX") for node in ("multiA", "multiB")
         )
@@ -1277,6 +1271,7 @@ def test_invalid_clipboard_data_reports_error_without_writing(
         )
         assert editor.message_label.isVisible()
         assert "JSON" in editor.message_label.text()
+        assert "以前の操作通知" not in editor.message_label.text()
         assert cmds.undoInfo(query=True, undoQueueEmpty=True)
     finally:
         clipboard.setMimeData(saved)

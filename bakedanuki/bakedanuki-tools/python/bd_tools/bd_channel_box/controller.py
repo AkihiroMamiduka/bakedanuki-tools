@@ -721,35 +721,19 @@ class ChannelBoxController(qt.QObject):
         self._finish_value_edit()
         transfer = self._value_clipboard.read()
         if display_filter == "all":
-            result = apply_scalar_value_transfer(self.node_names, transfer)
-            changed = result.changed
-            eligible_count = result.eligible_count
-            excluded = result.excluded
-            filtered_count = 0
-        else:
-            paths, filtered_count, base_excluded = (
-                self._paste_paths_for_display_filter(transfer, display_filter)
-            )
-            if paths:
-                result = apply_scalar_value_transfer_to_paths(
-                    self.node_names,
-                    paths,
-                    transfer,
-                )
-                changed = result.changed
-                eligible_count = result.eligible_count
-                excluded = base_excluded + result.excluded
-            else:
-                changed = False
-                eligible_count = 0
-                excluded = base_excluded
-        message = f"貼り付け対象: {eligible_count}属性"
-        if display_filter != "all":
-            message += f" / 表示条件外: {filtered_count}項目"
-        if excluded:
-            message += " / 対象外: " + " / ".join(excluded)
-        self.operation_reported.emit(message)
-        return changed
+            return apply_scalar_value_transfer(
+                self.node_names, transfer
+            ).changed
+        paths, _filtered_count, _base_excluded = (
+            self._paste_paths_for_display_filter(transfer, display_filter)
+        )
+        if not paths:
+            return False
+        return apply_scalar_value_transfer_to_paths(
+            self.node_names,
+            paths,
+            transfer,
+        ).changed
 
     def _paste_paths_for_display_filter(
         self,
@@ -811,18 +795,12 @@ class ChannelBoxController(qt.QObject):
                 paths,
                 transfer,
             )
-            operation = "選択属性への一値貼り付け"
         else:
             result = apply_scalar_value_transfer_to_paths(
                 self.node_names,
                 paths,
                 transfer,
             )
-            operation = "選択属性への同path貼り付け"
-        message = f"{operation}対象: {result.eligible_count}属性"
-        if result.excluded:
-            message += " / 対象外: " + " / ".join(result.excluded)
-        self.operation_reported.emit(message)
         return result.changed
 
     def _selected_state_plugs(

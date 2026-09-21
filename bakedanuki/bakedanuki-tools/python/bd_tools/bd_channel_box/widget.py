@@ -865,6 +865,11 @@ class ChannelBoxWidget(qt.QWidget):
         self.message_label.setText(message)
         self.message_label.setVisible(bool(message))
 
+    def _clear_message(self) -> None:
+        """以前の操作通知を消して、現在の操作結果と混同させない。"""
+        self.message_label.clear()
+        self.message_label.hide()
+
     def _cancel_transient_input(self) -> None:
         """Bindingを破棄する前に、古い選択への入力とメニューを終了する。"""
         self.table_view.finish_numeric_edit(commit=False)
@@ -1001,6 +1006,7 @@ class ChannelBoxWidget(qt.QWidget):
             elif action == "copy_selected":
                 self.controller.copy_selected_values(selected)
             elif action == "paste_selected":
+                self._clear_message()
                 self.controller.paste_copied_values_to_selected(selected)
             elif action in ("lock", "unlock"):
                 self.controller.set_selected_locked(selected, action == "lock")
@@ -1037,6 +1043,7 @@ class ChannelBoxWidget(qt.QWidget):
         """OS clipboardの値を、表示条件で絞った同pathへ貼り付ける。"""
         self.state_sweep.finish()
         self.lock_sweep.finish()
+        self._clear_message()
         try:
             self.controller.paste_copied_values(display_filter)
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
@@ -1046,6 +1053,7 @@ class ChannelBoxWidget(qt.QWidget):
         """OS clipboardの項目数に応じた規則で選択属性へ貼り付ける。"""
         self.state_sweep.finish()
         self.lock_sweep.finish()
+        self._clear_message()
         try:
             self.controller.paste_copied_values_to_selected(
                 self.table_view.selected_keys()

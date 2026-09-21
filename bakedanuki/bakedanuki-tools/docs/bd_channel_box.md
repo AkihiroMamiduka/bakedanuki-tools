@@ -324,13 +324,12 @@ Paste時点の表示状態から対象pathを一度決め、その同じpathを�
 `keyable + channelbox`はKeyableまたはChannelBox、`keyable`はKeyable、`channelbox`は
 非KeyableかつChannelBox、`hide`はKeyableでもChannelBoxでもない属性です。画面上部の
 Attribute Filterとは独立して明示的に選び、選択した条件は保存しません。条件外のコピー項目数は
-通常の結果として表示し、属性なし・型違い・編集不可などの対象外理由とは分けます。
-対象pathが0件ならsceneとUndo履歴を変更しません。
+内部のPaste結果へ保持し、画面には表示しません。対象pathが0件ならsceneとUndo履歴を変更しません。
 
 複数項目をコピーした後の「選択属性」は、OSクリップボード内の値から現在選択した属性と
 同じ正式pathだけを取り出します。`translate.translateX`のような正式な相対pathと
 型・単位区分が一致する属性だけを対象とし、行順やクリック順による対応付けは行いません。
-選択pathがクリップボードにない場合は、コピー値なしとして対象外理由へ表示します。
+選択pathがクリップボードにない場合は、コピー値なしとして内部結果の対象外にします。
 
 一項目だけをコピーした後の「選択属性」は、コピーした一値を現在選択している属性pathと
 全選択nodeへ展開します。Paste時にコピー元pathを右クリックする必要はありません。
@@ -339,8 +338,11 @@ number・distance・angle・boolは同じ型区分同士に限定し、enumは�
 
 enumは整数値と項目名の対応が一致する場合だけ対象にし、表示順だけの違いは許容します。
 属性なし、型・単位違い、enum定義違い、lock・入力接続などの編集不可属性は対象外として
-画面へ理由を表示します。残った全対象の型・hard limitを先に検証し、一回のUndoで変更します。
+内部結果へ理由を保持します。残った全対象の型・hard limitを先に検証し、一回のUndoで変更します。
 途中失敗は操作前の値へ復旧し、全対象が同値ならUndo項目を作りません。
+
+Pasteの成功・部分適用・対象0件では画面へ操作通知を表示せず、以前の通知も消去します。
+未対応versionや壊れたJSONなど、Paste処理を開始できない場合だけ簡潔なエラーを表示します。
 
 custom MIMEとmarker付きtextへversion付きJSONを保存するため、別のMaya processからも
 貼り付けられます。未対応version、壊れたJSON、過大data、未知の型は値を書き込む前に拒否します。
@@ -1062,7 +1064,7 @@ toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=T
 | Maya 2025本体の別process | `result-restart.json`の`success`はTrue。前process終了後の属性値読取りと元clipboardの復元を確認 |
 
 utilではcustom MIMEとmarker付きtextのJSON、型付きsnapshot、公開単位、enum定義、
-同path適用を検証しました。欠落・型違い・enum定義違い・lockを対象外として報告し、
+同path適用を検証しました。欠落・型違い・enum定義違い・lockを内部結果の対象外とし、
 hard limit違反では全候補を変更しないこと、適用成功時は一回のUndoになることを確認しています。
 
 Maya本体の結果と画像は
@@ -1076,7 +1078,7 @@ toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=T
 
 OSクリップボードに一属性値だけがある場合に、その値を選択中の複数属性pathと
 全選択nodeへ展開する操作を追加しました。異なる型区分、enum定義違い、readonly属性は
-既存の同path Pasteと同様に対象外として報告し、適用候補は一回のUndoへまとめます。
+既存の同path Pasteと同様に内部結果の対象外とし、適用候補は一回のUndoへまとめます。
 
 | 確認対象 | 結果 |
 | --- | --- |
@@ -1148,7 +1150,7 @@ toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=T
 
 「コピー元と同じ属性」に`全て`／`keyable + channelbox`／`keyable`／`channelbox`／`hide`を
 追加しました。Paste時の先頭選択nodeで対象pathを決め、同じpathを全選択nodeへ適用します。
-条件外件数を通常結果として分けて表示し、対象0件ではUndoを作りません。
+条件外項目は内部結果へ保持し、対象0件ではUndoを作りません。
 
 | 確認対象 | 結果 |
 | --- | --- |
@@ -1170,3 +1172,26 @@ OS clipboardが書込み直後に空を返し、既存clipboard test 3件が失�
 Maya 2026 / 2027本体の画面操作は実施していません。
 
 toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=True)`を使用します。
+
+### Paste結果通知の抑制（2026-09-21）
+
+Pasteの成功・部分適用・対象0件では操作通知を表示せず、Paste開始時に
+以前の通知を消去するようにしました。Transformの計算属性やlock属性などの
+除外理由は内部結果に保持します。壊れたJSONや未対応versionなど、Pasteを
+開始できない場合だけ、従来どおり画面へ簡潔なエラーを表示します。
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsのBlack・Pyright・unit test | 成功。unit 8件、Pyrightのerrorは0件 |
+| 選択操作のMaya runtime test | Maya 2025 / 2026 / 2027で各38件成功 |
+| Paste通知 | 一値展開・同path・表示状態フィルター・部分適用・対象0件で非表示を確認 |
+| 致命的なclipboardエラー | 以前の通知を消し、壊れたJSONのエラーだけを表示することを確認 |
+| Maya 2025本体の初回操作 | `result.json`の`success`はTrue。Paste後の通知非表示を含む45工程と32枚の画像を確認 |
+
+Maya本体の結果は`%TEMP%/bd-channel-box-maya2025-l7j58fwb`です。初回processは
+機能結果の保存後に既知のMaya終了待ちタイムアウトになりました。別processの
+再起動確認ではWindowsのOS clipboardが空を返し、clipboard転送工程を
+完了できませんでした。今回変更したPaste通知は初回processと各versionの
+runtime testで検証済みです。Maya 2026 / 2027本体の画面操作は実施していません。
+
+toolsのみの変更です。反映には`bd_tools.reload_package()`を使用します。
