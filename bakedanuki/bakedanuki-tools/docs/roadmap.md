@@ -51,6 +51,7 @@
 - [x] コピー元と同じ正式pathへの一括Pasteと、複数コピー値から選択した同pathだけのPaste
 - [x] 一項目だけをコピーした場合に、同じ型区分の選択属性と全選択nodeへ値を展開するPaste
 - [x] Paste時の基準nodeでall／visible／keyable／channelBox／hiddenを判定する同path Paste
+- [x] 表示・lock欄の直接操作を選択属性へ適用し、なぞり操作の通過行と分離
 
 ### bdChannelBoxの拡張候補
 

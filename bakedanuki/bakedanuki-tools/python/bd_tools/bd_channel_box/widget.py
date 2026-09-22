@@ -388,10 +388,16 @@ class AttributeStateRowWidget(qt.QWidget):
         parent: qt.QWidget,
         *,
         edit_session: MayaEditSession | None = None,
+        display_state_request_handler: (
+            Callable[[ChannelDisplayState], None] | None
+        ) = None,
+        lock_request_handler: Callable[[bool], None] | None = None,
     ) -> None:
-        """状態の読取りと、ユーザーが明示した入力だけを接続する。"""
+        """状態の読取りと、単行・選択属性の明示入力を接続する。"""
         super().__init__(parent)
         self._edit_session = edit_session
+        self._display_state_request_handler = display_state_request_handler
+        self._lock_request_handler = lock_request_handler
         self.row = row
         self.selection_count = selection_count
         self.setObjectName(f"channel_state_{row.attribute.path}")
@@ -511,28 +517,36 @@ class AttributeStateRowWidget(qt.QWidget):
         self.name_label.setToolTip(tooltip)
         for value, _label, description in _DISPLAY_OPTIONS:
             self.display_buttons[value].setToolTip(
-                f"{description}\n左ドラッグで複数行をなぞって選択\n{tooltip}"
+                f"{description}\n"
+                "操作行が選択中なら、選択属性へ一括適用\n"
+                f"左ドラッグで通過行だけをなぞり操作\n{tooltip}"
             )
         self.lock_check_box.setToolTip(
             "Lock: 属性自身のロック／解除\n"
-            "左ドラッグで開始時の操作を複数行へ適用\n"
+            "操作行が選択中なら、選択属性へ一括適用\n"
+            "左ドラッグで開始時の操作を通過行だけへ適用\n"
             f"{tooltip}"
         )
 
     def _set_display_state(
         self, value: ChannelDisplayState, _checked: bool = False
     ) -> None:
-        """明示選択した表示状態だけを、一括変更する。"""
+        """通常入力は選択属性へ、なぞり中はこの行だけへ適用する。"""
         try:
             session = self._edit_session
-            self.row.state_binding.set_display_state(
-                value,
-                edit_session=(
-                    session
-                    if session is not None and session.is_editing
-                    else None
-                ),
-            )
+            if self._display_state_request_handler is not None and not (
+                session is not None and session.is_editing
+            ):
+                self._display_state_request_handler(value)
+            else:
+                self.row.state_binding.set_display_state(
+                    value,
+                    edit_session=(
+                        session
+                        if session is not None and session.is_editing
+                        else None
+                    ),
+                )
         except (ValueError, RuntimeError, ExceptionGroup):
             # Bindingの通知で理由を表示し、操作後は正本の選択へ戻す
             pass
@@ -540,17 +554,22 @@ class AttributeStateRowWidget(qt.QWidget):
             self._update_state()
 
     def set_locked(self, locked: bool) -> None:
-        """属性自身のロックだけを変更し、親のロックには触れない。"""
+        """通常入力は選択属性へ、なぞり中はこの行だけのlockを変える。"""
         try:
             session = self._edit_session
-            self.row.state_binding.set_locked(
-                locked,
-                edit_session=(
-                    session
-                    if session is not None and session.is_editing
-                    else None
-                ),
-            )
+            if self._lock_request_handler is not None and not (
+                session is not None and session.is_editing
+            ):
+                self._lock_request_handler(locked)
+            else:
+                self.row.state_binding.set_locked(
+                    locked,
+                    edit_session=(
+                        session
+                        if session is not None and session.is_editing
+                        else None
+                    ),
+                )
         except (ValueError, RuntimeError, ExceptionGroup):
             # Bindingの通知で理由を表示し、操作後は正本の状態へ戻す
             pass
@@ -954,6 +973,22 @@ class ChannelBoxWidget(qt.QWidget):
             self._show_error(str(error))
         return True
 
+    def _request_display_state(
+        self, key: tuple[str, str], state: ChannelDisplayState
+    ) -> None:
+        """選択中の属性を、操作した行と同じ表示状態へ揃える。"""
+        try:
+            self.controller.set_selected_display(self._action_keys(key), state)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _request_locked(self, key: tuple[str, str], locked: bool) -> None:
+        """選択中の属性自身を、操作後のロック状態へ揃える。"""
+        try:
+            self.controller.set_selected_locked(self._action_keys(key), locked)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
     def _configure_value_input(
         self, widget: AttributeRowWidget, key: tuple[str, str]
     ) -> None:
@@ -1172,12 +1207,19 @@ class ChannelBoxWidget(qt.QWidget):
         try:
             for row in self.controller.rows:
                 widget: AttributeRowWidget | AttributeStateRowWidget
+                key = (row.attribute.path, row.attribute.kind)
                 if isinstance(row, ChannelStateRow):
                     widget = AttributeStateRowWidget(
                         row,
                         len(names),
                         self.table_view.viewport(),
                         edit_session=self.controller.state_edit_session,
+                        display_state_request_handler=partial(
+                            self._request_display_state, key
+                        ),
+                        lock_request_handler=partial(
+                            self._request_locked, key
+                        ),
                     )
                     for button in widget.display_buttons.values():
                         self.state_sweep.add_button(button)
@@ -1185,7 +1227,6 @@ class ChannelBoxWidget(qt.QWidget):
                         widget.lock_check_box, on_change=widget.set_locked
                     )
                 else:
-                    key = (row.attribute.path, row.attribute.kind)
                     widget = AttributeRowWidget(
                         row,
                         len(names),

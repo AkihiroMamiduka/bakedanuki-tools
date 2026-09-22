@@ -105,6 +105,7 @@ class _MayaSmokeSession:
             self._inspect_attribute_order,
             self._inspect_multi_attribute_selection,
             self._inspect_multi_value_controls,
+            self._inspect_multi_state_controls,
             self._inspect_clipboard_value_transfer,
             self._inspect_state_sweep,
             self._inspect_lock_sweep,
@@ -1455,6 +1456,77 @@ class _MayaSmokeSession:
             raise AssertionError("複数enum属性の入力が一Undoになっていません")
         self._capture("29-multi-attribute-value-controls.png")
         self.steps.append("multi_attribute_value_controls_and_undo")
+
+    def _inspect_multi_state_controls(self) -> None:
+        """表示・lockの直接入力を選択属性へ一括適用する。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+
+        widget = self._require_window().widget
+        self._select_combo_item(widget.mode_combo, 1)
+        self._select_combo_item(
+            widget.filter_combo, widget.filter_combo.findData("all")
+        )
+        paths = ("translate.translateX", "translate.translateY")
+        rows = tuple(self._state_row(path) for path in paths)
+        selected = tuple(
+            (row.row.attribute.path, row.row.attribute.kind) for row in rows
+        )
+        widget.table_view.select_keys(selected)
+
+        # 選択行の表示ボタンから、全属性をHideへ揃える
+        cmds.flushUndo()
+        self._select_radio_button(rows[0].display_buttons["hidden"])
+        for name in ("translateX", "translateY"):
+            if self._attribute_states(name) != (
+                (False, False, False),
+                (False, False, False),
+            ):
+                raise AssertionError(
+                    f"選択属性のHide一括操作に失敗しました: {name}"
+                )
+        self._capture("34-multi-attribute-display-state.png")
+        cmds.undo()
+        self._flush_gui()
+        for name in ("translateX", "translateY"):
+            if self._attribute_states(name) != (
+                (True, False, False),
+                (True, False, False),
+            ):
+                raise AssertionError("Hide一括操作をUndoで戻せません")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("Hide一括操作が一Undoになっていません")
+
+        # lockのSpace入力も選択属性へ適用する
+        rows = tuple(self._state_row(path) for path in paths)
+        widget.table_view.select_keys(selected)
+        cmds.flushUndo()
+        self._key(rows[0].lock_check_box, qt.Qt.Key.Key_Space)
+        self._flush_gui()
+        for name in ("translateX", "translateY"):
+            if self._attribute_states(name) != (
+                (True, False, True),
+                (True, False, True),
+            ):
+                raise AssertionError("lockの選択属性操作に失敗しました")
+        self._capture("35-multi-attribute-lock-state.png")
+        cmds.undo()
+        self._flush_gui()
+        for name in ("translateX", "translateY"):
+            if self._attribute_states(name) != (
+                (True, False, False),
+                (True, False, False),
+            ):
+                raise AssertionError("lock一括操作をUndoで戻せません")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("lock一括操作が一Undoになっていません")
+
+        self._select_combo_item(widget.mode_combo, 0)
+        self._select_combo_item(
+            widget.filter_combo, widget.filter_combo.findData("visible")
+        )
+        self.steps.append("multi_attribute_state_controls_and_undo")
 
     def _inspect_clipboard_value_transfer(self) -> None:
         """実メニューのCopyと表示条件を含むPaste規則を一Undoまで確認する。"""

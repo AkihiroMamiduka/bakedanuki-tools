@@ -71,6 +71,33 @@ def _state_row(
     return row
 
 
+def _state_keys(
+    editor: ChannelBoxWidget, *names: str
+) -> tuple[tuple[str, str], ...]:
+    """表示・ロック行の正式pathと型を、表示順で返す。"""
+    return tuple(
+        (
+            _state_row(editor, name).row.attribute.path,
+            _state_row(editor, name).row.attribute.kind,
+        )
+        for name in names
+    )
+
+
+def _key(widget: qt.QWidget, key: qt.Qt.Key) -> None:
+    """フォーカス中の入力部品へ、通常のキー操作を送る。"""
+    widget.setFocus()
+    for kind in (qt.QEvent.Type.KeyPress, qt.QEvent.Type.KeyRelease):
+        qt.QApplication.sendEvent(
+            widget,
+            qt.QtGui.QKeyEvent(
+                kind,
+                key,
+                qt.Qt.KeyboardModifier.NoModifier,
+            ),
+        )
+
+
 def _states(editor: ChannelBoxWidget) -> None:
     """上部ComboBoxから表示・ロックモードへ切り替える。"""
     editor.mode_combo.setCurrentIndex(1)
@@ -530,6 +557,106 @@ def test_display_change_has_one_undo_and_redo(
         expected,
     ]
     assert _checked_display(editor) == (display,)
+
+
+def test_selected_display_control_aligns_rows_and_groups_undo(
+    state_editor: ChannelBoxWidget,
+) -> None:
+    """選択行の選択済みradioを再操作し、他の選択行も同じ状態へ揃える。"""
+    editor = state_editor
+    _states(editor)
+    _choose_display(editor, "hidden", "translateY")
+    before = {
+        f"{node}.{name}": _flags(f"{node}.{name}")
+        for node in _NODES
+        for name in ("translateX", "translateY")
+    }
+    selected = _state_keys(editor, "translateX", "translateY")
+    editor.table_view.select_keys(selected)
+    source = _state_row(editor, "translateX")
+    assert source.display_buttons["keyable"].isChecked()
+    cmds.flushUndo()
+
+    source.display_buttons["keyable"].click()
+    _events()
+    for node in _NODES:
+        for name in ("translateX", "translateY"):
+            assert _flags(f"{node}.{name}") == (True, False, False)
+    assert editor.table_view.selected_keys() == selected
+
+    cmds.undo()
+    _events()
+    assert {path: _flags(path) for path in before} == before
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize(
+    ("initial", "expected"),
+    (("unlocked", True), ("locked", False), ("mixed", True)),
+)
+def test_selected_lock_control_uses_resulting_state_and_groups_undo(
+    state_editor: ChannelBoxWidget,
+    initial: str,
+    expected: bool,
+) -> None:
+    """選択行のlockを、操作元の次状態へキー入力で一括変更する。"""
+    editor = state_editor
+    _states(editor)
+    attributes = ("translateX", "translateY")
+    if initial == "locked":
+        for node in _NODES:
+            for name in attributes:
+                cmds.setAttr(f"{node}.{name}", lock=True)
+    elif initial == "mixed":
+        cmds.setAttr("stateA.translateX", lock=True)
+        cmds.setAttr("stateB.translateY", lock=True)
+    _events()
+    before = {
+        f"{node}.{name}": _flags(f"{node}.{name}")
+        for node in _NODES
+        for name in attributes
+    }
+    selected = _state_keys(editor, *attributes)
+    editor.table_view.select_keys(selected)
+    cmds.flushUndo()
+
+    _key(_state_row(editor, "translateX").lock_check_box, qt.Qt.Key.Key_Space)
+    _events()
+    for node in _NODES:
+        for name in attributes:
+            assert bool(cmds.getAttr(f"{node}.{name}", lock=True)) is expected
+    assert editor.table_view.selected_keys() == selected
+
+    cmds.undo()
+    _events()
+    assert {path: _flags(path) for path in before} == before
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_unselected_state_control_changes_only_its_row(
+    state_editor: ChannelBoxWidget,
+) -> None:
+    """既存選択の外にある操作部品は、その行だけを変更する。"""
+    editor = state_editor
+    _states(editor)
+    selected = _state_keys(editor, "translateX", "translateY")
+    editor.table_view.select_keys(selected)
+    cmds.flushUndo()
+
+    _state_row(editor, "translateZ").lock_check_box.click()
+    _events()
+    for node in _NODES:
+        assert cmds.getAttr(f"{node}.translateZ", lock=True)
+        assert not cmds.getAttr(f"{node}.translateX", lock=True)
+        assert not cmds.getAttr(f"{node}.translateY", lock=True)
+    assert editor.table_view.selected_keys() == selected
+
+    cmds.undo()
+    _events()
+    assert all(
+        not cmds.getAttr(f"{node}.translateZ", lock=True) for node in _NODES
+    )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_mixed_display_is_explicit_and_undo_restores_each_node(

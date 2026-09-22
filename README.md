@@ -98,6 +98,8 @@ Step欄のない行は対象外として通知し、属性値とUndo履歴は変
 
 上部ComboBoxで「表示・ロック」へ切り替えると、属性名の右側を状態設定へ置き換えます。
 非表示の属性も列挙し、Keyable／ChannelBox／HideとLock／Unlockを独立して一括変更できます。
+複数属性の選択中は、選択行の`key / ch / hide / lock`をクリックすると、
+同じ状態を選択属性すべてへ適用します。左ドラッグのなぞり操作は通過行だけを変更します。
 その下のComboBoxで全て／keyable + channelbox／keyable／channelbox／hideを選び、
 両モードの表示対象を絞り込めます。フィルター選択はモードごとにWindow内で保持します。
 縦スクロールバーは必要時だけ表示し、値編集のstep設定も維持します。

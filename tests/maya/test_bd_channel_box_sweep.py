@@ -53,6 +53,13 @@ def _button(editor: ChannelBoxWidget, name: str) -> qt.QRadioButton:
     return row.display_buttons["hidden"]
 
 
+def _key_for(editor: ChannelBoxWidget, name: str) -> tuple[str, str]:
+    """表示・ロック行の正式pathと型を返す。"""
+    row = next(w for w in editor.row_widgets if w.row.attribute.name == name)
+    assert isinstance(row, AttributeStateRowWidget)
+    return row.row.attribute.path, row.row.attribute.kind
+
+
 def _mouse(
     origin: qt.QtWidgets.QAbstractButton,
     kind: qt.QEvent.Type,
@@ -105,10 +112,15 @@ def test_sweep_freezes_filtered_rows_and_groups_undo(
     editor: ChannelBoxWidget,
 ) -> None:
     """変更は即時に反映し、絞り込みはrelease後、Undoは全行一回にする。"""
+    editor.table_view.select_keys(
+        (_key_for(editor, "translateX"), _key_for(editor, "rotateZ"))
+    )
     before = editor.row_widgets
     first, last = _start(editor)
     _events()
     _assert_keyable(False)
+    for node in ("sweepA", "sweepB"):
+        assert cmds.getAttr(f"{node}.rotateZ", keyable=True)
     assert editor.row_widgets == before
     _mouse(first, qt.QEvent.Type.MouseButtonRelease, last)
     _events()
@@ -173,11 +185,16 @@ def test_lock_sweep_normalizes_mixed_rows_and_groups_undo(
         for axis in "XYZ"
     )
     cmds.flushUndo()
+    editor.table_view.select_keys(
+        (_key_for(editor, "translateX"), _key_for(editor, "rotateZ"))
+    )
     rows = editor.row_widgets
     first, _last = _start_lock(editor)
     _events()
     target = initial != "locked"
     _assert_locked(target)
+    for node in ("sweepA", "sweepB"):
+        assert not cmds.getAttr(f"{node}.rotateZ", lock=True)
     assert editor.row_widgets == rows
     assert not editor.state_sweep.is_active
     _mouse(first, qt.QEvent.Type.MouseMove, first)
