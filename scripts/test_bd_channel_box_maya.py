@@ -74,6 +74,7 @@ class _MayaSmokeSession:
             self._show,
             self._inspect,
             self._inspect_wheel_setting,
+            self._inspect_attribute_search,
             self._inspect_native_wheel_controls,
             self._float_dock,
             self._inspect_floating,
@@ -509,6 +510,96 @@ class _MayaSmokeSession:
             table.verticalScrollBar().setValue(0)
             self._flush_gui()
         self.steps.append("native_wheel_value_focus_toggle_and_parent_scroll")
+
+    def _inspect_attribute_search(self) -> None:
+        """検索欄の3表示方針と、既存行だけを絞る検索結果を確認する。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+
+        widget = self._require_window().widget
+        actions = widget.search_visibility_actions
+        if widget.search_visibility != "all_only":
+            raise AssertionError("検索欄の初期表示方針が不正です")
+        if widget.search_edit.isVisible():
+            raise AssertionError("全て以外で検索欄が表示されています")
+
+        # 3項目を実際のMenuで表示し、文字切れと初期チェックを保存する
+        menu_position = widget.menu_bar.mapToGlobal(
+            qt.QPoint(0, widget.menu_bar.height())
+        )
+        widget.search_visibility_menu.popup(menu_position)
+        self._flush_gui()
+        menu_path = self.output / "36-search-visibility-menu.png"
+        if not widget.search_visibility_menu.grab().save(str(menu_path)):
+            raise RuntimeError("検索欄表示メニュー画像を保存できません")
+        self.screenshots.append(str(menu_path))
+        widget.search_visibility_menu.close()
+
+        self._select_combo_item(
+            widget.filter_combo, widget.filter_combo.findData("all")
+        )
+        self._flush_gui()
+        if not widget.search_edit.isVisible():
+            raise AssertionError("全てで検索欄が表示されません")
+        rows = widget.row_widgets
+        translate_x = next(
+            row.key
+            for row in widget.table_view.rows
+            if row.key[0] == "translate.translateX"
+        )
+        translate_y = next(
+            row.key
+            for row in widget.table_view.rows
+            if row.key[0] == "translate.translateY"
+        )
+        widget.table_view.select_keys((translate_x, translate_y))
+        cmds.flushUndo()
+
+        # 正式path検索はBindingを作り直さず、見えない選択だけを解除する
+        widget.search_edit.setText("TRANSLATE.TRANSLATEX")
+        self._flush_gui()
+        visible = tuple(
+            row.key[0]
+            for index, row in enumerate(widget.table_view.rows)
+            if not widget.table_view.isRowHidden(index)
+        )
+        if visible != ("translate.translateX",):
+            raise AssertionError(f"検索結果が不正です: {visible}")
+        if widget.row_widgets != rows:
+            raise AssertionError("検索で属性行またはBindingが再生成されました")
+        if widget.table_view.selected_keys() != (translate_x,):
+            raise AssertionError("検索で隠れた属性が選択へ残りました")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("属性検索でUndoが増えました")
+        self._capture("37-attribute-search.png")
+
+        # 非表示中は文字列を維持しながら、見えない検索条件を無効にする
+        actions["never"].setChecked(True)
+        self._flush_gui()
+        if widget.search_edit.isVisible() or any(
+            widget.table_view.isRowHidden(index)
+            for index in range(len(widget.table_view.rows))
+        ):
+            raise AssertionError("非表示中も検索条件が適用されています")
+        if widget.search_edit.text() != "TRANSLATE.TRANSLATEX":
+            raise AssertionError("非表示への切替で検索文字列が失われました")
+
+        actions["always"].setChecked(True)
+        self._flush_gui()
+        if not widget.search_edit.isVisible():
+            raise AssertionError("常に表示で検索欄が表示されません")
+        if sum(action.isChecked() for action in actions.values()) != 1:
+            raise AssertionError("検索欄の表示方針が排他的ではありません")
+
+        # 後続工程へ初期条件を戻し、検索文字列自体は保存対象にしない
+        actions["all_only"].setChecked(True)
+        widget.search_edit.clear()
+        self._select_combo_item(
+            widget.filter_combo, widget.filter_combo.findData("visible")
+        )
+        self._flush_gui()
+        self.steps.append("attribute_search_and_visibility_modes")
 
     def _float_dock(self) -> None:
         """初回の右ドックを確認し、Maya標準のfloatingへ切り替える。"""

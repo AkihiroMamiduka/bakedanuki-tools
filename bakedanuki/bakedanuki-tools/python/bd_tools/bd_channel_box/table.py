@@ -172,12 +172,14 @@ class ChannelTableView(qt.QTableView):
         self._paint_selection()
 
     def selected_keys(self) -> tuple[_RowKey, ...]:
-        """選択属性を表示順で返し、widgetの寿命から切り離す。"""
+        """表示中の選択属性を行順で返し、widgetの寿命から切り離す。"""
         selected = {
             index.row() for index in self.selectionModel().selectedRows()
         }
         return tuple(
-            row.key for index, row in enumerate(self.rows) if index in selected
+            row.key
+            for index, row in enumerate(self.rows)
+            if index in selected and not self.isRowHidden(index)
         )
 
     def select_keys(self, keys: Sequence[_RowKey]) -> None:
@@ -186,7 +188,7 @@ class ChannelTableView(qt.QTableView):
         self.selectionModel().clearSelection()
         first = -1
         for index, row in enumerate(self.rows):
-            if row.key in selected:
+            if row.key in selected and not self.isRowHidden(index):
                 self.selectionModel().select(
                     self._row_model.index(index, 0),
                     qt.QItemSelectionModel.SelectionFlag.Select
@@ -197,6 +199,56 @@ class ChannelTableView(qt.QTableView):
         if first >= 0:
             self._anchor = first
             self._set_current(first)
+
+    def set_visible_keys(self, keys: Sequence[_RowKey] | None) -> int:
+        """指定した行だけを表示し、隠れた行を属性選択から外す。"""
+        selected = self.selected_keys()
+        current = self.currentIndex().row()
+        current_key = (
+            self.rows[current].key if 0 <= current < len(self.rows) else None
+        )
+        visible = None if keys is None else set(keys)
+        visible_count = 0
+
+        # 行WidgetとBindingを維持したまま、Tableの表示だけを切り替える
+        for index, row in enumerate(self.rows):
+            shown = visible is None or row.key in visible
+            self.setRowHidden(index, not shown)
+            visible_count += int(shown)
+
+        # 見えない属性を後続の一括操作へ残さない
+        self.select_keys(selected)
+        current_visible = next(
+            (
+                index
+                for index, row in enumerate(self.rows)
+                if row.key == current_key and not self.isRowHidden(index)
+            ),
+            -1,
+        )
+        first_visible = next(
+            (
+                index
+                for index in range(len(self.rows))
+                if not self.isRowHidden(index)
+            ),
+            -1,
+        )
+        if current_visible >= 0:
+            self._set_current(current_visible)
+        elif first_visible >= 0:
+            self._set_current(first_visible)
+        else:
+            self.setCurrentIndex(qt.QModelIndex())
+        if not 0 <= self._anchor < len(self.rows) or self.isRowHidden(
+            self._anchor
+        ):
+            # Shift選択の起点を、検索で隠れた行へ残さない
+            self._anchor = (
+                current_visible if current_visible >= 0 else first_visible
+            )
+        self._paint_selection()
+        return visible_count
 
     def select_key(self, key: _RowKey, *, extend: bool = False) -> None:
         """一つの属性を選択し、指定時は現在の選択へ追加する。"""

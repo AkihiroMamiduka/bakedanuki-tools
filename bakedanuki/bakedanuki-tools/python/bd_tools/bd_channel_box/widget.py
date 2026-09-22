@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import partial
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 from bd_util.maya.ui import (
     ChannelDisplayState,
@@ -69,6 +69,16 @@ _DISPLAY_OPTIONS: tuple[tuple[ChannelDisplayState, str, str], ...] = (
     ("keyable", "key", "Keyable: キー設定可能"),
     ("channel_box", "ch", "ChannelBox: キー設定不可・Channel Boxに表示"),
     ("hidden", "hide", "Hide: キー設定不可・Channel Boxから非表示"),
+)
+_SearchVisibility = Literal["never", "all_only", "always"]
+_SEARCH_VISIBILITY_OPTIONS: tuple[tuple[_SearchVisibility, str, str], ...] = (
+    ("never", "非表示", "検索欄を表示しません。"),
+    (
+        "all_only",
+        "「全て」の場合のみ表示",
+        "Attribute Filterが「全て」の場合だけ検索欄を表示します。",
+    ),
+    ("always", "常に表示", "全てのAttribute Filterで検索欄を表示します。"),
 )
 
 
@@ -593,6 +603,9 @@ class ChannelBoxWidget(qt.QWidget):
         self._scroll_timer = qt.QTimer(self)
         self._scroll_timer.setSingleShot(True)
         self._scroll_timer.timeout.connect(self._restore_scroll_anchor)
+        self._search_timer = qt.QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.timeout.connect(self._apply_search_filter)
         self.menu_bar = qt.QMenuBar(self)
         self.menu_bar.setNativeMenuBar(False)
         self.edit_menu = qt.QMenu("編集", self.menu_bar)
@@ -675,6 +688,29 @@ class ChannelBoxWidget(qt.QWidget):
         cast(_MenuActions, self.settings_menu).addAction(
             self.wheel_editing_action
         )
+        self.search_visibility_menu = qt.QMenu(
+            "検索欄の表示", self.settings_menu
+        )
+        self.search_visibility_group = qt.QActionGroup(self)
+        self.search_visibility_group.setExclusive(True)
+        self.search_visibility_actions: dict[_SearchVisibility, qt.QAction] = (
+            {}
+        )
+        for value, label, tooltip in _SEARCH_VISIBILITY_OPTIONS:
+            action = qt.QAction(label, self)
+            action.setObjectName(
+                "searchVisibility"
+                + "".join(part.title() for part in value.split("_"))
+                + "Action"
+            )
+            action.setCheckable(True)
+            action.setChecked(value == "all_only")
+            action.setToolTip(tooltip)
+            self.search_visibility_group.addAction(action)
+            cast(_MenuActions, self.search_visibility_menu).addAction(action)
+            self.search_visibility_actions[value] = action
+        self.settings_menu.addSeparator()
+        self.settings_menu.addMenu(self.search_visibility_menu)
         self.mode_combo = qt.QComboBox(self)
         self.mode_combo.addItem("値編集", "values")
         self.mode_combo.addItem("表示・ロック", "states")
@@ -695,24 +731,35 @@ class ChannelBoxWidget(qt.QWidget):
         )
         self.mode_label = qt.QLabel("Mode:", self)
         self.filter_label = qt.QLabel("Attribute Filter:", self)
+        self.search_label = qt.QLabel("Attribute Search:", self)
+        self.search_edit = qt.QLineEdit(self)
+        self.search_edit.setObjectName("attributeSearchEdit")
+        self.search_edit.setAccessibleName("属性名検索")
+        self.search_edit.setPlaceholderText("属性名またはpathを検索")
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.setToolTip(
+            "Nice Name・属性名・正式pathを、大文字小文字を区別せず検索します。\n"
+            "空白で区切った語は、すべて含む属性だけを表示します。"
+        )
         # 説明を右揃えの共通列に置き、残りの幅を選択欄へ配分する
         controls_layout = qt.QGridLayout()
         controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setSpacing(6)
         controls_layout.setColumnStretch(1, 1)
-        for index, (label, combo) in enumerate(
+        for index, (label, control) in enumerate(
             (
                 (self.mode_label, self.mode_combo),
                 (self.filter_label, self.filter_combo),
+                (self.search_label, self.search_edit),
             )
         ):
             label.setAlignment(
                 qt.Qt.AlignmentFlag.AlignRight
                 | qt.Qt.AlignmentFlag.AlignVCenter
             )
-            label.setBuddy(combo)
+            label.setBuddy(control)
             controls_layout.addWidget(label, index, 0)
-            controls_layout.addWidget(combo, index, 1)
+            controls_layout.addWidget(control, index, 1)
         self.header_label = qt.QLabel("ノードを選択してください", self)
         self.header_label.setTextInteractionFlags(
             qt.Qt.TextInteractionFlag.TextSelectableByMouse
@@ -779,6 +826,11 @@ class ChannelBoxWidget(qt.QWidget):
         self.wheel_editing_action.toggled.connect(
             self._set_wheel_editing_without_focus
         )
+        for value, action in self.search_visibility_actions.items():
+            action.toggled.connect(
+                partial(self._change_search_visibility, value)
+            )
+        self.search_edit.textChanged.connect(self._queue_search_filter)
         self._sync_filter()
         self.controller.refresh()
 
@@ -787,6 +839,73 @@ class ChannelBoxWidget(qt.QWidget):
         for widget in self.row_widgets:
             if isinstance(widget, AttributeRowWidget):
                 widget.set_wheel_editing_without_focus(enabled)
+
+    @property
+    def search_visibility(self) -> _SearchVisibility:
+        """検索欄の現在の表示方針を返す。"""
+        for value, action in self.search_visibility_actions.items():
+            if action.isChecked():
+                return value
+        return "all_only"
+
+    def _change_search_visibility(
+        self, value: _SearchVisibility, checked: bool
+    ) -> None:
+        """明示選択された検索欄の表示方針だけを反映する。"""
+        if checked and value == self.search_visibility:
+            self._sync_search_visibility()
+
+    def _search_should_be_visible(self) -> bool:
+        """設定と現在のAttribute Filterから検索欄の表示可否を返す。"""
+        visibility = self.search_visibility
+        return visibility == "always" or (
+            visibility == "all_only"
+            and self.controller.attribute_filter == "all"
+        )
+
+    def _sync_search_visibility(self) -> None:
+        """検索欄を表示方針へ揃え、見えない検索条件を無効化する。"""
+        visible = self._search_should_be_visible()
+        self.search_label.setVisible(visible)
+        self.search_edit.setVisible(visible)
+        self._search_timer.stop()
+        self._apply_search_filter()
+
+    def _queue_search_filter(self, _text: str) -> None:
+        """連続する文字入力を同じQt event内でまとめて表示へ反映する。"""
+        self._search_timer.start(0)
+
+    def _search_tokens(self) -> tuple[str, ...]:
+        """表示中の検索欄から、大文字小文字を区別しないAND条件を返す。"""
+        if not self._search_should_be_visible():
+            return ()
+        return tuple(
+            token.casefold()
+            for token in self.search_edit.text().split()
+            if token
+        )
+
+    def _apply_search_filter(self) -> None:
+        """既存行とBindingを維持し、検索に一致するTable行だけを表示する。"""
+        if self.controller.is_disposed:
+            return
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self.table_view.finish_numeric_edit(commit=True)
+        tokens = self._search_tokens()
+        visible_keys: list[tuple[str, str]] = []
+        if tokens:
+            for widget in self.row_widgets:
+                attribute = widget.row.attribute
+                searchable = " ".join(
+                    (attribute.nice_name, attribute.name, attribute.path)
+                ).casefold()
+                if all(token in searchable for token in tokens):
+                    visible_keys.append((attribute.path, attribute.kind))
+        visible_count = self.table_view.set_visible_keys(
+            visible_keys if tokens else None
+        )
+        self._update_empty_state(visible_count, searching=bool(tokens))
 
     def _change_mode(self, index: int) -> None:
         """編集中の値を通常のフォーカス移動で確定してから表示を切り替える。"""
@@ -833,6 +952,7 @@ class ChannelBoxWidget(qt.QWidget):
             )
         finally:
             self.filter_combo.blockSignals(blocked)
+        self._sync_search_visibility()
 
     def _remember_scroll_anchor(self) -> None:
         """表示先頭の属性pathを記録して、設定行の増減後も位置を保つ。"""
@@ -891,6 +1011,7 @@ class ChannelBoxWidget(qt.QWidget):
 
     def _cancel_transient_input(self) -> None:
         """Bindingを破棄する前に、古い選択への入力とメニューを終了する。"""
+        self._search_timer.stop()
         self.table_view.finish_numeric_edit(commit=False)
         self.context_menu.close()
         for widget in self.row_widgets:
@@ -1299,14 +1420,28 @@ class ChannelBoxWidget(qt.QWidget):
         )
         self._table_node_ids = self.controller.node_ids
         self._prepare_edit_menu()
+        self._apply_search_filter()
         # 行の配置が確定してから、残っている属性のスクロール位置を復元する
         self._scroll_timer.start(0)
-        self.empty_label.setVisible(not widgets)
-        self.empty_label.setText(
-            "フィルターに一致する bool・float 系・enum 属性がありません。"
-            if names
-            else "Maya ノードを選択すると、入力可能な種類の属性を表示します。"
-        )
+
+    def _update_empty_state(
+        self, visible_count: int, *, searching: bool
+    ) -> None:
+        """ノード・表示条件・検索結果の空状態を区別して表示する。"""
+        if not self.controller.node_names:
+            message = (
+                "Maya ノードを選択すると、入力可能な種類の属性を表示します。"
+            )
+        elif not self.row_widgets:
+            message = (
+                "フィルターに一致する bool・float 系・enum 属性がありません。"
+            )
+        elif searching and visible_count == 0:
+            message = "検索条件に一致する属性がありません。"
+        else:
+            message = ""
+        self.empty_label.setText(message)
+        self.empty_label.setVisible(bool(message))
 
     def _apply_step_value(
         self, source_key: tuple[str, str], value: float
@@ -1346,6 +1481,7 @@ class ChannelBoxWidget(qt.QWidget):
         self.state_sweep.dispose()
         self.lock_sweep.dispose()
         self._scroll_timer.stop()
+        self._search_timer.stop()
         self.context_menu.close()
         for widget in self.row_widgets:
             widget.context_menu.close()

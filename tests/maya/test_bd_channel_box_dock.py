@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from maya import cmds
@@ -187,3 +188,30 @@ def test_wheel_preference_persists_and_layout_reset_keeps_it(
     _events()
     assert reset is dock_host.window
     assert reset.widget.wheel_editing_action.isChecked()
+
+
+@pytest.mark.parametrize("visibility", ("never", "all_only", "always"))
+def test_search_visibility_preference_persists_without_query(
+    dock_host: _WorkspaceHost,
+    visibility: Literal["never", "all_only", "always"],
+) -> None:
+    """検索欄の表示方針だけを再生成後へ復元し、検索文字列は破棄する。"""
+    from bd_tools import bd_channel_box
+
+    first = bd_channel_box.show()
+    _events()
+    assert first.widget.search_visibility == "all_only"
+    first.widget.search_visibility_actions[visibility].setChecked(True)
+    first.widget.search_edit.setText("translate")
+    bd_channel_box.close()
+    _events()
+
+    reopened = bd_channel_box.show()
+    _events()
+    assert reopened.widget.search_visibility == visibility
+    assert reopened.widget.search_edit.text() == ""
+    reset = bd_channel_box.reset_layout()
+    _events()
+    assert reset is dock_host.window
+    assert reset.widget.search_visibility == visibility
+    assert reset.widget.search_edit.text() == ""

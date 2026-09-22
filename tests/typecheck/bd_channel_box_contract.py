@@ -96,10 +96,24 @@ assert_type(
 )
 assert_type(bd_channel_box.show().widget.settings_menu, qt.QMenu)
 assert_type(bd_channel_box.show().widget.wheel_editing_action, qt.QAction)
+assert_type(bd_channel_box.show().widget.search_visibility_menu, qt.QMenu)
+assert_type(
+    bd_channel_box.show().widget.search_visibility_group, qt.QActionGroup
+)
+assert_type(
+    bd_channel_box.show().widget.search_visibility_actions,
+    dict[Literal["never", "all_only", "always"], qt.QAction],
+)
+assert_type(
+    bd_channel_box.show().widget.search_visibility,
+    Literal["never", "all_only", "always"],
+)
 assert_type(bd_channel_box.show().widget.mode_combo, qt.QComboBox)
 assert_type(bd_channel_box.show().widget.filter_combo, qt.QComboBox)
+assert_type(bd_channel_box.show().widget.search_edit, qt.QLineEdit)
 assert_type(bd_channel_box.show().widget.mode_label, qt.QLabel)
 assert_type(bd_channel_box.show().widget.filter_label, qt.QLabel)
+assert_type(bd_channel_box.show().widget.search_label, qt.QLabel)
 assert_type(bd_channel_box.show().widget.state_sweep, RadioButtonSweep)
 assert_type(bd_channel_box.show().widget.lock_sweep, CheckBoxSweep)
 assert_type(
@@ -125,6 +139,8 @@ assert_type(table, ChannelTableView)
 assert_type(table.selected_keys(), tuple[tuple[str, str], ...])
 keys = (("translate.translateX", "distance"), ("rotate.rotateX", "angle"))
 assert_type(table.select_keys(keys), None)
+assert_type(table.set_visible_keys(keys), int)
+assert_type(table.set_visible_keys(None), int)
 controller = bd_channel_box.show().widget.controller
 assert_type(controller.apply_numeric_values(keys, 5.0), bool)
 assert_type(controller.offset_numeric_values(keys, 1.0), bool)

@@ -50,6 +50,10 @@ class ChannelBoxWindow(MayaDockableWindow):
             "wheel_editing_without_focus",
             self.widget.wheel_editing_action,
         )
+        for value, action in self.widget.search_visibility_actions.items():
+            self.ui_state.register_checkable_action(
+                f"search_visibility_{value}", action
+            )
         self.ui_state_tracker = MayaUiStateTracker.for_dockable(
             self.ui_state,
             self,
