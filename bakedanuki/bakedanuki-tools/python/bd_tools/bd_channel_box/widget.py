@@ -46,9 +46,11 @@ __all__ = [
 _VALUE_FIELD_WIDTH = 90
 _AUXILIARY_FIELD_WIDTH = 60
 _FIELD_SPACING = 6
+_NAME_EDITOR_SPACING = 0
 _EDITOR_WIDTH = _VALUE_FIELD_WIDTH + _FIELD_SPACING + _AUXILIARY_FIELD_WIDTH
 _STATE_EDITOR_WIDTH = 200
 _NAME_FIELD_PREFERRED_WIDTH = 92
+_NAME_FIELD_RIGHT_MARGIN = 4
 _PASTE_FILTER_OPTIONS: tuple[tuple[ChannelAttributeFilter, str, str], ...] = (
     ("all", "全て", "コピーした全項目を"),
     (
@@ -96,6 +98,11 @@ class _MenuActions(Protocol):
 class _AttributeNameLabel(qt.QLabel):
     """設定モードの長い属性名でも入力列を押し広げない名前欄。"""
 
+    def __init__(self, text: str, parent: qt.QWidget) -> None:
+        """右端に選択色が見える余白を持つ名前欄を作成する。"""
+        super().__init__(text, parent)
+        self.setContentsMargins(0, 0, _NAME_FIELD_RIGHT_MARGIN, 0)
+
     def sizeHint(self) -> qt.QSize:
         """属性名の文字数に依存しない推奨幅を返す。"""
         return qt.QSize(
@@ -111,11 +118,14 @@ class _AttributeNameLabel(qt.QLabel):
         del arg__1
         painter = qt.QPainter(self)
         painter.setPen(self.palette().color(qt.QPalette.ColorRole.WindowText))
+        contents = self.contentsRect()
         painter.drawText(
-            self.contentsRect(),
+            contents,
             self.alignment(),
             self.fontMetrics().elidedText(
-                self.text(), qt.Qt.TextElideMode.ElideRight, self.width()
+                self.text(),
+                qt.Qt.TextElideMode.ElideRight,
+                contents.width(),
             ),
         )
         painter.end()
@@ -245,7 +255,7 @@ class AttributeRowWidget(qt.QWidget):
         row.binding.state_changed.connect(self._update_state)
         layout = qt.QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(_NAME_EDITOR_SPACING)
         layout.addWidget(self.name_label, 1)
         layout.addWidget(self.editor)
         self._update_state()
@@ -453,7 +463,7 @@ class AttributeStateRowWidget(qt.QWidget):
         controls.addWidget(self.lock_check_box)
         layout = qt.QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(_FIELD_SPACING)
+        layout.setSpacing(_NAME_EDITOR_SPACING)
         layout.addWidget(self.name_label, 1)
         layout.addWidget(self.editor)
 

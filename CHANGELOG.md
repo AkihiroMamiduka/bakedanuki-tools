@@ -9,6 +9,12 @@
 
 ### Changed
 
+- bdChannelBoxの属性選択色を属性名だけへ適用し、float値欄は未選択時と同じ
+  Qt paletteを維持する。値欄のフォーカス・文字選択、縦ドラッグによる属性選択、
+  複数属性入力は従来どおり利用できる。属性名の右側へ4pxの内側余白を設け、
+  属性名と入力Viewの外側spacingを0pxにして、Maya標準と同様に選択色が文字の右側から
+  入力欄まで続くようにする。bool・enum・Step・Sliderを含む入力部品の配色を
+  属性選択から独立させるtoolsのみの変更で、scene・保存設定の移行は不要。
 - bdChannelBoxの属性ごとのStep設定を`bd_channel_box/preferences/main`へ保存し、
   Window再表示・tools/util reload・Maya再起動後へ復元する。識別子は正式な相対属性pathと
   `number`／`distance`／`angle`の組で、現在の表示単位における数値だけを保持する。
@@ -69,7 +75,7 @@
   Stepだけの変更は属性値とUndo履歴へ影響しない。
   対応する`bakedanuki-util`への更新が必要。既存scene・保存設定の移行は不要。
 - bdChannelBoxの一覧・属性名・入力部品の周囲をMaya UIの通常背景色へ変更。
-  数値・Stepなどの入力欄の暗い背景と、選択中の青い強調表示は維持し、
+  数値・Stepなどの入力欄の暗い背景と、選択中の属性名の青い強調表示は維持し、
   入力箇所とOFFのboolチェックボックスを見分けやすくした。
   toolsのみの変更で、既存API・scene・保存設定の移行は不要。
 - bdChannelBoxの属性一覧を`QTableView`とdelegateへ移行し、既存の行Viewを常時表示する。

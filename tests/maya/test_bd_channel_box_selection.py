@@ -236,6 +236,19 @@ def _show_row_menu(row: AttributeRowWidget) -> None:
     row.context_menu.aboutToShow.emit()
 
 
+def _palette_colors(
+    widget: qt.QWidget,
+) -> tuple[qt.QtGui.QColor, qt.QtGui.QColor, qt.QtGui.QColor, qt.QtGui.QColor]:
+    """選択表示で維持するWidgetの主要なpalette色を返す。"""
+    palette = widget.palette()
+    return (
+        palette.color(qt.QPalette.ColorRole.Window),
+        palette.color(qt.QPalette.ColorRole.Base),
+        palette.color(qt.QPalette.ColorRole.WindowText),
+        palette.color(qt.QPalette.ColorRole.Text),
+    )
+
+
 def test_control_shift_selection_only_reads(editor: ChannelBoxWidget) -> None:
     """Ctrlで離れた行、Shiftで範囲を選択し、sceneとUndoを変更しない。"""
     assert isinstance(editor.table_view, qt.QTableView)
@@ -254,6 +267,87 @@ def test_control_shift_selection_only_reads(editor: ChannelBoxWidget) -> None:
     )
     assert editor.table_view.selected_keys() == _keys(
         editor, "translateX", "translateY", "translateZ"
+    )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_selection_highlights_only_attribute_names(
+    editor: ChannelBoxWidget,
+) -> None:
+    """複数属性の選択色を名前欄だけへ適用し、各入力部品の配色を維持する。"""
+    rows = tuple(
+        _row(editor, name)
+        for name in ("translateX", "gain", "enabled", "mode")
+    )
+    value_step = rows[0].editor
+    slider = rows[1].editor
+    check_box = rows[2].editor
+    combo_box = rows[3].editor
+    assert isinstance(value_step, FloatValueStepSpinBox)
+    assert isinstance(slider, FloatSliderSpinBox)
+    assert isinstance(check_box, BoolCheckBox)
+    assert isinstance(combo_box, EnumComboBox)
+    inputs: tuple[qt.QWidget, ...] = (
+        value_step.spin_box,
+        value_step.step_spin_box,
+        slider.spin_box,
+        slider.slider,
+        check_box,
+        combo_box,
+    )
+    input_states = tuple(
+        (_palette_colors(widget), widget.autoFillBackground())
+        for widget in inputs
+    )
+    name_states = tuple(
+        (_palette_colors(row.name_label), row.name_label.autoFillBackground())
+        for row in rows
+    )
+    assert all(row.name_label.contentsMargins().right() == 4 for row in rows)
+
+    editor.table_view.select_keys(
+        tuple((row.row.attribute.path, row.row.attribute.kind) for row in rows)
+    )
+    highlight = editor.table_view.palette().color(
+        qt.QPalette.ColorRole.Highlight
+    )
+    highlighted_text = editor.table_view.palette().color(
+        qt.QPalette.ColorRole.HighlightedText
+    )
+    for row in rows:
+        palette = row.name_label.palette()
+        assert palette.color(qt.QPalette.ColorRole.Window) == highlight
+        assert palette.color(qt.QPalette.ColorRole.Base) == highlight
+        assert (
+            palette.color(qt.QPalette.ColorRole.WindowText) == highlighted_text
+        )
+        assert palette.color(qt.QPalette.ColorRole.Text) == highlighted_text
+        assert row.name_label.autoFillBackground()
+    assert (
+        tuple(
+            (_palette_colors(widget), widget.autoFillBackground())
+            for widget in inputs
+        )
+        == input_states
+    )
+
+    editor.table_view.clearSelection()
+    assert (
+        tuple(
+            (
+                _palette_colors(row.name_label),
+                row.name_label.autoFillBackground(),
+            )
+            for row in rows
+        )
+        == name_states
+    )
+    assert (
+        tuple(
+            (_palette_colors(widget), widget.autoFillBackground())
+            for widget in inputs
+        )
+        == input_states
     )
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 

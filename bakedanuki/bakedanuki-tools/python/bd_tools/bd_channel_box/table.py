@@ -170,7 +170,6 @@ class ChannelTableView(qt.QTableView):
                 children = find_children(qt.QLineEdit)
                 for child in children:
                     self._add_target(child, index, numeric=True)
-                self._remember_palette(row.value_field)
         self.select_keys(selected)
         if preserve_selection and current_key is not None:
             for index, row in enumerate(self.rows):
@@ -339,7 +338,7 @@ class ChannelTableView(qt.QTableView):
         self._palettes.clear()
 
     def _paint_selection(self, *_args: object) -> None:
-        """常時表示の名前欄と数値欄にも選択状態を表示する。"""
+        """常時表示の属性名だけに選択状態を表示する。"""
         selected = set(self.selected_keys())
         for widget, original, fill in self._palettes:
             if not qt.isValid(widget):

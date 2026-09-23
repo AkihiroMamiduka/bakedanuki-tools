@@ -240,9 +240,11 @@ def test_mode_switch_preserves_width_with_long_hidden_name(
         value_row.name_label.width(),
         value_row.editor.x(),
     )
+    assert value_row.name_label.contentsMargins().right() == 4
     assert not editor.scroll_area.verticalScrollBar().isVisible()
     _states(editor)
     row = _state_row(editor)
+    assert row.name_label.contentsMargins().right() == 4
     assert editor.width() == before[0]
     assert editor.scroll_area.verticalScrollBar().isVisible()
     assert row.name_label.width() < before[1]
@@ -252,6 +254,10 @@ def test_mode_switch_preserves_width_with_long_hidden_name(
         assert isinstance(current, AttributeStateRowWidget)
         assert current.editor.width() == 200
         assert current.editor.x() + current.editor.width() == current.width()
+        assert (
+            current.editor.x()
+            == current.name_label.x() + current.name_label.width()
+        )
         buttons = (*current.display_buttons.values(), current.lock_check_box)
         for button in buttons:
             assert button.width() >= button.sizeHint().width()

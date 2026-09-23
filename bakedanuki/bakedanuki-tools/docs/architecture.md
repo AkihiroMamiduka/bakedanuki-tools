@@ -76,6 +76,9 @@ Maya本体がviewportを交換する場合に備え、行の親は構築時に`v
 既存の数値・Slider・bool・enum Viewは任意入力handlerを使い、選択中の互換属性へ操作を委譲します。
 ノードの識別子と属性path・型区分を用いて、同じノードの再表示では残存行の選択を維持し、
 対象ノードが変わる場合は選択を解除します。属性選択自体はsceneや設定ファイルへ保存しません。
+選択色は属性名の`QLabel`だけへ適用し、値・Step・Slider・bool・enumのpaletteは変更しません。
+属性名は右側に4pxの内側余白を持ち、選択色の内側で文字が境界へ接しないようにします。
+属性名と入力Viewの外側spacingは0pxとし、入力View内部の部品間隔だけを6pxに保ちます。
 boolにはutilの`BoolCheckBox`、両側hard limit付きfloatには`FloatSliderSpinBox`、
 それ以外のfloatには`FloatValueStepSpinBox`を使います。値欄とSliderの並び順の機能はutil、
 Value先行の選択、単位の非表示、固定幅と右寄せはtoolsの表示方針です。

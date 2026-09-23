@@ -1369,6 +1369,16 @@ class _MayaSmokeSession:
         }
         first = self._row("translate.translateX").name_label
         last = self._row("rotate.rotateZ").name_label
+        value_palettes: dict[str, tuple[qt.QtGui.QColor, qt.QtGui.QColor]] = {}
+        for path, _kind in keys:
+            editor = self._row(path).editor
+            if not isinstance(editor, FloatValueStepSpinBox):
+                raise AssertionError(f"数値の入力Viewがありません: {path}")
+            palette = editor.spin_box.palette()
+            value_palettes[path] = (
+                palette.color(qt.QPalette.ColorRole.Base),
+                palette.color(qt.QPalette.ColorRole.Text),
+            )
         widget.table_view.ensureWidgetVisible(first)
         self._flush_gui()
         cmds.flushUndo()
@@ -1382,6 +1392,31 @@ class _MayaSmokeSession:
         self._mouse(first, qt.QEvent.Type.MouseButtonRelease, end)
         if widget.table_view.selected_keys() != keys:
             raise AssertionError("六属性のドラッグ選択に失敗しました")
+        highlight = widget.table_view.palette().color(
+            qt.QPalette.ColorRole.Highlight
+        )
+        for path, _kind in keys:
+            row = self._row(path)
+            if row.name_label.contentsMargins().right() != 4:
+                raise AssertionError(f"属性名の右余白が不正です: {path}")
+            if row.editor.x() != row.name_label.x() + row.name_label.width():
+                raise AssertionError(
+                    f"属性名と入力欄の間に隙間があります: {path}"
+                )
+            if (
+                row.name_label.palette().color(qt.QPalette.ColorRole.Window)
+                != highlight
+            ):
+                raise AssertionError(f"属性名へ選択色が付きません: {path}")
+            editor = row.editor
+            assert isinstance(editor, FloatValueStepSpinBox)
+            palette = editor.spin_box.palette()
+            current = (
+                palette.color(qt.QPalette.ColorRole.Base),
+                palette.color(qt.QPalette.ColorRole.Text),
+            )
+            if current != value_palettes[path]:
+                raise AssertionError(f"値欄の配色が変わりました: {path}")
         self._capture("25-multi-attribute-selection.png")
         view = self._row("rotate.rotateZ").editor
         if not isinstance(view, FloatValueStepSpinBox):
