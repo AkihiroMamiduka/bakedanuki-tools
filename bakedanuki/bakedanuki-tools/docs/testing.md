@@ -123,6 +123,10 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
   ホイール編集の設定メニューと、OFFを反映した値編集画面。
 - `32-clipboard-value-menu.png`: 同一path Pasteと、一つの値を選択属性へ貼る操作を含むメニュー。
 - `33-clipboard-filter-menu.png`: 基準nodeの表示状態で同一path Pasteを絞る5項目のメニュー。
+- `34-multi-attribute-display-state.png`、`35-multi-attribute-lock-state.png`:
+  選択属性へ直接適用した表示状態とlockの結果。
+- `36-search-visibility-menu.png`、`37-attribute-search.png`:
+  検索欄の3段階表示設定と、正式pathによる検索結果。
 - `result-restart.json`、`clipboard-original.json`: 別Maya processでのOSクリップボード読取り結果と、
   検証後に復元する元のMIME data。
 - `progress.json`: 実行中の段階と完了済みの操作。
@@ -138,13 +142,14 @@ deferred quitでも発生しており、終了待ちの原因は未特定です�
 成功扱いにせず、結果を表示して専用processだけを停止し、終了code 1を返します。
 操作の検証結果とMayaアプリケーションの正常終了は区別して確認してください。
 
-複数属性拡張の最終検証（2026-09-19）では、Maya 2025本体の40工程が2回連続で成功し、
+複数属性拡張の初回検証（2026-09-19）では、Maya 2025本体の40工程が2回連続で成功し、
 いずれもrunnerの終了code 0で正常終了しました。過去の終了待ちタイムアウトの原因が
 解決したとは断定せず、再発時も操作結果と終了結果を分けます。
 最終資料は`%TEMP%/bd-channel-box-maya2025-q6i850he`です。
 toolsはBlack・Pyright・unit 8件、Maya 2025 / 2026 / 2027のruntime各144件が成功し、
-utilの`verify.cmd`も対応3 versionを含めて成功しました。
-詳細は[bdChannelBoxの検証記録](bd_channel_box.md#検証)を参照してください。利用者による確認は未実施です。
+utilの`verify.cmd`も対応3 versionを含めて成功しました。この段落は初回実装時点の記録です。
+後続機能を含む利用者の最終確認は2026-09-24に完了しています。現在の件数と結果は
+[bdChannelBoxの検証記録](bd_channel_box.md#検証)を参照してください。
 
 ### 次回変更時の回帰確認
 

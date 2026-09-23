@@ -63,8 +63,9 @@ bd_tools/
 bdChannelBoxは `MayaDockableWindowController` を使い、固定workspaceControl IDと
 `bd_tools.bd_channel_box.ui.restore` を維持します。初回は右ドック、close時は完全破棄とし、
 workspace配置の復元・resetはutil、入力と選択監視の終了はtoolsが所有します。
-値とstepの複合Viewもutilへ配置し、属性別の初期stepとWindow内での設定保持は
-bdChannelBoxが所有します。step設定はsceneの値・Undo履歴へ含めません。
+値とstepの複合View、属性path・数値種別ごとのprofileと保存基盤はutilへ配置します。
+属性別の初期step、profileの識別子、操作対象の選別はbdChannelBoxが所有します。
+step設定はuser preferencesへ保存し、sceneの値・Undo履歴へ含めません。
 属性名の整列、混在の印、対象情報のtooltip、選択属性を操作する右クリックメニューも
 bdChannelBoxが所有し、値欄のQt標準編集メニューとは独立して提供します。
 一覧は`QTableView`へ1属性1セルを置き、delegateが既存の属性行Widgetをpersistent editorとして
@@ -139,6 +140,11 @@ Step欄の入力はtoolsが選択を解釈し、同欄を持つ各Viewへ同じ�
 preferences用`UiStateManager`からWindow再生成とMaya再起動をまたいで保存します。
 各Viewの増減方式は維持し、属性path・型ごとのProfileを対象ごとに更新します。
 Step欄のない選択行は除外し、sceneとMaya Undo履歴は変更しません。
+
+Copy / Pasteでは、メニュー構成、基準node、選択属性、表示状態による貼付けpathの選別を
+toolsが所有します。型・単位・enum定義を保持する`MayaScalarValueTransfer`、値のsnapshot、
+JSONのversion・size検証、OS clipboard、全対象の事前検証と一括適用はutilが所有します。
+別ツールで値転送が必要な場合も、bdChannelBoxのcontrollerを再利用せずutilの公開APIを使います。
 
 一覧を参照するコードは`widget.table_view`を使います。`scroll_area`は同じ
 `ChannelTableView`への参照として残しますが、`QScrollArea.widget()`の代わりに`viewport()`を使います。
