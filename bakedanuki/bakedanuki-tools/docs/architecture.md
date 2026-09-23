@@ -82,6 +82,8 @@ Maya本体がviewportを交換する場合に備え、行の親は構築時に`v
 boolにはutilの`BoolCheckBox`、両側hard limit付きfloatには`FloatSliderSpinBox`、
 それ以外のfloatには`FloatValueStepSpinBox`を使います。値欄とSliderの並び順の機能はutil、
 Value先行の選択、単位の非表示、固定幅と右寄せはtoolsの表示方針です。
+float値欄とStep欄ではutilの`select_all_on_mouse_focus`を有効にし、初回クリックで
+入力文字を置換できる状態にします。再クリックと横ドラッグは通常の文字編集へ渡します。
 属性行の優先順もtoolsの表示方針です。`bd_channel_box/config.py`の
 `ATTRIBUTE_PRIORITY_PATHS`をcontrollerが行構築時に読み、正式pathで照合します。
 既定ではvisibility・translate・rotate・scaleの10属性、残りの指定22属性、

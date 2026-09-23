@@ -297,6 +297,7 @@ class AttributeRowWidget(qt.QWidget):
                 maximum=maximum,
                 decimals=decimals,
                 layout_order="value_slider",
+                value_select_all_on_mouse_focus=True,
             )
             editor.spin_box.setUnitVisible(False)
             editor.spin_box.set_wheel_requires_focus(
@@ -317,6 +318,8 @@ class AttributeRowWidget(qt.QWidget):
             step_show_unit=False,
             value_wheel_requires_focus=not wheel_editing_without_focus,
             step_wheel_requires_focus=not wheel_editing_without_focus,
+            value_select_all_on_mouse_focus=True,
+            step_select_all_on_mouse_focus=True,
             value_width=_VALUE_FIELD_WIDTH,
             step_width=_AUXILIARY_FIELD_WIDTH,
         )

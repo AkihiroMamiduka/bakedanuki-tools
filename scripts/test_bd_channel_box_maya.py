@@ -1421,6 +1421,38 @@ class _MayaSmokeSession:
         view = self._row("rotate.rotateZ").editor
         if not isinstance(view, FloatValueStepSpinBox):
             raise AssertionError("数値の入力Viewがありません")
+
+        # 実際のWindowsクリックで、初回だけ入力文字を全選択する
+        widget.filter_combo.setFocus()
+        self._flush_gui()
+        value_line_edit = view.spin_box.lineEdit()
+        self._native_left_click(value_line_edit)
+        self._flush_gui()
+        if value_line_edit.selectedText() != value_line_edit.text():
+            raise AssertionError("値欄の初回クリックで全選択されません")
+        self._mouse(
+            value_line_edit,
+            qt.QEvent.Type.MouseButtonPress,
+            value_line_edit.rect().center(),
+        )
+        self._mouse(
+            value_line_edit,
+            qt.QEvent.Type.MouseButtonRelease,
+            value_line_edit.rect().center(),
+        )
+        self._flush_gui()
+        if value_line_edit.selectedText():
+            raise AssertionError("値欄の再クリックで全選択が解除されません")
+
+        widget.filter_combo.setFocus()
+        self._flush_gui()
+        step_line_edit = view.step_spin_box.lineEdit()
+        self._native_left_click(step_line_edit)
+        self._flush_gui()
+        if step_line_edit.selectedText() != step_line_edit.text():
+            raise AssertionError("Step欄の初回クリックで全選択されません")
+        if widget.table_view.selected_keys() != keys:
+            raise AssertionError("数値欄のクリックで属性選択が変わりました")
         self._key(view.spin_box, qt.Qt.Key.Key_5, text="5")
         focused = cast(
             Callable[[], qt.QWidget | None],
@@ -2669,6 +2701,31 @@ class _MayaSmokeSession:
             raise ctypes.WinError(ctypes.get_last_error())
         coordinates = (point.x & 0xFFFF) | ((point.y & 0xFFFF) << 16)
         user32.SendMessageW(handle, 0x020A, 120 << 16, coordinates)
+
+    @staticmethod
+    def _native_left_click(widget: qt.QWidget) -> None:
+        """Windowsの入力経路でWidget中央へ左クリックを送る。"""
+        import ctypes
+        from ctypes import wintypes
+
+        window = widget.window()
+        position = widget.mapTo(window, widget.rect().center())
+        ratio = window.devicePixelRatioF()
+        point = wintypes.POINT(
+            round(position.x() * ratio), round(position.y() * ratio)
+        )
+        coordinates = (point.x & 0xFFFF) | ((point.y & 0xFFFF) << 16)
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.SendMessageW.argtypes = (
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+        )
+        user32.SendMessageW.restype = wintypes.LPARAM
+        handle = int(window.winId())
+        user32.SendMessageW(handle, 0x0201, 0x0001, coordinates)
+        user32.SendMessageW(handle, 0x0202, 0, coordinates)
 
     def _capture(self, filename: str) -> None:
         """現在のWindowをQtからPNGとして保存する。"""
