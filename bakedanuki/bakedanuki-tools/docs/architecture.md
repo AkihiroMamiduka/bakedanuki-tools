@@ -130,7 +130,9 @@ utilを直接利用します。画面寸法の定数はtools内部の調整箇�
 上下操作は操作元Stepによる表示増減量を各数値の現在値へ加え、Slider・bool・enumは互換属性を
 操作後の値へ揃えます。Sliderの連続入力は`MayaEditSession`で1回のUndoへまとめます。
 Step欄の入力はtoolsが選択を解釈し、同欄を持つ各Viewへ同じ表示stepを設定します。
-各Viewの増減方式は維持し、属性path・型ごとのWindow内キャッシュも対象ごとに更新します。
+属性pathと数値種別ごとの非初期値はutilの`FloatStepProfile`へ集約し、既存の
+preferences用`UiStateManager`からWindow再生成とMaya再起動をまたいで保存します。
+各Viewの増減方式は維持し、属性path・型ごとのProfileを対象ごとに更新します。
 Step欄のない選択行は除外し、sceneとMaya Undo履歴は変更しません。
 
 一覧を参照するコードは`widget.table_view`を使います。`scroll_area`は同じ

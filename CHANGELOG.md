@@ -9,6 +9,15 @@
 
 ### Changed
 
+- bdChannelBoxの属性ごとのStep設定を`bd_channel_box/preferences/main`へ保存し、
+  Window再表示・tools/util reload・Maya再起動後へ復元する。識別子は正式な相対属性pathと
+  `number`／`distance`／`angle`の組で、現在の表示単位における数値だけを保持する。
+  初期値と同じStepは保存せず、radiusは0.1、angleは15、その他は1へ戻る。
+  値編集行と画面余白の右クリックメニューへ`Step設定`を追加し、
+  `初期値に戻す: 全ての属性`、`初期値に戻す: 選択属性`の順で表示する。
+  全属性は画面外の保存値も削除し、選択属性は選択中でStep欄を持つ行だけを戻す。
+  成功通知と確認dialogは表示せず、scene・Undo履歴・`reset_layout()`へ影響しない。
+  対応する`bakedanuki-util`への更新と`bd_tools.reload_package(reload_util=True)`が必要。
 - bdChannelBoxへ属性検索を追加する。Nice Name・属性名・正式pathを大文字小文字を
   区別せず、空白区切りのAND条件で検索し、既存のAttribute Filterと組み合わせる。
   Maya属性・Bindingを再生成せずTable行だけを絞り込み、隠れた行は属性選択から外す。

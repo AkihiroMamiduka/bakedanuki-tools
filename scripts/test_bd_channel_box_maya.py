@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 _OUTPUT_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_OUTPUT"
 _PHASE_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PHASE"
 _PREPARE_RESTART_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PREPARE_RESTART"
+_PERSISTED_STEP = 0.5
 _STARTUP_IDLE_COMMAND = (
     "import __main__; "
     "__main__._bd_tools_bd_channel_box_qa_session.begin_when_idle()"
@@ -718,18 +719,39 @@ class _MayaSmokeSession:
         self.steps.append("context_menu_refresh_only_reads_values")
 
     def _edit_step(self) -> None:
-        """stepの実入力は正本を維持し、値欄の増減にだけ反映する。"""
+        """右クリックのStep設定と、正本を変えない実入力・保存を確認する。"""
         from maya import cmds
 
         from bd_util.ui import FloatValueStepSpinBox, qt
 
-        view = self._row("translate.translateX").editor
+        row = self._row("translate.translateX")
+        view = row.editor
         if not isinstance(view, FloatValueStepSpinBox):
             raise AssertionError("translateXに値とstepのViewがありません")
+        self._open_context_menu(row.name_label)
+        widget = self._require_window().widget
+        if (
+            widget.step_settings_menu.menuAction()
+            not in row.context_menu.actions()
+        ):
+            raise AssertionError("属性行の右クリックにStep設定がありません")
+        if tuple(
+            action.text() for action in widget.step_settings_menu.actions()
+        ) != (
+            "初期値に戻す: 全ての属性",
+            "初期値に戻す: 選択属性",
+        ):
+            raise AssertionError("Step設定のリセット順または表記が不正です")
+        row.context_menu.close()
         cmds.flushUndo()
         self._key(view.step_spin_box, qt.Qt.Key.Key_Down)
         if view.singleStep() != 0.1:
             raise AssertionError("stepの桁変更が反映されません")
+        if (
+            widget.step_profile.single_step("translate.translateX", "distance")
+            != 0.1
+        ):
+            raise AssertionError("stepの変更がprofileへ反映されません")
         self._assert_values("translateX", (0, 0))
         if not cmds.undoInfo(query=True, undoQueueEmpty=True):
             raise AssertionError("step変更でUndo履歴が増えました")
@@ -2032,7 +2054,7 @@ class _MayaSmokeSession:
     def _reopen(self) -> None:
         """close後のcallback解放を確認し、新しいWindowを表示する。"""
         from bd_tools import bd_channel_box
-        from bd_util.ui import qt
+        from bd_util.ui import FloatValueStepSpinBox, qt
 
         if self.window is not None and qt.isValid(self.window):
             raise AssertionError("close後にWindowが破棄されていません")
@@ -2042,6 +2064,12 @@ class _MayaSmokeSession:
         self._flush_gui()
         if self.window.widget.wheel_editing_action.isChecked():
             raise AssertionError("再表示後にホイール編集設定を復元できません")
+        step = self._row("translate.translateX").editor
+        if (
+            not isinstance(step, FloatValueStepSpinBox)
+            or step.singleStep() != _PERSISTED_STEP
+        ):
+            raise AssertionError("再表示後に属性Stepを復元できません")
         self.steps.append("reopen_without_callback_leak")
 
     def _change_selection(self) -> None:
@@ -2091,9 +2119,16 @@ class _MayaSmokeSession:
     def _capture_after_reload(self) -> None:
         """reload後の表示結果を保存し、負荷測定前に入力Windowを終了する。"""
         from bd_tools import bd_channel_box
+        from bd_util.ui import FloatValueStepSpinBox
 
         if self._require_window().widget.wheel_editing_action.isChecked():
             raise AssertionError("reload後にホイール編集設定を復元できません")
+        step = self._row("translate.translateX").editor
+        if (
+            not isinstance(step, FloatValueStepSpinBox)
+            or step.singleStep() != _PERSISTED_STEP
+        ):
+            raise AssertionError("reload後に属性Stepを復元できません")
         self._capture("03-after-reload.png")
         bd_channel_box.dispose()
 
@@ -2346,6 +2381,8 @@ class _MayaSmokeSession:
         view = self._row("translate.translateX").editor
         if not isinstance(view, FloatValueStepSpinBox):
             raise AssertionError("復元したUIに入力Viewがありません")
+        if view.singleStep() != _PERSISTED_STEP:
+            raise AssertionError("Maya再起動後に属性Stepを復元できません")
         view.spin_box.setValue(0.5)
         self._assert_values("translateX", (0.5, 0.5))
         if (

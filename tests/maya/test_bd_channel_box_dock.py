@@ -5,14 +5,17 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 from maya import cmds
 
 from bd_util.maya.ui import MayaDockableWindow
 from bd_util.maya.ui.dock import workspace_control
-from bd_util.ui import qt
+from bd_util.ui import FloatValueStepSpinBox, qt
+
+if TYPE_CHECKING:
+    from bd_tools.bd_channel_box.ui import ChannelBoxWindow
 
 
 class _WorkspaceHost:
@@ -45,6 +48,21 @@ def _events() -> None:
     for _ in range(3):
         qt.QApplication.processEvents()
         qt.QApplication.sendPostedEvents(None, qt.QEvent.Type.DeferredDelete)
+
+
+def _step_view(window: ChannelBoxWindow, path: str) -> FloatValueStepSpinBox:
+    """公開Window内の属性pathからStep付き数値Viewを取得する。"""
+    from bd_tools.bd_channel_box.widget import AttributeRowWidget
+
+    widget = window.widget
+    row = next(
+        row
+        for row in widget.row_widgets
+        if isinstance(row, AttributeRowWidget)
+        and row.row.attribute.path == path
+    )
+    assert isinstance(row.editor, FloatValueStepSpinBox)
+    return row.editor
 
 
 @pytest.fixture
@@ -188,6 +206,37 @@ def test_wheel_preference_persists_and_layout_reset_keeps_it(
     _events()
     assert reset is dock_host.window
     assert reset.widget.wheel_editing_action.isChecked()
+
+
+def test_step_profile_persists_and_layout_reset_keeps_it(
+    dock_host: _WorkspaceHost,
+) -> None:
+    """属性Stepをclose後へ復元し、配置リセットでも削除しない。"""
+    from bd_tools import bd_channel_box
+
+    node = cmds.createNode("transform", name="channelBoxStepTarget")
+    cmds.select(node, replace=True)
+    first = bd_channel_box.show()
+    _events()
+    _step_view(first, "translate.translateX").setSingleStep(2.5)
+    _step_view(first, "rotate.rotateY").setSingleStep(7.5)
+    assert len(first.widget.step_profile.entries) == 2
+    cmds.flushUndo()
+    bd_channel_box.close()
+    _events()
+
+    reopened = bd_channel_box.show()
+    _events()
+    assert _step_view(reopened, "translate.translateX").singleStep() == 2.5
+    assert _step_view(reopened, "rotate.rotateY").singleStep() == 7.5
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    reset = bd_channel_box.reset_layout()
+    _events()
+    assert reset is dock_host.window
+    assert _step_view(reset, "translate.translateX").singleStep() == 2.5
+    assert _step_view(reset, "rotate.rotateY").singleStep() == 7.5
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 @pytest.mark.parametrize("visibility", ("never", "all_only", "always"))

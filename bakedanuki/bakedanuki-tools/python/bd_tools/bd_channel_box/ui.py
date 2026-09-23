@@ -50,6 +50,9 @@ class ChannelBoxWindow(MayaDockableWindow):
             "wheel_editing_without_focus",
             self.widget.wheel_editing_action,
         )
+        self.ui_state.register_float_step_profile(
+            "attribute_steps", self.widget.step_profile
+        )
         for value, action in self.widget.search_visibility_actions.items():
             self.ui_state.register_checkable_action(
                 f"search_visibility_{value}", action

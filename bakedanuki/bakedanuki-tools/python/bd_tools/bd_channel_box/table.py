@@ -6,13 +6,21 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from math import isfinite
-from typing import cast
+from typing import Protocol, cast
 
 from bd_util.ui import qt
 
 __all__ = ["ChannelTableView", "TableRow"]
 
 _RowKey = tuple[str, str]
+
+
+class _FontEditor(Protocol):
+    """PySide 6.8 stubの曖昧なsetFont overloadを使用範囲だけで閉じる。"""
+
+    def setFont(self, font: qt.QFont, /) -> None:
+        """QFontを入力欄へ設定する。"""
+        ...
 
 
 @dataclass(frozen=True)
@@ -500,7 +508,7 @@ class ChannelTableView(qt.QTableView):
         self._numeric_editor = editor
         editor.setObjectName("channel_batch_numeric_editor")
         editor.setAlignment(field.alignment())
-        editor.setFont(field.font())
+        cast(_FontEditor, editor).setFont(field.font())
         editor.setText(field.cleanText())
         editor.setGeometry(
             qt.QRect(field.mapTo(self.viewport(), qt.QPoint()), field.size())

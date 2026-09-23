@@ -19,8 +19,11 @@ from bd_util.ui import (
     BoolCheckBox,
     CheckBoxSweep,
     EnumComboBox,
+    FloatStepProfile,
+    FloatStepSetting,
     FloatSliderSpinBox,
     FloatStepMode,
+    FloatUnitKind,
     FloatValueStepSpinBox,
     RadioButtonSweep,
     qt,
@@ -332,6 +335,10 @@ class AttributeRowWidget(qt.QWidget):
             return 15.0, "additive", 15.0
         return 1.0, "multiplicative", 1.0
 
+    def default_single_step(self) -> float:
+        """属性名と型から決まる、保存設定を適用する前のStepを返す。"""
+        return self._step_defaults()[0]
+
     def _notify_step_changed(self) -> None:
         """現在のstepを通知し、Window側で属性ごとの設定を保持する。"""
         if isinstance(self.editor, FloatValueStepSpinBox):
@@ -593,7 +600,7 @@ class ChannelBoxWidget(qt.QWidget):
     def __init__(self, parent: qt.QWidget | None = None) -> None:
         """画面を作成してから選択監視を開始する。"""
         super().__init__(parent)
-        self._steps: dict[tuple[str, str], float] = {}
+        self.step_profile = FloatStepProfile(self)
         self._changing_steps = False
         self.row_widgets: tuple[
             AttributeRowWidget | AttributeStateRowWidget, ...
@@ -768,9 +775,33 @@ class ChannelBoxWidget(qt.QWidget):
             qt.QSizePolicy.Policy.Ignored, qt.QSizePolicy.Policy.Preferred
         )
         self.context_menu = qt.QMenu(self)
+        self.step_settings_menu = qt.QMenu("Step設定", self)
+        self.reset_all_steps_action = qt.QAction(
+            "初期値に戻す: 全ての属性", self
+        )
+        self.reset_all_steps_action.setObjectName(
+            "resetAllAttributeStepsAction"
+        )
+        self.reset_all_steps_action.setToolTip(
+            "保存した全属性のStep設定を削除して初期値へ戻す"
+        )
+        self.reset_selected_steps_action = qt.QAction(
+            "初期値に戻す: 選択属性", self
+        )
+        self.reset_selected_steps_action.setObjectName(
+            "resetSelectedAttributeStepsAction"
+        )
+        self.reset_selected_steps_action.setToolTip(
+            "選択中でStep欄を持つ属性の保存設定を削除して初期値へ戻す"
+        )
+        step_actions = cast(_MenuActions, self.step_settings_menu)
+        step_actions.addAction(self.reset_all_steps_action)
+        step_actions.addAction(self.reset_selected_steps_action)
         self.refresh_action = qt.QAction("表示を更新", self)
         self.refresh_action.setToolTip("属性の構成と入力範囲を読み直す")
         self.refresh_action.triggered.connect(self.refresh)
+        self.context_menu.addMenu(self.step_settings_menu)
+        self.context_menu.addSeparator()
         cast(_MenuActions, self.context_menu).addAction(self.refresh_action)
         self.message_label = qt.QLabel(self)
         self.message_label.setWordWrap(True)
@@ -823,6 +854,15 @@ class ChannelBoxWidget(qt.QWidget):
             self._paste_copied_values_to_selected
         )
         self.edit_menu.aboutToShow.connect(self._prepare_edit_menu)
+        self.context_menu.aboutToShow.connect(self._prepare_step_settings_menu)
+        self.step_settings_menu.aboutToShow.connect(
+            self._prepare_step_settings_menu
+        )
+        self.reset_all_steps_action.triggered.connect(self._reset_all_steps)
+        self.reset_selected_steps_action.triggered.connect(
+            self._reset_selected_steps
+        )
+        self.step_profile.changed.connect(self._sync_step_profile)
         self.wheel_editing_action.toggled.connect(
             self._set_wheel_editing_without_focus
         )
@@ -1244,6 +1284,85 @@ class ChannelBoxWidget(qt.QWidget):
             else "コピーした値から選択属性と同じ正式pathだけを貼り付け"
         )
 
+    def _step_identity(
+        self, key: tuple[str, str]
+    ) -> tuple[str, FloatUnitKind] | None:
+        """数値属性の選択keyを、永続化するStep識別子へ変換する。"""
+        path, kind = key
+        if kind not in ("number", "distance", "angle"):
+            return None
+        return path, kind
+
+    def _saved_single_step(self, key: tuple[str, str]) -> float | None:
+        """属性keyに対応する保存済みStepを返す。"""
+        identity = self._step_identity(key)
+        if identity is None:
+            return None
+        return self.step_profile.single_step(*identity)
+
+    def _selected_step_identities(
+        self,
+    ) -> set[tuple[str, FloatUnitKind]]:
+        """現在選択中でStep欄を持つ表示行の保存識別子を返す。"""
+        selected = set(self.table_view.selected_keys())
+        identities: set[tuple[str, FloatUnitKind]] = set()
+        for widget in self.row_widgets:
+            key = (widget.row.attribute.path, widget.row.attribute.kind)
+            if (
+                key not in selected
+                or not isinstance(widget, AttributeRowWidget)
+                or not isinstance(widget.editor, FloatValueStepSpinBox)
+            ):
+                continue
+            identity = self._step_identity(key)
+            if identity is not None:
+                identities.add(identity)
+        return identities
+
+    def _prepare_step_settings_menu(self) -> None:
+        """保存済み設定と選択中のStep行に合わせてリセット可否を更新する。"""
+        entries = self.step_profile.entries
+        stored = {(entry.key, entry.unit_kind) for entry in entries}
+        self.reset_all_steps_action.setEnabled(bool(entries))
+        self.reset_selected_steps_action.setEnabled(
+            bool(stored.intersection(self._selected_step_identities()))
+        )
+
+    def _reset_all_steps(self) -> None:
+        """画面外を含む全ての保存済みStepを削除し、表示行を初期値へ戻す。"""
+        self._clear_message()
+        self.step_profile.clear()
+
+    def _reset_selected_steps(self) -> None:
+        """選択中でStep欄を持つ属性だけ、保存済みStepを削除する。"""
+        identities = self._selected_step_identities()
+        self._clear_message()
+        self.step_profile.replace_entries(
+            entry
+            for entry in self.step_profile.entries
+            if (entry.key, entry.unit_kind) not in identities
+        )
+
+    def _sync_step_profile(self) -> None:
+        """復元・リセットされたProfileを、表示中のStep欄へ書込みなしで反映する。"""
+        if self._changing_steps:
+            return
+        self._changing_steps = True
+        try:
+            for widget in self.row_widgets:
+                if not isinstance(
+                    widget, AttributeRowWidget
+                ) or not isinstance(widget.editor, FloatValueStepSpinBox):
+                    continue
+                key = (widget.row.attribute.path, widget.row.attribute.kind)
+                saved = self._saved_single_step(key)
+                widget.editor.setSingleStep(
+                    widget.default_single_step() if saved is None else saved
+                )
+        finally:
+            self._changing_steps = False
+        self._prepare_step_settings_menu()
+
     def _prepare_row_menu(
         self, widget: AttributeRowWidget | AttributeStateRowWidget
     ) -> None:
@@ -1282,6 +1401,7 @@ class ChannelBoxWidget(qt.QWidget):
                     for row in self.controller.rows
                 )
             )
+        self._prepare_step_settings_menu()
 
     def _add_selection_menu(
         self, widget: AttributeRowWidget | AttributeStateRowWidget
@@ -1290,6 +1410,9 @@ class ChannelBoxWidget(qt.QWidget):
         key = (widget.row.attribute.path, widget.row.attribute.kind)
         menu = widget.context_menu
         menu.addSeparator()
+        if isinstance(widget, AttributeRowWidget):
+            menu.addMenu(self.step_settings_menu)
+            menu.addSeparator()
         for action, label in (
             ("lock", "ロック"),
             ("unlock", "ロック解除"),
@@ -1352,7 +1475,7 @@ class ChannelBoxWidget(qt.QWidget):
                         row,
                         len(names),
                         self.table_view.viewport(),
-                        single_step=self._steps.get(key),
+                        single_step=self._saved_single_step(key),
                         align_callback=partial(
                             self._run_selected_action, "align", key
                         ),
@@ -1448,11 +1571,14 @@ class ChannelBoxWidget(qt.QWidget):
     ) -> None:
         """同じ表示stepを、選択中でStep欄を持つ属性へ反映して保持する。"""
         if self._changing_steps:
-            self._steps[source_key] = value
             return
 
         target_keys = set(self._action_keys(source_key))
         excluded: list[str] = []
+        entries = {
+            (entry.key, entry.unit_kind): entry
+            for entry in self.step_profile.entries
+        }
         self._changing_steps = True
         try:
             # 各行固有の増減方式は維持し、表示stepの数値だけを同期する
@@ -1468,10 +1594,19 @@ class ChannelBoxWidget(qt.QWidget):
                     )
                     continue
                 widget.editor.setSingleStep(value)
-                self._steps[key] = value
+                identity = self._step_identity(key)
+                assert identity is not None
+                if value == widget.default_single_step():
+                    entries.pop(identity, None)
+                else:
+                    entries[identity] = FloatStepSetting(
+                        identity[0], identity[1], value
+                    )
+            self.step_profile.replace_entries(entries.values())
         finally:
             self._changing_steps = False
 
+        self._prepare_step_settings_menu()
         self._show_operation_report(
             "対象外: " + " / ".join(excluded) if excluded else ""
         )

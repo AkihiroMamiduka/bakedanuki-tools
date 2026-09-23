@@ -500,6 +500,82 @@ def test_step_setting_on_unselected_row_stays_local(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
+def test_step_reset_context_menu_resets_selected_then_all(
+    editor: ChannelBoxWidget,
+) -> None:
+    """右クリックのStep設定から、選択属性と全属性を既定値へ戻す。"""
+    translate_x_row = _row(editor, "translateX")
+    rotate_y_row = _row(editor, "rotateY")
+    translate_x = translate_x_row.editor
+    rotate_y = rotate_y_row.editor
+    assert isinstance(translate_x, FloatValueStepSpinBox)
+    assert isinstance(rotate_y, FloatValueStepSpinBox)
+    assert (
+        editor.step_settings_menu.menuAction() in editor.context_menu.actions()
+    )
+    assert editor.step_settings_menu.menuAction() in (
+        translate_x_row.context_menu.actions()
+    )
+    assert tuple(
+        action.text() for action in editor.step_settings_menu.actions()
+    ) == (
+        "初期値に戻す: 全ての属性",
+        "初期値に戻す: 選択属性",
+    )
+
+    editor.context_menu.aboutToShow.emit()
+    assert not editor.reset_all_steps_action.isEnabled()
+    assert not editor.reset_selected_steps_action.isEnabled()
+    translate_x.setSingleStep(2.0)
+    rotate_y.setSingleStep(3.0)
+    editor.step_profile.set_single_step("offscreenWeight", "number", 4.0)
+    assert len(editor.step_profile.entries) == 3
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    editor.table_view.select_keys(_keys(editor, "translateX"))
+    translate_x_row.context_menu.aboutToShow.emit()
+    assert editor.reset_all_steps_action.isEnabled()
+    assert editor.reset_selected_steps_action.isEnabled()
+    editor.reset_selected_steps_action.trigger()
+    assert translate_x.singleStep() == 1.0
+    assert rotate_y.singleStep() == 3.0
+    assert tuple(entry.key for entry in editor.step_profile.entries) == (
+        "offscreenWeight",
+        "rotate.rotateY",
+    )
+    assert not editor.message_label.isVisible()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    editor.context_menu.aboutToShow.emit()
+    assert editor.reset_all_steps_action.isEnabled()
+    assert not editor.reset_selected_steps_action.isEnabled()
+    editor.reset_all_steps_action.trigger()
+    assert translate_x.singleStep() == 1.0
+    assert rotate_y.singleStep() == 15.0
+    assert editor.step_profile.entries == ()
+    assert not editor.reset_all_steps_action.isEnabled()
+    assert not editor.reset_selected_steps_action.isEnabled()
+    assert not editor.message_label.isVisible()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_returning_step_to_default_removes_saved_override(
+    editor: ChannelBoxWidget,
+) -> None:
+    """Stepを属性固有の初期値へ戻した場合はprofileへ保存しない。"""
+    translate_x = _row(editor, "translateX").editor
+    rotate_y = _row(editor, "rotateY").editor
+    assert isinstance(translate_x, FloatValueStepSpinBox)
+    assert isinstance(rotate_y, FloatValueStepSpinBox)
+    translate_x.setSingleStep(2.0)
+    rotate_y.setSingleStep(30.0)
+    assert len(editor.step_profile.entries) == 2
+    translate_x.setSingleStep(1.0)
+    rotate_y.setSingleStep(15.0)
+    assert editor.step_profile.entries == ()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
 def test_step_wheel_without_focus_aligns_selected_rows(
     editor: ChannelBoxWidget,
 ) -> None:

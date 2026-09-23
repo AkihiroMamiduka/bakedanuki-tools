@@ -293,6 +293,28 @@ Step欄の直接入力と上下操作では、選択中でStep欄を持つ属性
 設定をONにすると、Step欄はフォーカスがなくてもマウスオーバー中のホイールを受け付けます。
 この位置では一覧をスクロールせず、Stepを変更します。値欄も同じ操作が可能です。
 
+### Step設定の保存とリセット
+
+変更したStepは`bd_channel_box/preferences/main`の`attribute_steps`へ保存し、Windowの
+close・再表示、tools/utilのreload、Maya再起動後へ復元します。`reset_layout()`は
+配置だけを初期化し、Step設定を維持します。sceneとMaya Undo履歴には書き込みません。
+
+保存の識別子は正式な相対属性pathと`number`／`distance`／`angle`の組です。
+node名、node型、namespace、scene、現在のcm／m・deg／radなどの単位名は含めません。
+表示単位を変更しても保存した数値を換算せず、例えば0.1は新しい表示単位でも0.1として使います。
+radiusは0.1、angleは15、その他は1を初期値とし、初期値と同じ設定は保存しません。
+Step欄自身のmultiplicative／additive方式と増減幅は保存せず、行構築時の設定を使用します。
+
+値編集行または画面余白の右クリックメニューにある「Step設定」は、次の順で表示します。
+
+1. `初期値に戻す: 全ての属性`
+2. `初期値に戻す: 選択属性`
+
+全属性は現在表示していない属性を含む保存済みStepを全て削除し、表示行を各行の初期値へ戻します。
+選択属性は現在選択中でStep欄を持ち、保存値がある行だけを戻します。未選択行を右クリックした場合は、
+従来の右クリック選択規則に従ってその行を選択してから判定します。画面余白では選択を変更しません。
+対象となる保存値がない操作は無効になり、成功通知と確認dialogは表示しません。
+
 ### ホイール編集の設定
 
 画面上部の「設定」メニューには、チェック可能な「未フォーカス時のホイール編集」があります。
@@ -540,11 +562,12 @@ bd_tools.reload_package(reload_util=True) # utilも変更した場合
 常時表示します。既存の数値・Step・Slider・bool・enum・状態ViewとBindingを維持し、
 値をtable modelへ二重に保存しません。選択中の複数属性への文字入力だけ一時的な文字欄で受け付け、
 既存Viewからの上下・Slider・bool・enum入力はutilの任意入力handlerを通してcontrollerへ渡します。
-Step入力はWindow内で選択を解釈し、各行の既存Viewとキャッシュへ反映します。
+Step入力はWindow内で選択を解釈し、各行の既存Viewと`FloatStepProfile`へ反映します。
 Windowはutilの `MayaDockableWindow` を継承し、`dock_closed` と
 `dock_about_to_dispose` で入力controllerを終了します。workspaceControl作成・削除・
 Maya再起動時の接続・画面外補正・配置resetはutilへ委譲します。
-stepの初期値選択とWindow内の設定保持はtools、値とstepの連動はutilの複合Viewが所有します。
+stepの初期値選択と保存対象の判定はtools、属性path・単位種別ごとのprofileと状態保存、
+値とstepの連動はutilが所有します。
 値の単位変換・型付き属性列挙・一括書込み・混在状態・Undoはutilを使用します。
 複数行の値操作はutilの`apply_plugs_values()`へ型付きの絶対値または相対値の編集要求を渡し、
 全件の事前検証・復旧・1回のUndoを委譲します。Sliderは`MayaEditSession`も渡して連続入力をまとめます。
@@ -1290,3 +1313,27 @@ Maya終了待ちタイムアウトが発生したため、runnerの終了codeは
 Maya 2026 / 2027本体の画面操作は実施していません。
 
 toolsのみの変更です。反映には`bd_tools.reload_package()`を使用します。
+
+### 属性Stepの保存と右クリックリセット（2026-09-23）
+
+Step欄で確定した正の有限値を、正式属性pathと`number`／`distance`／`angle`の組で保存するように
+しました。属性固有の初期値と同じStepは保存せず、Window再表示、package reload、Maya再起動、
+配置reset後へ復元します。右クリックの「Step設定」から、選択属性または画面外を含む全属性の
+保存設定を初期値へ戻せます。
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsのBlack・Pyright・unit test | 成功。unit 8件、Maya 2025 / 2026 / 2027のPyright errorは0件 |
+| Maya 2025 / 2026 / 2027のtools runtime test | 各181件成功 |
+| utilの`verify.cmd` | 終了code 0。Maya 2025全体4,268件成功・753件skip、各versionのQt 863件・Maya UI 377件が成功 |
+| Maya 2025本体の初回操作 | `result.json`の`success`はTrue。再表示・reloadを含む47工程と36枚の画像を確認 |
+| Maya 2025本体の別process | `result-restart.json`の`success`はTrue。Step・workspace・clipboard復元を含む5工程と1枚の画像を確認 |
+
+Maya本体では、複数選択したTranslate / RotateのStep `0.5`を再表示と
+`bd_tools.reload_package(reload_util=True)`後へ復元し、別processでも保存済み
+workspaceControlとともに復元できることを確認しました。初回・再起動後とも操作結果の
+保存には成功し、既知のMaya終了待ちタイムアウトが発生したため、runnerの終了codeは1でした。
+結果と37枚の画像は`%TEMP%/bd-channel-box-maya2025-57ylf_y1`です。
+Maya 2026 / 2027本体の画面操作は実施していません。
+
+toolsとutilの変更です。反映には`bd_tools.reload_package(reload_util=True)`を使用します。

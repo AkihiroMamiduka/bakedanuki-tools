@@ -13,6 +13,7 @@ from bd_util.ui import (
     CheckBoxSweep,
     EnumComboBox,
     FloatSliderSpinBox,
+    FloatStepProfile,
     FloatValueStepSpinBox,
     RadioButtonSweep,
     UiStateManager,
@@ -60,6 +61,7 @@ if isinstance(row, AttributeRowWidget):
     )
     assert_type(row.paste_copied_values_action, qt.QAction)
     assert_type(row.paste_selected_values_action, qt.QAction)
+    assert_type(row.default_single_step(), float)
     assert_type(row.set_wheel_editing_without_focus(True), None)
 else:
     assert_type(row.row, ChannelStateRow)
@@ -96,6 +98,12 @@ assert_type(
 )
 assert_type(bd_channel_box.show().widget.settings_menu, qt.QMenu)
 assert_type(bd_channel_box.show().widget.wheel_editing_action, qt.QAction)
+assert_type(bd_channel_box.show().widget.step_profile, FloatStepProfile)
+assert_type(bd_channel_box.show().widget.step_settings_menu, qt.QMenu)
+assert_type(bd_channel_box.show().widget.reset_all_steps_action, qt.QAction)
+assert_type(
+    bd_channel_box.show().widget.reset_selected_steps_action, qt.QAction
+)
 assert_type(bd_channel_box.show().widget.search_visibility_menu, qt.QMenu)
 assert_type(
     bd_channel_box.show().widget.search_visibility_group, qt.QActionGroup
