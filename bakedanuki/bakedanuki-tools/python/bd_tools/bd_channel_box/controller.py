@@ -34,6 +34,8 @@ from bd_util.maya.ui import (
     MayaPlugsValueEdit,
     MayaScalarValueClipboard,
     MayaScalarValueTransfer,
+    MayaStringPlugsBinding,
+    MayaStringValueEdit,
     apply_scalar_value_transfer,
     apply_scalar_value_transfer_to_paths,
     apply_scalar_value_to_paths,
@@ -44,13 +46,17 @@ from bd_util.maya.ui import (
     resolve_bool_plug,
     resolve_enum_plug,
     resolve_float_plug,
+    resolve_string_plug,
 )
 from bd_util.ui import qt
 
 from . import config
 
 ChannelBinding: TypeAlias = (
-    MayaBoolPlugsBinding | MayaFloatPlugsBinding | MayaEnumPlugsBinding
+    MayaBoolPlugsBinding
+    | MayaFloatPlugsBinding
+    | MayaEnumPlugsBinding
+    | MayaStringPlugsBinding
 )
 ChannelBoxMode: TypeAlias = Literal["values", "states"]
 ChannelAttributeFilter: TypeAlias = ScalarAttributeDisplayFilter
@@ -395,6 +401,14 @@ class ChannelBoxController(qt.QObject):
                     binding = self._create_enum_binding(
                         attribute.path, targets, excluded
                     )
+                elif attribute.kind == "string":
+                    binding = MayaStringPlugsBinding(
+                        [
+                            resolve_string_plug(n, attribute.path)
+                            for n in targets
+                        ],
+                        parent=self,
+                    )
                 else:
                     binding = MayaFloatPlugsBinding(
                         [
@@ -430,6 +444,8 @@ class ChannelBoxController(qt.QObject):
             return resolve_bool_plug(name, attribute.path)
         if attribute.kind == "enum":
             return resolve_enum_plug(name, attribute.path)
+        if attribute.kind == "string":
+            return resolve_string_plug(name, attribute.path)
         return resolve_float_plug(name, attribute.path)
 
     def _create_enum_binding(
@@ -623,6 +639,31 @@ class ChannelBoxController(qt.QObject):
         self._report_excluded(excluded)
         return changed
 
+    def apply_string_values(
+        self, keys: Sequence[tuple[str, str]], value: str
+    ) -> bool:
+        """選択中のstring属性へ同じ文字列を一回のUndoで適用する。"""
+        edits: list[MayaPlugsValueEdit] = []
+        excluded: list[str] = []
+        for row in self._selected_rows(keys):
+            if not isinstance(row, ChannelRow) or not isinstance(
+                row.binding, MayaStringPlugsBinding
+            ):
+                excluded.append(
+                    f"{row.attribute.nice_name}: string操作の対象外"
+                )
+                continue
+            row.binding.refresh()
+            if not row.binding.view_model.set_value_command.can_execute:
+                excluded.append(
+                    f"{row.attribute.nice_name}: 値を編集できません"
+                )
+                continue
+            edits.append(MayaStringValueEdit(row.binding, value))
+        changed = apply_plugs_values(edits)
+        self._report_excluded(excluded)
+        return changed
+
     def align_selected_values(self, keys: Sequence[tuple[str, str]]) -> bool:
         """各選択行をそれぞれの基準ノードの未丸め値へ、一操作で揃える。"""
         edits: list[MayaPlugsValueEdit] = []
@@ -646,6 +687,8 @@ class ChannelBoxController(qt.QObject):
                 edits.append(MayaEnumValueEdit(binding, binding.value))
             elif isinstance(binding, MayaBoolPlugsBinding):
                 edits.append(MayaBoolValueEdit(binding, binding.value))
+            elif isinstance(binding, MayaStringPlugsBinding):
+                edits.append(MayaStringValueEdit(binding, binding.value))
             else:
                 edits.append(MayaFloatValueEdit(binding, binding.value))
         changed = apply_plugs_values(edits)

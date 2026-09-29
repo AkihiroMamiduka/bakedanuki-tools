@@ -1,6 +1,6 @@
 # bdChannelBox
 
-選択ノードの値入力と表示・ロック状態を操作する、bool・float 系・enum属性のエディタです。
+選択ノードの値入力と表示・ロック状態を操作する、bool・float系・enum・string属性のエディタです。
 
 ## 開発状態
 
@@ -9,7 +9,7 @@
 Maya 2025本体での操作結果は[検証](#検証)へ記録しています。キーフレーム対応は、
 別途構築中の基盤を統合した後に仕様と責務分担を確認してから再開します。
 
-bool・float系・enumの複数ノード編集、step操作、表示・ロックの切替、5種類の表示フィルター、
+bool・float系・enum・stringの複数ノード編集、step操作、表示・ロックの切替、5種類の表示フィルター、
 属性検索、表示状態とlockのなぞり操作、設定可能な属性優先順、ドッキングと再起動復元に対応しています。
 選択属性値はOSクリップボードを介して別のMayaへ搬送できます。
 値同期と選択切替の負荷も改善しました。将来の任意候補は
@@ -31,11 +31,13 @@ bd_channel_box.close()
 本変更に対応した `bakedanuki-util` と組み合わせて使用してください。
 
 利用するutilには、複数属性用の`MayaBoolPlugsBinding` / `MayaFloatPlugsBinding`、
-`MayaEnumPlugsBinding`、`EnumComboBox`、`read_enum_definition()`、enum対応の属性列挙、
+`MayaEnumPlugsBinding`、`MayaStringPlugsBinding`、`EnumComboBox`、`StringLineEdit`、
+`read_enum_definition()`、enum・string対応の属性列挙、
 属性列挙・選択取得、`BoolCheckBox`、`FloatValueStepSpinBox`の幅指定、
 `FloatSliderSpinBox.layout_order`、`MayaChannelStateBinding`、`MayaEditSession`、
 `RadioButtonSweep` / `CheckBoxSweep`、`apply_plugs_values()`と
-`MayaFloatValueEdit` / `MayaBoolValueEdit` / `MayaEnumValueEdit`、
+`MayaFloatValueEdit` / `MayaBoolValueEdit` / `MayaEnumValueEdit` /
+`MayaStringValueEdit`、
 ドッキングとreloadの基盤が必要です。
 toolsとutilを配布するときは、組み合わせて動作確認した版を使用してください。
 
@@ -65,7 +67,7 @@ MayaのuiScriptは `bd_tools.bd_channel_box.ui.restore()` を呼び、復元中�
   boolのOFF表示も通常背景上に描画し、選択中は属性名だけを青く強調します。
   属性名の右側には4pxの内側余白を設け、選択色と文字の間隔を保ちます。
   属性名と入力Viewの間に外側の隙間は設けず、入力View内部の各欄は6px間隔で表示します。
-  値・Step・Slider・bool・enumの入力部品は、属性選択によって配色を変更しません。
+  値・Step・Slider・bool・enum・stringの入力部品は、属性選択によって配色を変更しません。
   色番号は固定せず、現在のQt paletteを使用します。
 - 上部の`Mode:`にあるComboBoxで「値編集」と「表示・ロック」を切り替えます。初回は値編集です。
   モードは開いているWindow内だけで保持し、scene・設定ファイルへ保存しません。
@@ -88,14 +90,17 @@ MayaのuiScriptは `bd_tools.bd_channel_box.ui.restore()` を呼び、復元中�
   以前の操作や別ツールでHideにした属性も復帰できます。標準nodeの内部属性も含むため、
   表示される行数が増えます。値編集でも「全て」「hide」を選べば非表示属性へ入力できます。
   ロック中や入力接続済みの属性の値を変更できない制限は維持します。
-- bool、float/double、距離、角度、enumに対応します。bool・enumのcompound子も対象です。
-  整数、time、文字列、配列とその配下、compound全体は対象外です。
+- bool、float/double、距離、角度、enum、単一typed stringに対応します。
+  対応するcompound子も対象です。整数、time、配列とその配下、compound全体は対象外です。
 - 同じ正式属性pathと型・単位種別の属性へ絶対値を一括入力します。
   距離と角度は同名でも対応付けません。編集対象数、対応しないnodeや編集不可の理由は
   属性名と入力Viewのtooltipへ表示します。属性のないnodeへ属性を追加することはありません。
 
 フィルターは基準ノードの現在のplug状態で判定します。
 後続ノードの表示状態が異なっても、同名・同種の属性は一括編集の対象に含めます。
+たとえばjointの`.otherType`は通常の表示フラグに従い、既定の値編集フィルターには
+現れません。「全て」または「hide」を選び、必要なら`otherType`を検索してください。
+Windowの起動時に表示フラグや値を変更しません。
 
 | フィルター | 基準属性の条件 |
 | --- | --- |
@@ -231,6 +236,12 @@ Bindingへ登録した対象の定義が使用中に不一致になると、そ�
 選択肢が空なら入力も無効です。ComboBoxで同じ項目を選び直すだけでは書き込まず、
 混在した値を表示中の項目へ揃える場合は属性名の「この値に揃える」を使います。
 
+stringはutilの`StringLineEdit`で一行入力します。入力列全体の156 pxを使い、
+Step／Sliderは表示しません。Enterまたは通常のフォーカス移動で確定し、
+編集中に外部変更があった場合は通常のフォーカス移動で上書きしません。
+空文字と前後の空白をそのまま扱い、NULは書込み前に拒否します。
+代表と同じ文字列を明示的に再入力した場合も、混在した後続ノードを揃えます。
+
 値が異なる場合、基準の値を表示したまま属性名の左へ小さな `•` を添えます。
 印の意味と対象の詳細はtooltipで確認できます。
 属性名を右クリックすると「この値に揃える」「表示を更新」と表示・ロックの操作を選べます。
@@ -283,7 +294,7 @@ Enter・フォーカス移動・一覧のスクロールで確定し、Escapeで
 
 数値は各行の現在の表示単位で解釈します。例えば距離・角度・単位なしの属性へ`5`を入力すると、
 それぞれ現在の距離単位の5、現在の角度単位の5、単位なしの5として変換します。
-基準が編集不可の行とbool・enum行は数値入力の対象から除外し、画面に理由を表示します。
+基準が編集不可の行とbool・enum・string行は数値入力の対象から除外し、画面に理由を表示します。
 各行の基準以外のノードに対する除外条件は、従来の型・範囲・編集可否の規則を維持します。
 
 すべての編集対象の型・値・hard limitを先に検証し、どれかが範囲外なら操作全体を拒否します。
@@ -297,7 +308,7 @@ Enter・フォーカス移動・一覧のスクロールで確定し、Escapeで
 
 Step欄の直接入力と上下操作では、選択中でStep欄を持つ属性へ同じ表示stepを反映します。
 距離・角度・通常数値が混在していても、各行の現在の表示単位で同じ数値を使用します。
-各行のmultiplicative／additive方式は変更しません。Slider・bool・enumなどStep欄のない行は
+各行のmultiplicative／additive方式は変更しません。Slider・bool・enum・stringなどStep欄のない行は
 対象外として理由を表示し、未選択行のStep欄を操作した場合はその行だけを変更します。
 設定をONにすると、Step欄はフォーカスがなくてもマウスオーバー中のホイールを受け付けます。
 この位置では一覧をスクロールせず、Stepを変更します。値欄も同じ操作が可能です。
@@ -345,6 +356,8 @@ Sliderは選択した数値属性を操作位置と同じ表示値へ揃え、1�
 boolは選択したbool属性を操作後のON／OFFへ揃えます。enumは操作元と整数値・項目名の定義が
 一致する選択enum属性だけを同じ項目へ揃えます。異なる型とenum定義が異なる行は対象外として
 理由を表示します。未選択行の部品を操作した場合は、その行だけを対象にします。
+string欄の確定入力は選択中のstring行すべてへ同じ文字列を適用し、異なる型の行は
+対象外として理由を表示します。各行の編集可能なノードを一回のUndoで変更します。
 
 ### 選択属性のメニュー
 
@@ -357,7 +370,7 @@ boolは選択したbool属性を操作後のON／OFFへ揃えます。enumは操
 
 値編集モードの「この値に揃える」は、選択した各属性を**その属性の基準ノードの値**へ揃えます。
 例えば基準のTranslate Xが1、Translate Yが2なら、各対応ノードのXを1、Yを2へ揃えます。
-数値・bool・有効なenumを混ぜて選べます。編集不可の行や未定義enum値は除外し、理由を表示します。
+数値・bool・有効なenum・stringを混ぜて選べます。編集不可の行や未定義enum値は除外し、理由を表示します。
 この操作も全対象を事前検証し、書込み失敗時は復旧し、成功時は1回のUndoへまとめます。
 
 ### 属性値のOSクリップボードCopy/Paste
@@ -374,10 +387,10 @@ boolは選択したbool属性を操作後のON／OFFへ揃えます。enumは操
 - `ペースト > 選択属性`: コピー値が複数なら、現在選択した属性と同じ正式pathだけを
   貼り付けます。コピー値が一つなら、その値を現在選択した互換属性すべてへ貼り付けます。
 
-Copyは現在の基準ノードからbool・number・distance・angle・enum属性を取得します。
+Copyは現在の基準ノードからbool・number・distance・angle・enum・string属性を取得します。
 「全属性」は行選択や現在のAttribute Filterに依存せず、「選択属性」は表示中の行選択だけを
 対象にします。値は表示文字列へ丸めず、distanceはcm、angleはdegree、通常数値は単位なしの
-公開単位で保存します。enumの実整数と項目定義も型付きで保存します。
+公開単位で保存します。enumの実整数と項目定義も型付きで保存し、stringは実文字列を保持します。
 CopyはsceneとUndo履歴を変更しません。
 
 「コピー元と同じ属性」の`全て`は、OSクリップボード内の全属性を現在選択中の1個または
@@ -397,7 +410,7 @@ Attribute Filterとは独立して明示的に選び、選択した条件は保�
 
 一項目だけをコピーした後の「選択属性」は、コピーした一値を現在選択している属性pathと
 全選択nodeへ展開します。Paste時にコピー元pathを右クリックする必要はありません。
-number・distance・angle・boolは同じ型区分同士に限定し、enumは整数値と項目名の定義が
+number・distance・angle・bool・stringは同じ型区分同士に限定し、enumは整数値と項目名の定義が
 一致する属性だけを対象にします。コピー元pathと貼り付け先pathの一致は要求しません。
 
 enumは整数値と項目名の対応が一致する場合だけ対象にし、表示順だけの違いは許容します。
@@ -410,6 +423,7 @@ Pasteの成功・部分適用・対象0件では画面へ操作通知を表示�
 
 custom MIMEとmarker付きtextへversion付きJSONを保存するため、別のMaya processからも
 貼り付けられます。未対応version、壊れたJSON、過大data、未知の型は値を書き込む前に拒否します。
+stringを含む書込みはschema version 2を使用し、version 1の従来データも読み込めます。
 Copy元は一つの基準nodeに限定し、全対応属性または選択属性をコピーします。
 複数source nodeを行順・選択順で対応させるPasteは提供しません。
 
@@ -465,7 +479,7 @@ Windowの終了・reload・Maya再起動後も復元します。sceneとUndo履�
 基準が編集不可なら行全体の値入力を止めます。基準以外の編集不可属性は除外し、
 残る編集可能な対応属性へ適用します。tooltipの編集対象数はその適用対象数です。
 
-一回の数値確定・上下操作・bool変更・enum項目変更は、選択した全属性・全ノードを含めて
+一回の数値確定・上下操作・bool変更・enum項目変更・string確定は、選択した全属性・全ノードを含めて
 一回のUndoで戻ります。Sliderドラッグも全対象を含めて一回のUndoへまとめます。
 Undoでは混在していた各属性・各ノードの元値が戻ります。
 途中の書込み失敗は同じ操作内で復旧し、復旧にも失敗した場合は両方の理由を報告します。
@@ -568,9 +582,9 @@ bd_tools.reload_package(reload_util=True) # utilも変更した場合
 `table.py` は属性選択・数値直接入力・検索行の表示切替、`controller.py` は基準node・対応属性・
 選択追従と操作対象の組み立てを所有します。
 一覧は`QTableView`の1属性1セルで構成し、delegateのpersistent editorとして既存の行Widgetを
-常時表示します。既存の数値・Step・Slider・bool・enum・状態ViewとBindingを維持し、
+常時表示します。既存の数値・Step・Slider・bool・enum・string・状態ViewとBindingを維持し、
 値をtable modelへ二重に保存しません。選択中の複数属性への文字入力だけ一時的な文字欄で受け付け、
-既存Viewからの上下・Slider・bool・enum入力はutilの任意入力handlerを通してcontrollerへ渡します。
+既存Viewからの上下・Slider・bool・enum・string入力はutilの任意入力handlerを通してcontrollerへ渡します。
 Step入力はWindow内で選択を解釈し、各行の既存Viewと`FloatStepProfile`へ反映します。
 Windowはutilの `MayaDockableWindow` を継承し、`dock_closed` と
 `dock_about_to_dispose` で入力controllerを終了します。workspaceControl作成・削除・

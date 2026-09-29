@@ -31,6 +31,7 @@ class TableRow:
     widget: qt.QWidget
     name_label: qt.QLabel
     value_field: qt.QDoubleSpinBox | None = None
+    text_field: qt.QLineEdit | None = None
 
 
 class _RowDelegate(qt.QStyledItemDelegate):
@@ -91,12 +92,12 @@ class ChannelTableView(qt.QTableView):
         self.rows: tuple[TableRow, ...] = ()
         self._row_model = qt.QStandardItemModel(self)
         self._row_delegate = _RowDelegate(self)
-        self._targets: dict[qt.QObject, tuple[int, bool]] = {}
+        self._targets: dict[qt.QObject, tuple[int, bool, bool]] = {}
         self._palettes: list[tuple[qt.QWidget, qt.QPalette, bool]] = []
         self._anchor = -1
         self._press_row = -1
         self._press_position = qt.QPoint()
-        self._press_numeric = False
+        self._press_editable = False
         self._dragging = False
         self._drag_base: tuple[_RowKey, ...] = ()
         self._numeric_editor: qt.QLineEdit | None = None
@@ -158,18 +159,26 @@ class ChannelTableView(qt.QTableView):
             self._row_model.setItem(index, 0, item)
             self.openPersistentEditor(self._row_model.index(index, 0))
             self.setRowHeight(index, max(1, row.widget.sizeHint().height()))
-            self._add_target(row.widget, index, numeric=False)
-            self._add_target(row.name_label, index, numeric=False)
+            self._add_target(row.widget, index, numeric=False, editable=False)
+            self._add_target(
+                row.name_label, index, numeric=False, editable=False
+            )
             self._remember_palette(row.name_label)
             if row.value_field is not None:
-                self._add_target(row.value_field, index, numeric=True)
+                self._add_target(
+                    row.value_field, index, numeric=True, editable=True
+                )
                 find_children = cast(
                     Callable[[type[qt.QLineEdit]], list[qt.QLineEdit]],
                     getattr(row.value_field, "findChildren"),
                 )
                 children = find_children(qt.QLineEdit)
                 for child in children:
-                    self._add_target(child, index, numeric=True)
+                    self._add_target(child, index, numeric=True, editable=True)
+            if row.text_field is not None:
+                self._add_target(
+                    row.text_field, index, numeric=False, editable=True
+                )
         self.select_keys(selected)
         if preserve_selection and current_key is not None:
             for index, row in enumerate(self.rows):
@@ -309,10 +318,10 @@ class ChannelTableView(qt.QTableView):
         self.numeric_input_requested.emit(keys, value)
 
     def _add_target(
-        self, widget: qt.QWidget, index: int, *, numeric: bool
+        self, widget: qt.QWidget, index: int, *, numeric: bool, editable: bool
     ) -> None:
-        """名前欄と数値欄だけを監視し、補助入力やsweepに干渉しない。"""
-        self._targets[widget] = (index, numeric)
+        """属性選択と入力欄の文字選択を区別して監視する。"""
+        self._targets[widget] = (index, numeric, editable)
         widget.installEventFilter(self)
 
     def _remember_palette(self, widget: qt.QWidget) -> None:
@@ -391,7 +400,7 @@ class ChannelTableView(qt.QTableView):
         return super().selectionCommand(index, event)
 
     def _select_pressed(
-        self, index: int, event: qt.QtGui.QMouseEvent, *, numeric: bool
+        self, index: int, event: qt.QtGui.QMouseEvent, *, editable: bool
     ) -> None:
         """修飾キーと入力領域に応じて属性の選択を更新する。"""
         self.finish_numeric_edit(commit=True)
@@ -414,19 +423,19 @@ class ChannelTableView(qt.QTableView):
             )
             self._anchor = index
         elif key not in selected or (
-            not numeric and event.button() == qt.Qt.MouseButton.LeftButton
+            not editable and event.button() == qt.Qt.MouseButton.LeftButton
         ):
             self.select_keys((key,))
             self._anchor = index
         self._set_current(index)
 
     def _begin_drag(
-        self, index: int, event: qt.QtGui.QMouseEvent, *, numeric: bool
+        self, index: int, event: qt.QtGui.QMouseEvent, *, editable: bool
     ) -> None:
         """左押下の位置を保持し、文字選択と属性ドラッグを区別する。"""
         self._press_row = index
         self._press_position = event.globalPosition().toPoint()
-        self._press_numeric = numeric
+        self._press_editable = editable
         self._dragging = False
         self._drag_base = (
             self.selected_keys()
@@ -454,7 +463,7 @@ class ChannelTableView(qt.QTableView):
         if not self._dragging:
             if delta.manhattanLength() < qt.QApplication.startDragDistance():
                 return False
-            if self._press_numeric and abs(delta.y()) <= abs(delta.x()):
+            if self._press_editable and abs(delta.y()) <= abs(delta.x()):
                 return False
             self._dragging = True
             application = qt.QApplication.instance()
@@ -569,7 +578,7 @@ class ChannelTableView(qt.QTableView):
         target = self._targets.get(watched)
         if target is None:
             return False
-        index, numeric = target
+        index, numeric, editable = target
         if not 0 <= index < len(self.rows):
             return False
         if isinstance(event, qt.QtGui.QMouseEvent):
@@ -577,10 +586,10 @@ class ChannelTableView(qt.QTableView):
                 qt.Qt.MouseButton.LeftButton,
                 qt.Qt.MouseButton.RightButton,
             ):
-                self._select_pressed(index, event, numeric=numeric)
+                self._select_pressed(index, event, editable=editable)
                 if event.button() == qt.Qt.MouseButton.LeftButton:
-                    self._begin_drag(index, event, numeric=numeric)
-                    if not numeric or event.modifiers() & (
+                    self._begin_drag(index, event, editable=editable)
+                    if not editable or event.modifiers() & (
                         qt.Qt.KeyboardModifier.ControlModifier
                         | qt.Qt.KeyboardModifier.ShiftModifier
                     ):

@@ -13,6 +13,7 @@ from bd_util.maya.ui import (
     MayaEnumPlugsBinding,
     MayaEditSession,
     MayaFloatPlugsBinding,
+    MayaStringPlugsBinding,
     get_channel_box_precision,
 )
 from bd_util.ui import (
@@ -26,6 +27,7 @@ from bd_util.ui import (
     FloatUnitKind,
     FloatValueStepSpinBox,
     RadioButtonSweep,
+    StringLineEdit,
     qt,
 )
 
@@ -274,6 +276,7 @@ class AttributeRowWidget(qt.QWidget):
         | EnumComboBox
         | FloatSliderSpinBox
         | FloatValueStepSpinBox
+        | StringLineEdit
     ):
         """属性の種類と両側のhard limitから入力Viewを選ぶ。"""
         binding = self.row.binding
@@ -286,6 +289,8 @@ class AttributeRowWidget(qt.QWidget):
                 parent=self,
                 wheel_requires_focus=not wheel_editing_without_focus,
             )
+        if isinstance(binding, MayaStringPlugsBinding):
+            return StringLineEdit(binding, parent=self)
         presentation = binding.view_model.presentation
         minimum, maximum = presentation.minimum, presentation.maximum
         decimals = get_channel_box_precision()
@@ -1147,6 +1152,14 @@ class ChannelBoxWidget(qt.QWidget):
             self._show_error(str(error))
         return True
 
+    def _request_string_value(self, key: tuple[str, str], value: str) -> bool:
+        """選択中のstring属性へ確定した文字列を適用する。"""
+        try:
+            self.controller.apply_string_values(self._action_keys(key), value)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+        return True
+
     def _request_display_state(
         self, key: tuple[str, str], state: ChannelDisplayState
     ) -> None:
@@ -1195,6 +1208,10 @@ class ChannelBoxWidget(qt.QWidget):
         elif isinstance(editor, EnumComboBox):
             editor.setValueRequestHandler(
                 partial(self._request_enum_value, key)
+            )
+        elif isinstance(editor, StringLineEdit):
+            editor.setValueRequestHandler(
+                partial(self._request_string_value, key)
             )
 
     def _action_keys(
@@ -1546,6 +1563,12 @@ class ChannelBoxWidget(qt.QWidget):
                             widget.editor,
                             (FloatSliderSpinBox, FloatValueStepSpinBox),
                         )
+                        else None
+                    ),
+                    text_field=(
+                        widget.editor
+                        if isinstance(widget, AttributeRowWidget)
+                        and isinstance(widget.editor, StringLineEdit)
                         else None
                     ),
                 )

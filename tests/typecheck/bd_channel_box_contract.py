@@ -16,6 +16,7 @@ from bd_util.ui import (
     FloatStepProfile,
     FloatValueStepSpinBox,
     RadioButtonSweep,
+    StringLineEdit,
     UiStateManager,
     qt,
 )
@@ -47,7 +48,8 @@ if isinstance(row, AttributeRowWidget):
         BoolCheckBox
         | EnumComboBox
         | FloatSliderSpinBox
-        | FloatValueStepSpinBox,
+        | FloatValueStepSpinBox
+        | StringLineEdit,
     )
     assert_type(row.align_action, qt.QAction)
     assert_type(row.copy_menu, qt.QMenu)

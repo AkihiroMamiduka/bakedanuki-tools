@@ -7,6 +7,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- bdChannelBoxへ単一typed string属性の一行入力を追加。既存の複数ノード・複数行編集、
+  混在表示、表示・ロック、検索・表示フィルター、「この値に揃える」、Copy/Paste、
+  Undoの規則を適用する。`.otherType`を含む個別属性の特例は設けない。
+  Clipboard書込みはschema version 2とし、従来のversion 1は読み込める。
+  `ChannelBinding`と行の`editor`の公開union型へstringを追加するため、利用側で
+  数値Viewを決め打ちするコードは型を確認してください。scene・保存設定の移行は不要。
+  対応する`bakedanuki-util`への更新と`bd_tools.reload_package(reload_util=True)`が必要。
+
 ### Changed
 
 - bdChannelBoxのfloat値欄、Step欄、Slider付き値欄は、マウスで初回フォーカスした

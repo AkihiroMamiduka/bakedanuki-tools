@@ -226,6 +226,9 @@ def test_input_columns_stay_compact_at_right_edge(
             if isinstance(view, EnumComboBox):
                 assert view.count() == 3
                 continue
+            assert isinstance(
+                view, (FloatSliderSpinBox, FloatValueStepSpinBox)
+            )
             assert view.spin_box.select_all_on_mouse_focus()
             auxiliary = (
                 view.slider
