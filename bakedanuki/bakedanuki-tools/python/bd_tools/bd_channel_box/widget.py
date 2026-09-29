@@ -290,7 +290,9 @@ class AttributeRowWidget(qt.QWidget):
                 wheel_requires_focus=not wheel_editing_without_focus,
             )
         if isinstance(binding, MayaStringPlugsBinding):
-            return StringLineEdit(binding, parent=self)
+            return StringLineEdit(
+                binding, parent=self, follow_source_during_edit=True
+            )
         presentation = binding.view_model.presentation
         minimum, maximum = presentation.minimum, presentation.maximum
         decimals = get_channel_box_precision()

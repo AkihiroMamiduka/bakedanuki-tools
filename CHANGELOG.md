@@ -19,6 +19,10 @@
 
 ### Changed
 
+- bdChannelBoxのstring入力は、編集中に基準または後続ノードの値が外部変更された場合、
+  未確定入力を破棄して基準ノードの最新値へ同期する。入力可能なままの状態通知では入力を
+  維持し、同期だけでsceneやUndo履歴は変更しない。設定とsceneの移行は不要。
+  対応する`bakedanuki-util`への更新と`bd_tools.reload_package(reload_util=True)`が必要。
 - bdChannelBoxのfloat値欄、Step欄、Slider付き値欄は、マウスで初回フォーカスした
   左クリックだけ入力文字全体を選択する。そのまま入力すれば既存値を置換でき、
   フォーカス中の再クリック、横ドラッグの文字選択、上下ボタンは従来動作を維持する。

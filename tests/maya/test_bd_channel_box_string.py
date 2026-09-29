@@ -178,6 +178,38 @@ def test_same_representative_text_aligns_mixed_followers(
     assert cmds.getAttr("channelStringB.caption") == "先頭"
 
 
+def test_string_edit_follows_external_values_without_recommitting_draft(
+    editor: ChannelBoxWidget,
+) -> None:
+    """後続・代表の値変更で未確定入力を破棄し、状態通知だけでは保つ。"""
+    row = _row(editor, "caption")
+    assert isinstance(row.editor, StringLineEdit)
+    row.editor.setText("入力中")
+    row.editor.textEdited.emit("入力中")
+    cmds.setAttr("channelStringB.caption", lock=True)
+    _events()
+    assert row.editor.text() == "入力中"
+    cmds.setAttr("channelStringB.caption", lock=False)
+    _events()
+    assert row.editor.text() == "入力中"
+
+    cmds.setAttr("channelStringB.caption", "外部値", type="string")
+    _events()
+    assert row.editor.text() == "先頭"
+    assert not row.editor.hasConflict()
+    row.editor.editingFinished.emit()
+    assert cmds.getAttr("channelStringB.caption") == "外部値"
+
+    row.editor.setText("もう一度入力中")
+    row.editor.textEdited.emit("もう一度入力中")
+    cmds.setAttr("channelStringA.caption", "代表の外部値", type="string")
+    _events()
+    assert row.editor.text() == "代表の外部値"
+    row.editor.editingFinished.emit()
+    assert cmds.getAttr("channelStringA.caption") == "代表の外部値"
+    assert cmds.getAttr("channelStringB.caption") == "外部値"
+
+
 def test_string_state_mode_changes_display_and_lock(
     editor: ChannelBoxWidget,
 ) -> None:
