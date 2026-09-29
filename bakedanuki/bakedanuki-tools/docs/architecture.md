@@ -72,17 +72,20 @@ bdChannelBoxが所有し、値欄のQt標準編集メニューとは独立して
 常時表示します。modelは行と選択を管理し、値は既存Bindingから同期します。
 Maya本体がviewportを交換する場合に備え、行の親は構築時に`viewport()`から取得し、
 以前のviewportを永続的な参照として保持しません。
-既存の数値・Step・Slider・bool・enum・状態Viewを維持し、値をmodelへ複製しません。
+既存の数値・Step・Slider・bool・enum・string・状態Viewを維持し、値をmodelへ複製しません。
 複数選択時の数値文字入力・貼付けだけを一時的な文字欄で受け付け、入力開始時の属性集合へ確定します。
-既存の数値・Slider・bool・enum Viewは任意入力handlerを使い、選択中の互換属性へ操作を委譲します。
+既存の数値・Slider・bool・enum・string Viewは任意入力handlerを使い、選択中の互換属性へ操作を委譲します。
 ノードの識別子と属性path・型区分を用いて、同じノードの再表示では残存行の選択を維持し、
 対象ノードが変わる場合は選択を解除します。属性選択自体はsceneや設定ファイルへ保存しません。
-選択色は属性名の`QLabel`だけへ適用し、値・Step・Slider・bool・enumのpaletteは変更しません。
+選択色は属性名の`QLabel`だけへ適用し、値・Step・Slider・bool・enum・stringのpaletteは変更しません。
 属性名は右側に4pxの内側余白を持ち、選択色の内側で文字が境界へ接しないようにします。
 属性名と入力Viewの外側spacingは0pxとし、入力View内部の部品間隔だけを6pxに保ちます。
 boolにはutilの`BoolCheckBox`、両側hard limit付きfloatには`FloatSliderSpinBox`、
 それ以外のfloatには`FloatValueStepSpinBox`を使います。値欄とSliderの並び順の機能はutil、
 Value先行の選択、単位の非表示、固定幅と右寄せはtoolsの表示方針です。
+stringにはutilの`StringLineEdit`を使い、bdChannelBoxでは確定したMaya値が編集中に
+変化した場合の追従を有効にします。入力保持を既定とする汎用Viewと、Maya値を優先する
+bdChannelBoxの表示方針を分けます。
 float値欄とStep欄ではutilの`select_all_on_mouse_focus`を有効にし、初回クリックで
 入力文字を置換できる状態にします。再クリックと横ドラッグは通常の文字編集へ渡します。
 属性行の優先順もtoolsの表示方針です。`bd_channel_box/config.py`の
@@ -130,10 +133,11 @@ bdChannelBoxを利用側から開く場合は`bd_tools.bd_channel_box.show()`を
 utilを直接利用します。画面寸法の定数はtools内部の調整箇所で、保存設定や公開APIではありません。
 
 複数属性への値入力は、toolsのcontrollerが各行の対象と入力値を決め、utilの
-`MayaFloatValueEdit` / `MayaFloatOffsetEdit` / `MayaBoolValueEdit` / `MayaEnumValueEdit`へまとめます。
+`MayaFloatValueEdit` / `MayaFloatOffsetEdit` / `MayaBoolValueEdit` /
+`MayaEnumValueEdit` / `MayaStringValueEdit`へまとめます。
 `apply_plugs_values()`が全件の事前検証、書込み失敗時の復旧、1回のUndoを所有します。
 数値直接入力は各行の表示単位で換算し、「この値に揃える」は各行自身の基準ノード値を使います。
-上下操作は操作元Stepによる表示増減量を各数値の現在値へ加え、Slider・bool・enumは互換属性を
+上下操作は操作元Stepによる表示増減量を各数値の現在値へ加え、Slider・bool・enum・stringは互換属性を
 操作後の値へ揃えます。Sliderの連続入力は`MayaEditSession`で1回のUndoへまとめます。
 Step欄の入力はtoolsが選択を解釈し、同欄を持つ各Viewへ同じ表示stepを設定します。
 属性pathと数値種別ごとの非初期値はutilの`FloatStepProfile`へ集約し、既存の

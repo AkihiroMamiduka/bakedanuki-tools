@@ -69,7 +69,7 @@ Black 用環境と、pytest / Pyright 用の開発ツールを準備します。
 
 ## bdChannelBox
 
-bool・float系・enumの値入力、step操作、表示・ロック状態の変更、Mayaへのドッキングに対応しています。
+bool・float系・enum・stringの値入力、step操作、表示・ロック状態の変更、Mayaへのドッキングに対応しています。
 今後の任意の拡張候補は[Roadmap](bakedanuki/bakedanuki-tools/docs/roadmap.md#bdchannelboxの拡張候補)にまとめています。
 
 Maya の Script Editor で実行します。

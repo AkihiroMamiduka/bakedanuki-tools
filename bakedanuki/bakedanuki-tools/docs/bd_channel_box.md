@@ -8,6 +8,8 @@
 利用者による動作確認を終え、今回の開発を完了しました。変更ごとの自動テストと
 Maya 2025本体での操作結果は[検証](#検証)へ記録しています。キーフレーム対応は、
 別途構築中の基盤を統合した後に仕様と責務分担を確認してから再開します。
+単一typed string属性と編集中のMaya値追従も2026-09-29に利用者がMaya本体で確認し、
+pushを完了しました。確認したMaya versionは未申告です。
 
 bool・float系・enum・stringの複数ノード編集、step操作、表示・ロックの切替、5種類の表示フィルター、
 属性検索、表示状態とlockのなぞり操作、設定可能な属性優先順、ドッキングと再起動復元に対応しています。
@@ -678,6 +680,8 @@ View選択、混在編集、除外対象、範囲違い、Undo、構成変更を
 全行の作り直しが発生しないことを、時間の閾値ではなく更新対象で検証します。
 `tests/maya/test_bd_channel_box_enum.py`は、enumの飛び番・定義不一致の除外、使用中の
 定義変更、未定義値、ロック・接続、混在、Undo／Redo、選択肢の終了を検証します。
+`tests/maya/test_bd_channel_box_string.py`は、汎用typed string行、複数属性・複数node入力、
+同値揃え、Copy/Paste、状態変更、外部値追従と未確定入力の無書込みを検証します。
 `tests/maya/test_bd_channel_box_states.py`は、既存Hide属性の列挙と復帰、表示・ロックの
 独立操作、混在、Undo／Redo、モード切替の無書込みとstep保持、必要時だけのスクロールを検証します。
 両モードの5種類のフィルター、モードごとの選択保持、状態変更後の絞り込みとUndo／Redo、
@@ -697,6 +701,12 @@ Maya側がviewportを交換した後に古い親を参照しないことも検�
 公開show / restore / close / reset、Window重複防止、監視解除とreloadを検証します。
 公開入口の型は `tests/typecheck/bd_channel_box_contract.py` で固定します。
 対応Maya全versionでruntime testを行い、本体の操作確認は開発用smoke scriptを利用します。
+
+string対応と外部値追従の完了時点（2026-09-29）では、utilの`verify.cmd`が通過し、
+toolsのBlack・Pyright・unit test、Maya 2025 / 2026 / 2027のruntime test各189件が
+成功しました。利用者からMaya本体で問題なく動作したことと、両リポジトリのpush完了の
+報告を受けています。Maya本体の確認versionは未申告です。以下の過去の件数は
+各機能の実装当時の記録であり、現在の固定件数ではありません。
 
 初回開発完了時の確認結果（2026-09-16）です。対象のtoolsは`bed114f`、utilは`e8e996dc`です。
 
