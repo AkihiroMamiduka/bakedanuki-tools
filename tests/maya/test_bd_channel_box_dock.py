@@ -135,10 +135,28 @@ def test_dock_show_close_and_reload_release_bindings(
     old_controller = second.widget.controller
     bd_tools.reload_package()
     assert old_controller.is_disposed
-    assert dock_host.window is None
+    from bd_tools import bd_channel_box as current
+
+    reopened = dock_host.window
+    assert reopened is not None
+    assert reopened is not second
+    assert current.show() is reopened
     _events()
     assert not qt.isValid(first)
     assert not qt.isValid(second)
+    assert qt.isValid(reopened)
+
+
+def test_closed_dock_is_not_reopened(dock_host: _WorkspaceHost) -> None:
+    """ユーザーが閉じたtoolはreload後の表示対象に含めない。"""
+    import bd_tools
+
+    from bd_tools import bd_channel_box
+
+    bd_channel_box.show()
+    bd_channel_box.close()
+    bd_tools.reload_package()
+    assert dock_host.window is None
 
 
 def test_maya_dock_close_signal_stops_selection_watch(
@@ -146,11 +164,13 @@ def test_maya_dock_close_signal_stops_selection_watch(
 ) -> None:
     """Mayaのタイトルバーclose通知だけでも選択監視と入力を終了する。"""
     from bd_tools import bd_channel_box
+    from bd_util.maya.ui import snapshot_open_tools
 
     window = bd_channel_box.show()
     window.dock_closed.emit()
     assert window.widget.controller.is_disposed
     assert not window.widget.controller.rows
+    assert snapshot_open_tools("bd_tools") == ()
     # Qt削除より先に再表示しても、終了済みの入力UIを再利用しない
     replacement = bd_channel_box.show()
     assert replacement is not window
@@ -162,12 +182,16 @@ def test_ui_script_restore_and_layout_reset(dock_host: _WorkspaceHost) -> None:
     """復元入口の同一Window再利用と、統合resetによる再生成を確認する。"""
     from bd_tools import bd_channel_box
     from bd_util.maya.ui import restore_dockable
+    from bd_util.maya.ui import snapshot_open_tools
 
     node = cmds.createNode("transform", name="channelBoxResetTarget")
     cmds.select(node, replace=True)
     window = restore_dockable("bd_tools.bd_channel_box.ui", "restore")
     assert isinstance(window, bd_channel_box.ChannelBoxWindow)
     assert window is dock_host.window
+    assert snapshot_open_tools("bd_tools") == (
+        ("bd_tools", "bd_channel_box", "bd_tools.bd_channel_box.ui", "show"),
+    )
     assert bd_channel_box.show() is window
     assert (
         window.objectName() + "WorkspaceControl"

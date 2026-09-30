@@ -11,17 +11,26 @@ from bd_util.maya.ui import (
     MayaDockableWindowController,
     MayaUiStateTracker,
     create_ui_state_manager,
+    register_open_tool,
     reset_and_show_ui_layout,
+    unregister_open_tool,
 )
 from bd_util.ui import qt
 
 from .._dev.lifecycle import register_reload_disposer
+from .._dev.reopen_targets import (
+    CHANNEL_BOX_CONTROL_ID,
+    CHANNEL_BOX_REOPEN,
+)
 from .widget import ChannelBoxWidget
 
 # 入力欄の幅を維持したまま、属性名の左側に残る余白を調整する
 _INITIAL_WIDTH = 320
 _MINIMUM_WIDTH = 280
 _PREFERENCES_SETTINGS_PATH = "bd_channel_box/preferences/main"
+_REOPEN_OWNER, _REOPEN_TOOL_ID, _REOPEN_MODULE, _REOPEN_FUNCTION = (
+    CHANNEL_BOX_REOPEN
+)
 
 
 class ChannelBoxWindow(MayaDockableWindow):
@@ -61,9 +70,29 @@ class ChannelBoxWindow(MayaDockableWindow):
             self.ui_state,
             self,
         )
+        self._reopen_token = object()
+        self.dock_closed.connect(self._unregister_reopen)
+        self.dock_about_to_dispose.connect(self._unregister_reopen)
+
+    def register_reopen(self) -> None:
+        """表示済みWindowを再読込後の再表示対象へ登録する。"""
+        register_open_tool(
+            _REOPEN_OWNER,
+            _REOPEN_TOOL_ID,
+            _REOPEN_MODULE,
+            _REOPEN_FUNCTION,
+            token=self._reopen_token,
+        )
+
+    def _unregister_reopen(self) -> None:
+        """Maya側の終了通知を再表示対象へ反映する。"""
+        unregister_open_tool(
+            _REOPEN_OWNER, _REOPEN_TOOL_ID, token=self._reopen_token
+        )
 
     def closeEvent(self, event: qt.QCloseEvent) -> None:
         """close時に、遅延削除より先に編集とMaya監視を終了する。"""
+        self._unregister_reopen()
         self.widget.dispose()
         super().closeEvent(event)
 
@@ -71,7 +100,7 @@ class ChannelBoxWindow(MayaDockableWindow):
 # Mayaの保存配置とuiScriptが参照する固定ID・復元先を定義する
 _controller = MayaDockableWindowController(
     ChannelBoxWindow,
-    control_id="bdChannelBoxWindow",
+    control_id=CHANNEL_BOX_CONTROL_ID,
     restore=DockRestoreSpec(module="bd_tools.bd_channel_box.ui"),
     dock_options=DockOptions(
         area=DockArea.RIGHT,
@@ -95,12 +124,16 @@ def show() -> ChannelBoxWindow:
         and window.widget.controller.is_disposed
     ):
         _controller.dispose()
-    return _controller.show()
+    window = _controller.show()
+    window.register_reopen()
+    return window
 
 
 def restore() -> ChannelBoxWindow:
     """MayaのuiScriptから、復元中のworkspaceControlへ内容を接続する。"""
-    return _controller.restore()
+    window = _controller.restore()
+    window.register_reopen()
+    return window
 
 
 def close() -> None:

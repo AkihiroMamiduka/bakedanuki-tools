@@ -62,6 +62,7 @@ class _MayaSmokeSession:
         self.window: ChannelBoxWindow | None = None
         self.nodes: list[str] = []
         self.baseline_callbacks: dict[str, int] = {}
+        self._reload_open_callbacks: dict[str, int] = {}
         self.steps: list[str] = []
         self.screenshots: list[str] = []
         self.measurements: dict[str, float | int] = {}
@@ -2163,6 +2164,7 @@ class _MayaSmokeSession:
 
         self.baseline_callbacks = self._callback_counts()
         self.window = bd_channel_box.show()
+        self._reload_open_callbacks = self._callback_counts()
 
     def _reload(self) -> None:
         """表示中のWindowを含めてutilとtoolsをreloadする。"""
@@ -2172,16 +2174,19 @@ class _MayaSmokeSession:
         self.steps.append("reload_util_and_tools")
 
     def _show_after_reload(self) -> None:
-        """reloadで古いWindowとcallbackが消えたことを確認して再表示する。"""
-        from bd_tools import bd_channel_box
+        """古いWindowが消え、開いていたWindowだけが自動再表示されたことを確認する。"""
+        from bd_tools.bd_channel_box import ui
         from bd_util.ui import qt
 
         if self.window is not None and qt.isValid(self.window):
             raise AssertionError("reload後に古いWindowが残っています")
-        if self._callback_counts() != self.baseline_callbacks:
-            raise AssertionError("reload後にnode callbackが残っています")
-        self.window = bd_channel_box.show()
-        self.steps.append("show_after_reload")
+        window = ui._controller.window
+        if window is None or not qt.isValid(window):
+            raise AssertionError("reload後にWindowが自動再表示されていません")
+        if self._callback_counts() != self._reload_open_callbacks:
+            raise AssertionError("reload後のnode callback数が一致しません")
+        self.window = window
+        self.steps.append("reopened_after_reload")
 
     def _capture_after_reload(self) -> None:
         """reload後の表示結果を保存し、負荷測定前に入力Windowを終了する。"""

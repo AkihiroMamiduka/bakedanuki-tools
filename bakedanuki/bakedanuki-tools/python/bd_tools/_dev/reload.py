@@ -9,9 +9,12 @@ import shutil
 import sys
 from collections.abc import Callable
 from types import ModuleType
-from typing import cast
+from typing import TypeAlias, cast
 
 from .lifecycle import dispose_for_reload
+from .reopen_targets import KNOWN_DOCK_TOOLS
+
+OpenTool: TypeAlias = tuple[str, str, str, str]
 
 # このmoduleが属するtop-level package名をreload対象として固定する
 PACKAGE_NAME = __name__.split(".")[0]
@@ -110,6 +113,18 @@ def reload_package(
     登録済みのlifecycle終了処理は、どちらのpackageよりも先に実行する。
     ``reload_util``が有効な場合は、``bd_util``、``bd_tools``の順でreloadする。
     """
+    # 古いutilも読み込まれている間に、開いているツール名だけを退避する
+    ui_module = sys.modules.get("bd_util.maya.ui")
+    if ui_module is None and "maya" in sys.modules:
+        ui_module = importlib.import_module("bd_util.maya.ui")
+    open_tools: tuple[OpenTool, ...] = ()
+    if ui_module is not None:
+        snapshot = cast(
+            Callable[..., tuple[OpenTool, ...]],
+            getattr(ui_module, "snapshot_open_tools"),
+        )
+        open_tools = snapshot(PACKAGE_NAME, dock_tools=KNOWN_DOCK_TOOLS)
+
     # Maya外部状態を破棄してからPython moduleへ触れる
     dispose_for_reload()
 
@@ -135,5 +150,14 @@ def reload_package(
     if old_package is not None and old_package is not new_package:
         old_package.__dict__.clear()
         old_package.__dict__.update(new_package.__dict__)
+
+    # 新しいutilとtoolsの表示関数から、以前開いていたツールだけを再生成する
+    if open_tools:
+        ui_module = importlib.import_module("bd_util.maya.ui")
+        reopen = cast(
+            Callable[[tuple[OpenTool, ...]], None],
+            getattr(ui_module, "reopen_tools"),
+        )
+        reopen(open_tools)
 
     return new_package

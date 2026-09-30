@@ -9,6 +9,10 @@
 
 ### Added
 
+- 開いているbdChannelBoxを`bd_tools.reload_package()`の後に自動再表示する。
+  `reload_util=True`にも対応し、閉じていたWindowは再表示しない。
+  汎用の開閉記録・再表示は`bakedanuki-util`のMaya UI基盤を利用する。
+
 - bdChannelBoxへ単一typed string属性の一行入力を追加。既存の複数ノード・複数行編集、
   混在表示、表示・ロック、検索・表示フィルター、「この値に揃える」、Copy/Paste、
   Undoの規則を適用する。`.otherType`を含む個別属性の特例は設けない。

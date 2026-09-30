@@ -50,9 +50,12 @@ def _events() -> None:
 def _saved_clipboard() -> qt.QtCore.QMimeData:
     """現在のOS clipboardをtest後に復元できる形で複製する。"""
     saved = qt.QtCore.QMimeData()
-    original = qt.QApplication.clipboard().mimeData()
-    for mime_type in original.formats():
-        saved.setData(mime_type, original.data(mime_type))
+    original = cast(
+        qt.QtCore.QMimeData | None, qt.QApplication.clipboard().mimeData()
+    )
+    if original is not None:
+        for mime_type in original.formats():
+            saved.setData(mime_type, original.data(mime_type))
     return saved
 
 

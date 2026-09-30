@@ -27,6 +27,9 @@ bd_channel_box.close()
 ```
 
 `show()` は既存Windowを再利用します。importだけでは表示やscene変更を行いません。
+開いた状態で`bd_tools.reload_package()`を実行すると、新しいWindowが自動表示されます。
+閉じた状態なら表示されません。utilも更新した場合は
+`bd_tools.reload_package(reload_util=True)`を使用します。
 初回はMaya右側へドッキングします。タイトル部分をドラッグして、他の領域への移動、
 タブ化、floatingへ切り替えられます。移動だけでは入力やstep設定を破棄しません。
 配置はMayaのworkspaceへ保存され、再表示やMaya再起動時の復元に使われます。

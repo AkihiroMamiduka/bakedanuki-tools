@@ -55,10 +55,18 @@ bd_tools.register_reload_disposer(dispose)
 
 `reload_util=True` の順序です。
 
-1. tools が登録した外部状態の終了処理
-2. `bd_util.reload_package()`
-3. `bd_tools` 配下の古い module 参照を削除
-4. `bd_tools` の再 import
+1. 開いているtoolsの再表示先をutilの共通UI基盤から文字列として取得
+2. tools が登録した外部状態の終了処理
+3. `bd_util.reload_package()`
+4. `bd_tools` 配下の古い module 参照を削除
+5. `bd_tools` の再 import
+6. 新しいutilから、リロード前に開いていたtoolsだけを再表示
+
+toolsだけをreloadする場合も、1、2、4、5、6の順に実行します。タイトルバーや
+`close()`で閉じたtoolは再表示しません。再表示が失敗したtoolがあっても残りを試し、
+失敗内容を例外で通知します。Mayaの起動時復元は従来どおり`uiScript`へ任せます。
+Widget生成を後回しにしたdockは、tools側で定義したworkspaceControl名から検出します。
+開発reload時のタブ位置やアクティブなタブの完全復元は対象外です。
 
 Maya Script Editor が保持する古い `bd_tools` 変数にも、新しい package 内容を反映します。
 ただし個別 module や class instance を別変数へ保持していた場合、その参照は自動更新されません。
@@ -71,7 +79,9 @@ Maya Script Editor が保持する古い `bd_tools` 変数にも、新しい pac
 bdChannelBoxは `bd_channel_box.dispose()` を登録します。dock controllerの
 `dock_about_to_dispose` で各Binding・選択監視・開いたUndoを終了してから
 workspaceControlとWindowを破棄します。Maya側のcloseも `dock_closed` で同じ終了処理へ接続します。
-再表示はreload後に `from bd_tools import bd_channel_box` を取り直して `show()` を呼びます。
+`show()`とMayaの`restore()`の両方で、utilへ再表示情報を登録します。reload前に
+開いていたbdChannelBoxは自動的に再表示されるため、手動の`show()`は不要です。
+個別moduleやclass instanceを変数へ保持した場合は、必要に応じて取り直してください。
 
 - UI module の import 時に Window を表示しない。
 - controller は module 単位で1つにする。
