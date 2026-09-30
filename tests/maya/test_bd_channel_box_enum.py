@@ -91,7 +91,7 @@ def test_enum_initial_refresh_and_same_index_only_read(
     combo = _combo(enum_editor)
     assert combo.currentText() == "Preview"
     assert combo.currentIndex() == 2
-    assert combo.width() == 156
+    assert combo.width() == 216
     item = combo.currentData()
     assert isinstance(item, EnumItem) and item.value == 5
     assert _row(enum_editor).name_label.text().startswith("• ")

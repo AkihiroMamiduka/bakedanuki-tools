@@ -213,7 +213,7 @@ def test_mode_switch_only_reads_and_preserves_value_step(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
-@pytest.mark.parametrize("width", [280, 360, 520])
+@pytest.mark.parametrize("width", [340, 380, 520, 650])
 def test_mode_switch_preserves_width_with_long_hidden_name(
     state_editor: ChannelBoxWidget, width: int
 ) -> None:
@@ -245,26 +245,37 @@ def test_mode_switch_preserves_width_with_long_hidden_name(
     _states(editor)
     row = _state_row(editor)
     assert row.name_label.contentsMargins().right() == 4
+    assert row.name_label.isVisible()
+    assert row.name_label.text() == "Weight"
+    assert row.name_label.contentsRect().width() >= (
+        row.name_label.fontMetrics().horizontalAdvance("Weight")
+    )
     assert editor.width() == before[0]
     assert editor.scroll_area.verticalScrollBar().isVisible()
-    assert row.name_label.width() < before[1]
-    assert row.editor.x() < before[2]
+    # 値編集216pxから状態編集の必要幅へ切り替わり、属性名側の余白が増える
+    assert row.name_label.width() > before[1]
+    assert row.editor.x() > before[2]
     assert editor.scroll_area.horizontalScrollBar().maximum() == 0
     for current in editor.row_widgets:
         assert isinstance(current, AttributeStateRowWidget)
-        assert current.editor.width() == 200
+        assert current.name_label.isVisible()
+        assert current.name_label.contentsRect().width() > 0
+        buttons = (*current.display_buttons.values(), current.lock_check_box)
+        assert current.editor.width() == sum(
+            button.sizeHint().width() for button in buttons
+        ) + 6 * (len(buttons) - 1)
         assert current.editor.x() + current.editor.width() == current.width()
         assert (
             current.editor.x()
             == current.name_label.x() + current.name_label.width()
         )
-        buttons = (*current.display_buttons.values(), current.lock_check_box)
         for button in buttons:
             assert button.width() >= button.sizeHint().width()
             assert 0 <= button.x()
             assert button.x() + button.width() <= current.editor.width()
         for left, right in zip(buttons, buttons[1:]):
-            assert left.x() + left.width() < right.x()
+            assert right.x() - left.x() - left.width() == 6
+        assert buttons[-1].x() + buttons[-1].width() == current.editor.width()
     _values(editor)
     assert not editor.scroll_area.verticalScrollBar().isVisible()
     restored = _value_row(editor)

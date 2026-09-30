@@ -275,7 +275,13 @@ class _MayaSmokeSession:
 
     def _inspect(self) -> None:
         """実Windowの描画と対応Viewの存在を確認して画像を保存する。"""
-        from bd_util.ui import BoolCheckBox, EnumComboBox, FloatSliderSpinBox
+        from bd_util.ui import (
+            BoolCheckBox,
+            EnumComboBox,
+            FloatSliderSpinBox,
+            FloatValueStepSpinBox,
+            qt,
+        )
 
         window = self._require_window()
         if not window.isVisible():
@@ -293,6 +299,35 @@ class _MayaSmokeSession:
         if window.widget.scroll_area.horizontalScrollBar().maximum():
             raise AssertionError("入力欄が縮小後のWindow幅に収まりません")
         self._capture("01-multiple-selection.png")
+
+        # 通常行とSlider行で、20文字の値が編集欄の内側へ収まることを確認する
+        sample = "1234.123456789123456"
+        for path in ("translate.translateX", "weight"):
+            view = self._row(path).editor
+            if not isinstance(
+                view, (FloatValueStepSpinBox, FloatSliderSpinBox)
+            ):
+                raise AssertionError(f"数値欄がありません: {path}")
+            line_edit = view.spin_box.findChild(qt.QLineEdit)
+            if not isinstance(line_edit, qt.QLineEdit):
+                raise AssertionError(f"値の編集欄がありません: {path}")
+            margins = line_edit.textMargins()
+            required_width = (
+                line_edit.fontMetrics().horizontalAdvance(sample)
+                + margins.left()
+                + margins.right()
+                + 4
+            )
+            if required_width > line_edit.contentsRect().width():
+                raise AssertionError(f"20文字の値が欄内に収まりません: {path}")
+            if path == "translate.translateX":
+                # 未確定文字列の描画だけを採取し、sceneへ書き戻さず元へ戻す
+                original_text = line_edit.text()
+                try:
+                    line_edit.setText(sample)
+                    self._capture("38-value-field-width.png")
+                finally:
+                    line_edit.setText(original_text)
         self.steps.append("inspect_rendered_views")
 
     def _inspect_wheel_setting(self) -> None:
@@ -2537,15 +2572,19 @@ class _MayaSmokeSession:
         )
 
     def _assert_state_layout(self, row: AttributeStateRowWidget) -> None:
-        """Window幅を維持し、200pxの操作欄へ全ボタンが収まることを確認する。"""
+        """Window幅を維持し、操作欄へ全ボタンが隙間なく収まることを確認する。"""
         actual = self._row_layout(row)
         expected = self._value_layout
+        buttons = (*row.display_buttons.values(), row.lock_check_box)
+        required_width = sum(
+            button.sizeHint().width() for button in buttons
+        ) + 6 * (len(buttons) - 1)
         if expected is None or (actual[0], actual[3]) != (
             expected[0],
-            200,
+            required_width,
         ):
             raise AssertionError(
-                f"Window幅または設定モードの200px幅が異なります: "
+                f"Window幅または設定モードの操作幅が異なります: "
                 f"{self._value_layout} -> {actual}"
             )
         if (
@@ -2554,12 +2593,15 @@ class _MayaSmokeSession:
             .maximum()
         ):
             raise AssertionError("状態入力欄がWindow幅に収まりません")
-        for button in (*row.display_buttons.values(), row.lock_check_box):
+        for button in buttons:
             if (
                 button.width() < button.sizeHint().width()
                 or button.x() + button.width() > row.editor.width()
             ):
-                raise AssertionError("状態ボタンが200pxの操作欄に収まりません")
+                raise AssertionError("状態ボタンが操作欄に収まりません")
+        for left, right in zip(buttons, buttons[1:]):
+            if right.x() - left.x() - left.width() != 6:
+                raise AssertionError("状態ボタン間に不要な余白があります")
 
     def _attribute_states(
         self, name: str

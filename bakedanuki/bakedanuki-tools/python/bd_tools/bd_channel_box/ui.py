@@ -25,8 +25,8 @@ from .._dev.reopen_targets import (
 from .widget import ChannelBoxWidget
 
 # 入力欄の幅を維持したまま、属性名の左側に残る余白を調整する
-_INITIAL_WIDTH = 320
-_MINIMUM_WIDTH = 280
+_INITIAL_WIDTH = 380
+_MINIMUM_WIDTH = 340
 _PREFERENCES_SETTINGS_PATH = "bd_channel_box/preferences/main"
 _REOPEN_OWNER, _REOPEN_TOOL_ID, _REOPEN_MODULE, _REOPEN_FUNCTION = (
     CHANNEL_BOX_REOPEN

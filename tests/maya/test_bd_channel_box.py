@@ -180,7 +180,16 @@ def test_supported_types_flags_and_view_selection(
     assert isinstance(slider, FloatSliderSpinBox)
     assert value_step.width() == slider.width()
     for spin_box in (value_step.spin_box, slider.spin_box):
-        assert spin_box.minimumWidth() == spin_box.maximumWidth() == 90
+        assert spin_box.minimumWidth() == spin_box.maximumWidth() == 150
+        line_edit = spin_box.findChild(qt.QLineEdit)
+        assert isinstance(line_edit, qt.QLineEdit)
+        margins = line_edit.textMargins()
+        text_width = line_edit.fontMetrics().horizontalAdvance(
+            "1234.123456789123456"
+        )
+        assert text_width + margins.left() + margins.right() + 4 <= (
+            line_edit.contentsRect().width()
+        )
     assert (
         value_step.step_spin_box.minimumWidth()
         == value_step.step_spin_box.maximumWidth()
@@ -209,14 +218,14 @@ def test_input_columns_stay_compact_at_right_edge(
         _events()
 
     # 画面を広げてもStep・Sliderや入力後方の余白へ幅を配分しない
-    for width in (280, 360, 520):
+    for width in (340, 380, 520):
         editor.resize(width, 600)
         _events()
         assert editor.scroll_area.horizontalScrollBar().maximum() == 0
         for row in editor.row_widgets:
             assert isinstance(row, AttributeRowWidget)
             view = row.editor
-            assert view.width() == 156
+            assert view.width() == 216
             assert view.x() + view.width() == row.width()
             assert view.x() == row.name_label.x() + row.name_label.width()
             if isinstance(view, BoolCheckBox):
@@ -238,7 +247,7 @@ def test_input_columns_stay_compact_at_right_edge(
             if isinstance(view, FloatValueStepSpinBox):
                 assert view.step_spin_box.select_all_on_mouse_focus()
             assert view.spin_box.x() == 0
-            assert view.spin_box.width() == 90
+            assert view.spin_box.width() == 150
             assert auxiliary.x() == view.spin_box.width() + 6
             assert auxiliary.width() == 60
             assert auxiliary.x() + auxiliary.width() == view.width()

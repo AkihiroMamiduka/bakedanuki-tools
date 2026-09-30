@@ -45,12 +45,12 @@ __all__ = [
     "ChannelBoxWidget",
 ]
 
-_VALUE_FIELD_WIDTH = 90
+# 小数点を含む20文字程度の値を、上下ボタンと併せて表示する
+_VALUE_FIELD_WIDTH = 150
 _AUXILIARY_FIELD_WIDTH = 60
 _FIELD_SPACING = 6
 _NAME_EDITOR_SPACING = 0
 _EDITOR_WIDTH = _VALUE_FIELD_WIDTH + _FIELD_SPACING + _AUXILIARY_FIELD_WIDTH
-_STATE_EDITOR_WIDTH = 200
 _NAME_FIELD_PREFERRED_WIDTH = 92
 _NAME_FIELD_RIGHT_MARGIN = 4
 _PASTE_FILTER_OPTIONS: tuple[tuple[ChannelAttributeFilter, str, str], ...] = (
@@ -414,7 +414,7 @@ class AttributeRowWidget(qt.QWidget):
 
 
 class AttributeStateRowWidget(qt.QWidget):
-    """200pxの操作欄へ表示状態のラジオボタンとロックを配置する。"""
+    """表示状態のラジオボタンとロックを余白なく横へ並べる。"""
 
     refresh_requested = qt.Signal()
 
@@ -447,7 +447,6 @@ class AttributeStateRowWidget(qt.QWidget):
         self.refresh_action.triggered.connect(self.refresh_requested.emit)
         cast(_MenuActions, self.context_menu).addAction(self.refresh_action)
         self.editor = qt.QWidget(self)
-        self.editor.setFixedWidth(_STATE_EDITOR_WIDTH)
         self.display_buttons: dict[ChannelDisplayState, qt.QRadioButton] = {}
         self._display_group = qt.QtWidgets.QButtonGroup(self.editor)
         self._display_group.setExclusive(True)
@@ -469,8 +468,9 @@ class AttributeStateRowWidget(qt.QWidget):
         self.lock_check_box.setAccessibleName(
             f"{row.attribute.nice_name} ロック"
         )
-        controls.addStretch(1)
         controls.addWidget(self.lock_check_box)
+        # 操作部品に必要な幅だけを確保し、属性名へ残りを配分する
+        self.editor.setFixedWidth(controls.sizeHint().width())
         layout = qt.QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(_NAME_EDITOR_SPACING)

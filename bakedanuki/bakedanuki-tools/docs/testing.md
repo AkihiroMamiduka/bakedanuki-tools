@@ -76,7 +76,8 @@ OFFかつ未フォーカス時の無書込み、フォーカス後とON時の編
 一覧へのスクロール伝達を確認します。`QApplication.sendEvent()`だけではホイールによる
 自動フォーカス取得を再現できないため、この検証の代用にはしません。
 上部ComboBoxから値編集と表示・ロックを切り替え、非表示属性の追加によって
-Window幅が変わらず、値編集156 px・設定200 pxの操作欄が収まることを確認します。
+Window幅が変わらず、値編集216 pxと設定モードの必要幅の操作欄が収まることを確認します。
+設定モードでは`hide`と`lock`の間が他のボタンと同じ6 pxになることも確認します。
 縦スクロールバーは必要時だけ表示し、その出入りによる名前列幅・入力列位置の変化は許容します。
 既存Hide属性の復帰、key／ch／hideのラジオボタン選択、lock／解除のSpace操作、
 表示とロックの混在・独立操作・Undo／Redo、値とstepの維持も確認します。
@@ -127,6 +128,8 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
   選択属性へ直接適用した表示状態とlockの結果。
 - `36-search-visibility-menu.png`、`37-attribute-search.png`:
   検索欄の3段階表示設定と、正式pathによる検索結果。
+- `38-value-field-width.png`: 20文字の未確定文字列を値欄へ表示した幅の確認画像。
+  通常行とSlider行の内側幅を検証し、撮影後はsceneへ確定せず元の表示へ戻す。
 - `result-restart.json`、`clipboard-original.json`: 別Maya processでのOSクリップボード読取り結果と、
   検証後に復元する元のMIME data。
 - `progress.json`: 実行中の段階と完了済みの操作。
@@ -216,8 +219,9 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。この段�
   表示方針だけをWindow再表示・Maya再起動・配置reset後へ復元する。
 - 幅・配置: Sliderあり／なし、最小幅／拡大時、長い属性名、縦スクロール時、ドック／floating。
   QTableView内の既存行Viewが常時表示され、選択の配色と一括入力欄で文字切れ・重なりがないこと。
-  上部のMode／Attribute Filter／Attribute Searchが最小幅280 pxにも収まり、各入力欄が揃うこと。
+  上部のMode／Attribute Filter／Attribute Searchが最小幅340 pxにも収まり、各入力欄が揃うこと。
   StepとSliderの幅・開始位置、値欄の文字切れ、不要な右余白を保存画像でも確認する。
+  値欄150 pxで`1234.123456789123456`の20文字が収まり、Step／Sliderの60 pxを維持すること。
   行数と長い属性名が増えてもWindow幅を保ち、各モードの操作幅で文字切れ・重なりがないことを確認する。
   縦スクロールバーは必要時だけ表示する。
 - lifecycle: 選択切替・close・reloadで古い入力とcallbackを終了し、再表示で重複させない。
@@ -269,6 +273,32 @@ floatingにしてworkspaceとpreferencesを専用profileへ保存します。
 一括入力を検証してから終了します。結果は `result-restart.json`、画像は
 `07-after-maya-restart.png`、ログは `*-restart.log` に保存し、一度目の結果を残します。
 この再起動検証はsceneの保存・復元ではなく、Maya workspaceからのUI復元を対象にします。
+
+## 値欄の幅拡張の検証（2026-09-30）
+
+値欄160 px・共通入力列226 pxへの変更では、Maya 2025のbdChannelBox関連runtime test
+188件、Pyright、Black checkが成功しました。幅280 / 360 / 520 pxで横スクロールがなく、
+通常行とSlider行で20文字の文字幅が編集領域内へ収まることを確認しました。
+
+Maya 2025本体では46工程の操作結果が成功し、`38-value-field-width.png`で
+`1234.123456789123456`が末尾まで見えることを確認しました。
+資料は`%TEMP%/bd-channel-box-maya2025-69fcd5de`です。
+ただしMaya本体の終了待ちが180秒でタイムアウトし、runnerは専用processを停止して
+終了code 1を返しました。操作と表示の検証成功と、本体の正常終了は区別します。
+
+## 値欄150 pxと表示・ロック行の余白調整（2026-10-01）
+
+値欄150 px、初期Window幅380 px、最小幅340 pxへの調整では、
+bdChannelBox関連runtime testがMaya 2025 / 2026 / 2027で各189件、
+Pyright、Black checkが成功しました。
+表示・ロック行は幅340 / 380 / 520 / 650 pxで属性名が残り、`hide`と`lock`の間も
+他のボタン間と同じ6 pxであることを確認しました。
+
+Maya 2025本体の隔離processでは46工程の操作結果が成功し、
+`11-state-mode-hidden-attributes.png`で属性名と操作部品の配置を確認しました。
+資料は`%TEMP%/bd-channel-box-maya2025-gtgj6mwk`です。
+検証用Mayaの終了待ちは150秒でタイムアウトし、runnerは終了code 1を返しました。
+表示・操作の成功と本体の正常終了は区別します。
 
 ## Type Contracts
 
