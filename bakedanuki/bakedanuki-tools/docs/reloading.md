@@ -16,6 +16,11 @@ bd_tools.reload_package()
 bd_tools.reload_package(reload_util=True)
 ```
 
+Mayaで`bd_tools`のWindowを開いている間は、`bd_util.reload_package()`を単独で
+実行しません。Windowやcallbackが保持する古いutilのclass参照は自動更新されず、
+選択追従などに不整合が生じます。utilを変更した場合は上記のtools側入口を使い、
+Windowの破棄から再表示までまとめて実行します。
+
 必要な場合だけ `__pycache__` も削除できます。
 
 ```python
@@ -71,8 +76,36 @@ Widget生成を後回しにしたdockは、tools側で定義したworkspaceContr
 Maya Script Editor が保持する古い `bd_tools` 変数にも、新しい package 内容を反映します。
 ただし個別 module や class instance を別変数へ保持していた場合、その参照は自動更新されません。
 
-将来 `bd_rig` が tools を利用する場合、rig 側で util → tools → rig の順を扱います。
-`bd_tools` 自身は rig を reload しません。
+現在の`bd_tools.reload_package(reload_util=True)`が退避・再表示するのは
+`bd_tools`が所有するtoolだけです。将来`bd_rig`や`bd_physics`など別packageのUIも
+起動する場合、utilの単独reloadやこの入口だけでは、他packageの古い参照とUIを
+更新できません。変更したpackageと、それを参照する稼働中のpackageを対象に、
+全対象の表示情報を退避→依存する側から外部状態を破棄→依存先からreload→
+新しいmoduleから再表示、という一括入口を必要になった時点で整備します。
+例えばrigがtoolsを利用する場合のreload順はutil→tools→rigです。
+一括入口を用意するまでは、複数packageのUIを同時起動しているMayaで依存先を
+reloadする必要が生じたら、Mayaを再起動します。
+
+## 新しいtoolを再表示対象に追加する
+
+1. `show()`とdockの`restore()`が成功した後、
+   `bd_util.maya.ui.register_open_tool()`で
+   `owner="bd_tools"`、固有のtool ID、import可能な再表示module/function名、
+   Windowごとの`token`を登録します。再表示関数は引数なしで呼べるようにします。
+2. タイトルバーのclose、Maya側のdock終了、`dispose()`など、Windowが終わる
+   全経路で同じ`token`を使って`unregister_open_tool()`を呼びます。古いWindowの
+   遅延通知が新しい登録を消さないためです。
+3. dockable toolは、固定のworkspaceControl名も`_dev/reopen_targets.py`の
+   `KNOWN_DOCK_TOOLS`へ追加します。Mayaが`uiScript`の実行を遅らせ、Widgetが
+   まだ登録されていないdockを見つけるためです。
+4. `dispose()`を`register_reload_disposer()`へ登録し、reload後に開いていたtool
+   だけが戻ること、閉じたtoolは戻らないこと、callbackやworkspaceControlが
+   重複しないことを確認します。複数dockをタブ化した場合は、非アクティブな
+   タブも再表示対象に入ることをMaya本体で確認します。
+
+登録・解除の実例は[bdChannelBoxのUI実装](../python/bd_tools/bd_channel_box/ui.py)、
+dockの識別情報は[reopen_targets.py](../python/bd_tools/_dev/reopen_targets.py)を
+参照してください。
 
 ## Development Guidance
 
