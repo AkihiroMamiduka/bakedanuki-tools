@@ -23,6 +23,15 @@
 
 ### Changed
 
+- bdChannelBoxで、対応する既存アニメーション属性の値を編集できるようにする。
+  直接接続された単独の時間カーブを対象とし、値が変わる場合に現在時刻のキーを追加・更新する。
+  値欄・上下・Slider・bool・enum・「この値に揃える」・Pasteで同じ方針を使い、
+  未接続属性は通常の値設定を維持する。Auto KeyのON/OFFには依存しない。
+  書込み後は評価済みplugを再取得し、通常値との混在編集も一回のUndoで戻せる。
+  Slider中の時刻変更で操作を確定終了し、未確定数値を次の時刻へ持ち越さない。
+  lockや未対応の接続、Animation Layer・SDK・pairBlendなどは表示専用を維持する。
+  既存scene・保存設定の移行は不要だが、これまで表示専用だった対応キー付き属性が編集可能になる。
+  対応する`bakedanuki-util`への更新と`bd_tools.reload_package(reload_util=True)`が必要。
 - bdChannelBoxのfloat値欄を90 pxから150 pxへ広げ、
   `1234.123456789123456`の20文字程度を一度に見渡せるようにする。
   Slider付き値欄にも同じ幅を適用し、Step／Sliderの60 pxと欄間6 pxは維持する。

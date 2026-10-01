@@ -514,10 +514,10 @@ def test_selection_change_finishes_drag_undo(
     assert cmds.getAttr("channelB.weight") == 0.75
 
 
-def test_animated_representative_remains_read_only(
+def test_animated_representative_accepts_value_and_updates_current_key(
     editor: ChannelBoxWidget,
 ) -> None:
-    """キー付き代表属性の値は時刻へ追従し、一括入力を許可しない。"""
+    """キー付き代表属性は現在キーを更新し、未接続の後続は通常編集する。"""
     cmds.setKeyframe("channelA.weight", time=1, value=0.2)
     cmds.setKeyframe("channelA.weight", time=10, value=0.8)
     cmds.currentTime(10)
@@ -525,10 +525,27 @@ def test_animated_representative_remains_read_only(
     binding = _row(editor, "weight").row.binding
     assert isinstance(binding, MayaFloatPlugsBinding)
     assert isclose(binding.value, 0.8, rel_tol=0, abs_tol=1e-12)
-    assert not binding.view_model.set_value_command.can_execute
-    assert not _row(editor, "weight").align_action.isEnabled()
-    assert not binding.set_value(0.5)
+    assert binding.view_model.set_value_command.can_execute
+    row = _row(editor, "weight")
+    assert row.align_action.isEnabled()
+    assert "2/2" in row.name_label.toolTip()
+    assert "現在時刻へキー" in row.name_label.toolTip()
+    assert isinstance(row.editor, FloatSliderSpinBox)
+    cmds.flushUndo()
+    row.editor.spin_box.setValue(0.5)
+    assert binding.value == 0.5
+    assert cmds.getAttr("channelA.weight") == 0.5
+    assert cmds.getAttr("channelB.weight") == 0.5
+    assert cmds.keyframe("channelA.weight", query=True, valueChange=True) == [
+        0.2,
+        0.5,
+    ]
+    assert not cmds.listConnections("channelB.weight", source=True)
+    cmds.undo()
+    _events()
+    assert cmds.getAttr("channelA.weight") == 0.8
     assert cmds.getAttr("channelB.weight") == 0.75
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_missing_and_incompatible_attributes_are_excluded(

@@ -9,6 +9,7 @@ from functools import partial
 from typing import Literal, TypeAlias
 
 from maya.api import OpenMaya as om
+from maya.api import OpenMayaAnim as oma
 
 from bd_util.maya.node.inspection import (
     ScalarAttributeDisplayFilter,
@@ -112,6 +113,7 @@ class ChannelBoxController(qt.QObject):
     operation_reported = qt.Signal(str)
     mode_changed = qt.Signal()
     filter_changed = qt.Signal()
+    time_changed = qt.Signal(bool)
 
     def __init__(self, parent: qt.QObject) -> None:
         """表示用状態と、Windowと同じ寿命の監視を初期化する。"""
@@ -125,6 +127,9 @@ class ChannelBoxController(qt.QObject):
             "states": "all",
         }
         self._disposed = False
+        self._current_time_seconds = oma.MAnimControl.currentTime().asUnits(
+            om.MTime.kSeconds
+        )
         self._active_state_binding: MayaChannelStateBinding | None = None
         self.state_edit_session = MayaEditSession(
             self, chunk_name="SweepChannelStates"
@@ -149,6 +154,11 @@ class ChannelBoxController(qt.QObject):
                         name, self._queue_rebuild
                     )
                 )
+            self._events.register(
+                om.MEventMessage.addEventCallback(
+                    "timeChanged", self._on_time_changed
+                )
+            )
             for message in (
                 om.MSceneMessage.kBeforeNew,
                 om.MSceneMessage.kBeforeOpen,
@@ -234,6 +244,19 @@ class ChannelBoxController(qt.QObject):
     def finish_value_edit(self) -> None:
         """複数属性の連続入力を確定してUndoのまとまりを閉じる。"""
         self.value_edit_session.finish()
+
+    def _on_time_changed(self, *_args: object) -> None:
+        """時刻が変わると旧時刻の入力を終了し、同時刻の再評価は維持する。"""
+        if self._disposed:
+            return
+        current = oma.MAnimControl.currentTime().asUnits(om.MTime.kSeconds)
+        if current == self._current_time_seconds:
+            return
+        self._current_time_seconds = current
+        was_editing = self.value_edit_session.is_editing
+        if was_editing:
+            self.value_edit_session.finish()
+        self.time_changed.emit(was_editing)
 
     def _finish_state_edit(self) -> None:
         """なぞり操作で保留したフィルターを、操作終了後にまとめて反映する。"""
@@ -396,6 +419,7 @@ class ChannelBoxController(qt.QObject):
                             for n in targets
                         ],
                         parent=self,
+                        key_animated=True,
                     )
                 elif attribute.kind == "enum":
                     binding = self._create_enum_binding(
@@ -416,6 +440,7 @@ class ChannelBoxController(qt.QObject):
                             for n in targets
                         ],
                         parent=self,
+                        key_animated=True,
                     )
                 binding.edit_failed.connect(self.error_occurred.emit)
                 rows.append(
@@ -461,7 +486,7 @@ class ChannelBoxController(qt.QObject):
                 plugs.append(plug)
             else:
                 excluded.append(f"{name}: enum定義（整数値と項目名）が異なる")
-        return MayaEnumPlugsBinding(plugs, parent=self)
+        return MayaEnumPlugsBinding(plugs, parent=self, key_animated=True)
 
     def _dispose_rows(self) -> None:
         """Qtの遅延削除を待たず、すべての入力とMaya監視を終了する。"""
@@ -765,7 +790,7 @@ class ChannelBoxController(qt.QObject):
         transfer = self._value_clipboard.read()
         if display_filter == "all":
             return apply_scalar_value_transfer(
-                self.node_names, transfer
+                self.node_names, transfer, key_animated=True
             ).changed
         paths, _filtered_count, _base_excluded = (
             self._paste_paths_for_display_filter(transfer, display_filter)
@@ -776,6 +801,7 @@ class ChannelBoxController(qt.QObject):
             self.node_names,
             paths,
             transfer,
+            key_animated=True,
         ).changed
 
     def _paste_paths_for_display_filter(
@@ -837,12 +863,14 @@ class ChannelBoxController(qt.QObject):
                 self.node_names,
                 paths,
                 transfer,
+                key_animated=True,
             )
         else:
             result = apply_scalar_value_transfer_to_paths(
                 self.node_names,
                 paths,
                 transfer,
+                key_animated=True,
             )
         return result.changed
 

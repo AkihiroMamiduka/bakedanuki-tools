@@ -371,6 +371,11 @@ class AttributeRowWidget(qt.QWidget):
         count = binding.writable_count if editable else 0
         details = [self.row.attribute.nice_name, self.row.attribute.path]
         details.append(f"編集対象: {count}/{self.selection_count} 件")
+        if not isinstance(binding, MayaStringPlugsBinding):
+            details.append(
+                "アニメーション付きの編集対象は、値の変更時に現在時刻へ"
+                "キーを設定します"
+            )
         if binding.is_mixed:
             details.append(
                 "• 選択ノード間で値が異なります（基準ノードの値を表示）"
@@ -860,6 +865,7 @@ class ChannelBoxWidget(qt.QWidget):
         self.controller.operation_reported.connect(self._show_operation_report)
         self.controller.mode_changed.connect(self._sync_mode)
         self.controller.filter_changed.connect(self._sync_filter)
+        self.controller.time_changed.connect(self._interrupt_value_input)
         self.mode_combo.currentIndexChanged.connect(self._change_mode)
         self.filter_combo.currentIndexChanged.connect(self._change_filter)
         self.copy_all_values_action.triggered.connect(self._copy_all_values)
@@ -1078,6 +1084,51 @@ class ChannelBoxWidget(qt.QWidget):
             widget.context_menu.close()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
+
+    def _interrupt_value_input(self, was_editing: bool) -> None:
+        """時刻変更前のドラッグと未確定数値を、新しい時刻へ持ち越さない。"""
+        self.table_view.finish_numeric_edit(commit=False)
+        if was_editing:
+            for widget in self.row_widgets:
+                if isinstance(widget.editor, FloatSliderSpinBox):
+                    widget.editor.slider.finish_edit()
+
+        # 再生中の全行走査を避け、フォーカス行に未確定文字がある場合だけ読む
+        focused = cast(
+            Callable[[], qt.QWidget | None],
+            getattr(qt.QApplication, "focusWidget"),
+        )()
+        if focused is None or not self.isAncestorOf(focused):
+            return
+        owner: qt.QWidget | None = focused
+        while owner is not None and not isinstance(owner, AttributeRowWidget):
+            owner = cast(
+                Callable[[], qt.QWidget | None], getattr(owner, "parentWidget")
+            )()
+        if owner is None:
+            return
+        editor = owner.editor
+        if isinstance(editor, EnumComboBox):
+            editor.hidePopup()
+        if not isinstance(editor, (FloatValueStepSpinBox, FloatSliderSpinBox)):
+            return
+        children = cast(
+            Callable[[type[qt.QLineEdit]], list[qt.QLineEdit]],
+            getattr(editor.spin_box, "findChildren"),
+        )(qt.QLineEdit)
+        if not any(child.isModified() for child in children):
+            return
+        binding = owner.row.binding
+        assert isinstance(binding, MayaFloatPlugsBinding)
+        binding.refresh()
+        # 入力通知を止めて再描画し、未確定文字だけを破棄する
+        blocker = qt.QtCore.QSignalBlocker(editor.spin_box)
+        try:
+            editor.spin_box.setValue(
+                binding.view_model.presentation.to_display(binding.value)
+            )
+        finally:
+            del blocker
 
     def _apply_numeric_input(self, keys: object, value: float) -> None:
         """Qtの明示入力通知を受け、凍結した選択行へ一度だけ書き込む。"""

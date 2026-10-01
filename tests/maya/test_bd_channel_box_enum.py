@@ -221,7 +221,7 @@ def test_enum_undefined_representative_can_be_replaced_but_not_aligned(
 def test_enum_lock_and_animation_respect_representative_policy(
     enum_editor: ChannelBoxWidget,
 ) -> None:
-    """後続lockを除外し、基準へのアニメーション接続で行を停止する。"""
+    """後続lockを除外し、キー付き基準と未接続の後続へ同じ項目を適用する。"""
     cmds.setAttr("enumB.mode", lock=True)
     _events()
     assert "2/3" in _combo(enum_editor).toolTip()
@@ -229,9 +229,17 @@ def test_enum_lock_and_animation_respect_representative_policy(
     assert _values() == [10, 0, 10]
     cmds.setKeyframe("enumA.mode")
     _events()
-    assert not _combo(enum_editor).isEnabled()
-    assert not _row(enum_editor).align_action.isEnabled()
-    assert "0/3" in _combo(enum_editor).toolTip()
+    assert _combo(enum_editor).isEnabled()
+    assert "2/3" in _combo(enum_editor).toolTip()
+    cmds.flushUndo()
+    _combo(enum_editor).setCurrentIndex(2)
+    assert _values() == [5, 0, 5]
+    assert cmds.keyframe("enumA.mode", query=True, valueChange=True) == [5]
+    assert not cmds.listConnections("enumC.mode", source=True)
+    cmds.undo()
+    _events()
+    assert _values() == [10, 0, 10]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_enum_display_flags_builtin_compound_and_array_scope(
