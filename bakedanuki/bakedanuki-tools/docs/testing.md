@@ -130,8 +130,9 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
   検索欄の3段階表示設定と、正式pathによる検索結果。
 - `38-value-field-width.png`: 20文字の未確定文字列を値欄へ表示した幅の確認画像。
   通常行とSlider行の内側幅を検証し、撮影後はsceneへ確定せず元の表示へ戻す。
-- `39-input-connection-colors.png`: 現在キー・現在キーなし・その他の入力接続・未接続の
-  4状態をMaya本体で描画した画像。帯の中央画素と通常背景色、上下1pxの余白を照合する。
+- `39-input-connection-colors.png`: 現在キー・現在キーなし・その他の入力接続・
+  pairBlend・constraint・ロックをMaya本体で描画した画像。
+  帯の中央画素と通常背景色、上下1pxの余白を照合する。
 - `result-restart.json`、`clipboard-original.json`: 別Maya processでのOSクリップボード読取り結果と、
   検証後に復元する元のMIME data。
 - `progress.json`: 実行中の段階と完了済みの操作。

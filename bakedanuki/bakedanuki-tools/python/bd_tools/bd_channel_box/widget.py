@@ -56,15 +56,21 @@ _NAME_FIELD_PREFERRED_WIDTH = 92
 _NAME_FIELD_RIGHT_MARGIN = 4
 _INPUT_STATE_WIDTH = 6
 _INPUT_STATE_VERTICAL_INSET = 1
-_INPUT_STATE_COLORS: dict[MayaPlugInputState, str] = {
+_IndicatorState = MayaPlugInputState | Literal["locked"]
+_INPUT_STATE_COLORS: dict[_IndicatorState, str] = {
     "keyed": "#CD2729",
     "animated": "#DD727A",
+    "pair_blend": "#ACF1AC",
+    "constraint": "#A3CBF0",
     "connected": "#F1F1A5",
+    "locked": "#5C6874",
 }
 _INPUT_STATE_LABELS: dict[MayaPlugInputState, str] = {
     "unconnected": "入力接続なし",
     "keyed": "現在時刻にキーあり",
     "animated": "アニメーションあり・現在時刻にキーなし",
+    "pair_blend": "pairBlendの入力接続あり",
+    "constraint": "constraintの入力接続あり",
     "connected": "その他の入力接続あり",
 }
 _PASTE_FILTER_OPTIONS: tuple[tuple[ChannelAttributeFilter, str, str], ...] = (
@@ -148,31 +154,31 @@ class _AttributeNameLabel(qt.QLabel):
 
 
 class _InputStateIndicator(qt.QWidget):
-    """属性名と値欄の間に接続状態だけを示す細い帯。"""
+    """属性名と値欄の間に接続種類とロックを示す細い帯。"""
 
     def __init__(self, parent: qt.QWidget) -> None:
         """入力部品や選択paletteに依存しない描画領域を作る。"""
         super().__init__(parent)
-        self._state: MayaPlugInputState = "unconnected"
+        self._state: _IndicatorState = "unconnected"
         self.setFixedWidth(_INPUT_STATE_WIDTH)
         self.setSizePolicy(
             qt.QSizePolicy.Policy.Fixed, qt.QSizePolicy.Policy.Expanding
         )
 
     @property
-    def input_state(self) -> MayaPlugInputState:
-        """最後に描画した入力接続状態を返す。"""
+    def input_state(self) -> _IndicatorState:
+        """最後に描画した接続・ロックの表示状態を返す。"""
         return self._state
 
-    def set_input_state(self, state: MayaPlugInputState) -> None:
-        """接続状態が変わった場合だけ帯を再描画する。"""
+    def set_input_state(self, state: _IndicatorState) -> None:
+        """表示状態が変わった場合だけ帯を再描画する。"""
         if state == self._state:
             return
         self._state = state
         self.update()
 
     def paintEvent(self, event: qt.QtGui.QPaintEvent) -> None:
-        """通常背景を塗り、接続色だけを上下1px内側に描く。"""
+        """通常背景を塗り、状態色だけを上下1px内側に描く。"""
         del event
         painter = qt.QPainter(self)
         painter.fillRect(
@@ -425,23 +431,31 @@ class AttributeRowWidget(qt.QWidget):
             self.step_changed.emit(self.editor.singleStep())
 
     def _update_state(self) -> None:
-        """代表の接続色と混在を表示し、除外理由をtooltipへまとめる。"""
+        """代表の接続・ロック色と混在を表示し、理由をtooltipへまとめる。"""
         binding = self.row.binding
         editable = binding.view_model.set_value_command.can_execute
         count = binding.writable_count if editable else 0
         details = [self.row.attribute.nice_name, self.row.attribute.path]
         details.append(f"編集対象: {count}/{self.selection_count} 件")
-        visible_states: list[MayaPlugInputState] = []
-        for target in binding.target_states:
-            if target.is_available and target.input_state is not None:
-                visible_states.append(target.input_state)
-        input_states = tuple(visible_states)
+        visible_targets = tuple(
+            target
+            for target in binding.target_states
+            if target.is_available and target.input_state is not None
+        )
+        input_states: tuple[MayaPlugInputState, ...] = tuple(
+            cast(MayaPlugInputState, target.input_state)
+            for target in visible_targets
+        )
         if input_states:
             representative = input_states[0]
-            self.input_indicator.set_input_state(representative)
+            self.input_indicator.set_input_state(
+                "locked" if visible_targets[0].is_locked else representative
+            )
             details.append(
                 "基準の接続状態: " + _INPUT_STATE_LABELS[representative]
             )
+            if visible_targets[0].is_locked:
+                details.append("基準のロック状態: ロックされています")
             if any(state != representative for state in input_states[1:]):
                 counts = ", ".join(
                     f"{_INPUT_STATE_LABELS[state]} {input_states.count(state)}件"
@@ -449,6 +463,9 @@ class AttributeRowWidget(qt.QWidget):
                     if state in input_states
                 )
                 details.append("接続状態は選択ノード間で混在: " + counts)
+            lock_states = tuple(target.is_locked for target in visible_targets)
+            if any(locked != lock_states[0] for locked in lock_states[1:]):
+                details.append("ロック状態は選択ノード間で混在")
         if not isinstance(binding, MayaStringPlugsBinding):
             details.append(
                 "アニメーション付きの編集対象は、値の変更時に現在時刻へ"

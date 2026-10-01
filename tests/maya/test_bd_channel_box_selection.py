@@ -370,20 +370,37 @@ def _indicator_color(
     return image.pixelColor(image.width() // 2, y).name().upper()
 
 
-def test_connection_indicators_match_the_four_maya_colors(
+def test_connection_indicators_match_maya_colors(
     editor: ChannelBoxWidget,
 ) -> None:
-    """3色の帯を上下1px空け、未接続を通常背景色で表示する。"""
+    """接続種類とロックの色を上下1px空けて表示する。"""
     cmds.currentTime(5)
     cmds.setKeyframe("multiA.translateX", time=5, value=5)
     cmds.setKeyframe("multiA.translateY", time=1, value=1)
     cmds.connectAttr("multiB.translateZ", "multiA.translateZ")
     _events()
+    blank = _row(editor, "rotateX").input_indicator
+    assert _indicator_color(_row(editor, "rotateX")) == (
+        blank.palette().color(qt.QPalette.ColorRole.Window).name().upper()
+    )
+    blend = cmds.createNode("pairBlend")
+    constraint = cmds.createNode("scaleConstraint")
+    cmds.connectAttr(blend + ".outRotate", "multiA.rotate")
+    cmds.connectAttr(constraint + ".constraintScale", "multiA.scale")
+    cmds.setAttr("multiA.visibility", lock=True)
+    cmds.select("multiA", "multiB", replace=True)
+    _events()
     expected = (
         ("translateX", "keyed", "#CD2729"),
         ("translateY", "animated", "#DD727A"),
         ("translateZ", "connected", "#F1F1A5"),
-        ("rotateX", "unconnected", None),
+        ("rotateX", "pair_blend", "#ACF1AC"),
+        ("rotateY", "pair_blend", "#ACF1AC"),
+        ("rotateZ", "pair_blend", "#ACF1AC"),
+        ("scaleX", "constraint", "#A3CBF0"),
+        ("scaleY", "constraint", "#A3CBF0"),
+        ("scaleZ", "constraint", "#A3CBF0"),
+        ("visibility", "locked", "#5C6874"),
     )
     for name, state, color in expected:
         row = _row(editor, name)
@@ -394,13 +411,26 @@ def test_connection_indicators_match_the_four_maya_colors(
             .upper()
         )
         assert row.input_indicator.width() == 6
-        assert row.input_indicator.input_state == state
+        assert row.input_indicator.input_state == state, (
+            name,
+            row.row.binding.target_states,
+        )
         assert _indicator_color(row) == (
             background if color is None else color
         )
         assert _indicator_color(row, "top") == background
         assert _indicator_color(row, "bottom") == background
-        assert row.row.binding.target_states[0].input_state == state
+        assert row.row.binding.target_states[0].input_state == (
+            "unconnected" if state == "locked" else state
+        )
+    assert (
+        "ロックされています"
+        in _row(editor, "visibility").input_indicator.toolTip()
+    )
+    assert (
+        "ロック状態は選択ノード間で混在"
+        in _row(editor, "visibility").input_indicator.toolTip()
+    )
     assert (
         "接続状態は選択ノード間で混在"
         in _row(editor, "translateX").input_indicator.toolTip()
@@ -428,8 +458,12 @@ def test_indicator_tracks_equal_value_keys_time_lock_and_selection(
     cmds.setAttr("multiA.translateX", lock=True)
     _events()
     assert not row.row.binding.view_model.set_value_command.can_execute
-    assert _indicator_color(row) == "#CD2729"
+    assert _indicator_color(row) == "#5C6874"
+    assert row.row.binding.target_states[0].input_state == "keyed"
+    assert "現在時刻にキーあり" in row.input_indicator.toolTip()
     cmds.setAttr("multiA.translateX", lock=False)
+    _events()
+    assert _indicator_color(row) == "#CD2729"
     cmds.cutKey("multiA.translateX", time=(5, 5), clear=True)
     _events()
     assert _indicator_color(row) == "#DD727A"

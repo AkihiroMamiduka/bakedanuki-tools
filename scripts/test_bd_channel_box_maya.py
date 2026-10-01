@@ -2377,7 +2377,7 @@ class _MayaSmokeSession:
         self._assert_values("field00", (11.0,) * len(self.nodes))
 
     def _inspect_input_colors(self) -> None:
-        """Maya本体で接続色・通常背景・上下の隙間を確認して撮影する。"""
+        """Maya本体で接続種類・ロック色と上下の隙間を確認して撮影する。"""
         from maya import cmds
 
         from bd_util.ui import qt
@@ -2392,13 +2392,24 @@ class _MayaSmokeSession:
         cmds.setKeyframe(target + ".translateX", time=5, value=5)
         cmds.setKeyframe(target + ".translateY", time=1, value=1)
         cmds.connectAttr(driver + ".translateZ", target + ".translateZ")
+        blend = cmds.createNode("pairBlend")
+        constraint = cmds.createNode("scaleConstraint")
+        cmds.connectAttr(blend + ".outRotate", target + ".rotate")
+        cmds.connectAttr(constraint + ".constraintScale", target + ".scale")
+        cmds.setAttr(target + ".visibility", lock=True)
         cmds.select(target, replace=True)
         self._flush_gui()
         expected = (
             ("translate.translateX", "#CD2729"),
             ("translate.translateY", "#DD727A"),
             ("translate.translateZ", "#F1F1A5"),
-            ("rotate.rotateX", None),
+            ("rotate.rotateX", "#ACF1AC"),
+            ("rotate.rotateY", "#ACF1AC"),
+            ("rotate.rotateZ", "#ACF1AC"),
+            ("scale.scaleX", "#A3CBF0"),
+            ("scale.scaleY", "#A3CBF0"),
+            ("scale.scaleZ", "#A3CBF0"),
+            ("visibility", "#5C6874"),
         )
         for path, color in expected:
             indicator = self._row(path).input_indicator
@@ -2425,7 +2436,7 @@ class _MayaSmokeSession:
                         f"入力接続の上下余白が不正です: {path}: {edge}"
                     )
         self._capture("39-input-connection-colors.png")
-        self.steps.append("four_input_connection_colors")
+        self.steps.append("input_connection_and_lock_colors")
 
     def _finish(self) -> None:
         """すべての操作結果を保存し、検証専用Mayaを終了する。"""
