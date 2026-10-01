@@ -32,6 +32,7 @@ class TableRow:
     name_label: qt.QLabel
     value_field: qt.QDoubleSpinBox | None = None
     text_field: qt.QLineEdit | None = None
+    input_indicator: qt.QWidget | None = None
 
 
 class _RowDelegate(qt.QStyledItemDelegate):
@@ -164,6 +165,10 @@ class ChannelTableView(qt.QTableView):
                 row.name_label, index, numeric=False, editable=False
             )
             self._remember_palette(row.name_label)
+            if row.input_indicator is not None:
+                self._add_target(
+                    row.input_indicator, index, numeric=False, editable=False
+                )
             if row.value_field is not None:
                 self._add_target(
                     row.value_field, index, numeric=True, editable=True

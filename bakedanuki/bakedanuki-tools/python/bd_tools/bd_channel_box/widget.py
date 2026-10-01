@@ -13,6 +13,7 @@ from bd_util.maya.ui import (
     MayaEnumPlugsBinding,
     MayaEditSession,
     MayaFloatPlugsBinding,
+    MayaPlugInputState,
     MayaStringPlugsBinding,
     get_channel_box_precision,
 )
@@ -53,6 +54,19 @@ _NAME_EDITOR_SPACING = 0
 _EDITOR_WIDTH = _VALUE_FIELD_WIDTH + _FIELD_SPACING + _AUXILIARY_FIELD_WIDTH
 _NAME_FIELD_PREFERRED_WIDTH = 92
 _NAME_FIELD_RIGHT_MARGIN = 4
+_INPUT_STATE_WIDTH = 6
+_INPUT_STATE_VERTICAL_INSET = 1
+_INPUT_STATE_COLORS: dict[MayaPlugInputState, str] = {
+    "keyed": "#CD2729",
+    "animated": "#DD727A",
+    "connected": "#F1F1A5",
+}
+_INPUT_STATE_LABELS: dict[MayaPlugInputState, str] = {
+    "unconnected": "入力接続なし",
+    "keyed": "現在時刻にキーあり",
+    "animated": "アニメーションあり・現在時刻にキーなし",
+    "connected": "その他の入力接続あり",
+}
 _PASTE_FILTER_OPTIONS: tuple[tuple[ChannelAttributeFilter, str, str], ...] = (
     ("all", "全て", "コピーした全項目を"),
     (
@@ -133,6 +147,50 @@ class _AttributeNameLabel(qt.QLabel):
         painter.end()
 
 
+class _InputStateIndicator(qt.QWidget):
+    """属性名と値欄の間に接続状態だけを示す細い帯。"""
+
+    def __init__(self, parent: qt.QWidget) -> None:
+        """入力部品や選択paletteに依存しない描画領域を作る。"""
+        super().__init__(parent)
+        self._state: MayaPlugInputState = "unconnected"
+        self.setFixedWidth(_INPUT_STATE_WIDTH)
+        self.setSizePolicy(
+            qt.QSizePolicy.Policy.Fixed, qt.QSizePolicy.Policy.Expanding
+        )
+
+    @property
+    def input_state(self) -> MayaPlugInputState:
+        """最後に描画した入力接続状態を返す。"""
+        return self._state
+
+    def set_input_state(self, state: MayaPlugInputState) -> None:
+        """接続状態が変わった場合だけ帯を再描画する。"""
+        if state == self._state:
+            return
+        self._state = state
+        self.update()
+
+    def paintEvent(self, event: qt.QtGui.QPaintEvent) -> None:
+        """通常背景を塗り、接続色だけを上下1px内側に描く。"""
+        del event
+        painter = qt.QPainter(self)
+        painter.fillRect(
+            self.rect(), self.palette().color(qt.QPalette.ColorRole.Window)
+        )
+        if self._state != "unconnected":
+            painter.fillRect(
+                self.rect().adjusted(
+                    0,
+                    _INPUT_STATE_VERTICAL_INSET,
+                    0,
+                    -_INPUT_STATE_VERTICAL_INSET,
+                ),
+                qt.QColor(_INPUT_STATE_COLORS[self._state]),
+            )
+        painter.end()
+
+
 class _LockCheckBox(qt.QCheckBox):
     """混在を表示しつつ、明示入力ではロックか解除だけを選ぶ。"""
 
@@ -175,6 +233,7 @@ class AttributeRowWidget(qt.QWidget):
         self.name_label.setAlignment(
             qt.Qt.AlignmentFlag.AlignRight | qt.Qt.AlignmentFlag.AlignVCenter
         )
+        self.input_indicator = _InputStateIndicator(self)
         self.context_menu = qt.QMenu(self)
         self.align_action = qt.QAction("この値に揃える", self)
         self.align_action.setToolTip("編集可能な対象を基準ノードの値に揃える")
@@ -259,6 +318,7 @@ class AttributeRowWidget(qt.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(_NAME_EDITOR_SPACING)
         layout.addWidget(self.name_label, 1)
+        layout.addWidget(self.input_indicator)
         layout.addWidget(self.editor)
         self._update_state()
 
@@ -365,12 +425,30 @@ class AttributeRowWidget(qt.QWidget):
             self.step_changed.emit(self.editor.singleStep())
 
     def _update_state(self) -> None:
-        """混在だけを小さな印で示し、対象数と除外理由をtooltipへまとめる。"""
+        """代表の接続色と混在を表示し、除外理由をtooltipへまとめる。"""
         binding = self.row.binding
         editable = binding.view_model.set_value_command.can_execute
         count = binding.writable_count if editable else 0
         details = [self.row.attribute.nice_name, self.row.attribute.path]
         details.append(f"編集対象: {count}/{self.selection_count} 件")
+        visible_states: list[MayaPlugInputState] = []
+        for target in binding.target_states:
+            if target.is_available and target.input_state is not None:
+                visible_states.append(target.input_state)
+        input_states = tuple(visible_states)
+        if input_states:
+            representative = input_states[0]
+            self.input_indicator.set_input_state(representative)
+            details.append(
+                "基準の接続状態: " + _INPUT_STATE_LABELS[representative]
+            )
+            if any(state != representative for state in input_states[1:]):
+                counts = ", ".join(
+                    f"{_INPUT_STATE_LABELS[state]} {input_states.count(state)}件"
+                    for state in _INPUT_STATE_LABELS
+                    if state in input_states
+                )
+                details.append("接続状態は選択ノード間で混在: " + counts)
         if not isinstance(binding, MayaStringPlugsBinding):
             details.append(
                 "アニメーション付きの編集対象は、値の変更時に現在時刻へ"
@@ -403,6 +481,7 @@ class AttributeRowWidget(qt.QWidget):
         details.append("属性名を右クリック: この値に揃える / 表示を更新")
         tooltip = "\n".join(details)
         self.name_label.setToolTip(tooltip)
+        self.input_indicator.setToolTip(tooltip)
         self.editor.setToolTip(tooltip)
         self.align_action.setEnabled(editable and binding.is_mixed and defined)
 
@@ -1622,6 +1701,11 @@ class ChannelBoxWidget(qt.QWidget):
                         widget.editor
                         if isinstance(widget, AttributeRowWidget)
                         and isinstance(widget.editor, StringLineEdit)
+                        else None
+                    ),
+                    input_indicator=(
+                        widget.input_indicator
+                        if isinstance(widget, AttributeRowWidget)
                         else None
                     ),
                 )

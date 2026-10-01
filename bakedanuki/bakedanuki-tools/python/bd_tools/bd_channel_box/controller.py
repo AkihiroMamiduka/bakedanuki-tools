@@ -420,6 +420,7 @@ class ChannelBoxController(qt.QObject):
                         ],
                         parent=self,
                         key_animated=True,
+                        track_input_state=True,
                     )
                 elif attribute.kind == "enum":
                     binding = self._create_enum_binding(
@@ -432,6 +433,7 @@ class ChannelBoxController(qt.QObject):
                             for n in targets
                         ],
                         parent=self,
+                        track_input_state=True,
                     )
                 else:
                     binding = MayaFloatPlugsBinding(
@@ -441,6 +443,7 @@ class ChannelBoxController(qt.QObject):
                         ],
                         parent=self,
                         key_animated=True,
+                        track_input_state=True,
                     )
                 binding.edit_failed.connect(self.error_occurred.emit)
                 rows.append(
@@ -486,7 +489,12 @@ class ChannelBoxController(qt.QObject):
                 plugs.append(plug)
             else:
                 excluded.append(f"{name}: enum定義（整数値と項目名）が異なる")
-        return MayaEnumPlugsBinding(plugs, parent=self, key_animated=True)
+        return MayaEnumPlugsBinding(
+            plugs,
+            parent=self,
+            key_animated=True,
+            track_input_state=True,
+        )
 
     def _dispose_rows(self) -> None:
         """Qtの遅延削除を待たず、すべての入力とMaya監視を終了する。"""

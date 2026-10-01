@@ -9,6 +9,13 @@
 
 ### Added
 
+- bdChannelBoxの値編集行へ、入力接続を示す6pxの色帯を追加。現在キーは赤、
+  時間カーブ上で現在キーがない場合は淡い赤、その他の入力接続は淡い黄、
+  未接続はMayaの通常背景色とする。色帯の上下に各1pxの余白を設ける。
+  基準ノードの状態を描画し、複数ノードの混在はtooltipへ表示する。
+  時刻・キー・接続の変更とUndo／Redoに追従し、値入力可否とは独立する。
+  scene・保存設定の移行は不要。対応する`bakedanuki-util`が必要。
+
 - 開いているbdChannelBoxを`bd_tools.reload_package()`の後に自動再表示する。
   `reload_util=True`にも対応し、閉じていたWindowは再表示しない。
   汎用の開閉記録・再表示は`bakedanuki-util`のMaya UI基盤を利用する。

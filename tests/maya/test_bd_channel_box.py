@@ -227,7 +227,15 @@ def test_input_columns_stay_compact_at_right_edge(
             view = row.editor
             assert view.width() == 216
             assert view.x() + view.width() == row.width()
-            assert view.x() == row.name_label.x() + row.name_label.width()
+            assert (
+                row.input_indicator.x()
+                == row.name_label.x() + row.name_label.width()
+            )
+            assert row.input_indicator.width() == 6
+            assert (
+                view.x()
+                == row.input_indicator.x() + row.input_indicator.width()
+            )
             if isinstance(view, BoolCheckBox):
                 assert view.text() == ""
                 assert not view.isTristate()

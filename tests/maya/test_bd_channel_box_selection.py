@@ -3,7 +3,7 @@
 
 from collections.abc import Callable, Iterator
 from math import isclose
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 from maya import cmds
@@ -353,6 +353,90 @@ def test_selection_highlights_only_attribute_names(
         == input_states
     )
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def _indicator_color(
+    row: AttributeRowWidget,
+    position: Literal["top", "center", "bottom"] = "center",
+) -> str:
+    """表示中の細い帯から指定位置の中央画素を取得する。"""
+    indicator = row.input_indicator
+    image = indicator.grab().toImage()
+    y = {
+        "top": 0,
+        "center": image.height() // 2,
+        "bottom": image.height() - 1,
+    }[position]
+    return image.pixelColor(image.width() // 2, y).name().upper()
+
+
+def test_connection_indicators_match_the_four_maya_colors(
+    editor: ChannelBoxWidget,
+) -> None:
+    """3色の帯を上下1px空け、未接続を通常背景色で表示する。"""
+    cmds.currentTime(5)
+    cmds.setKeyframe("multiA.translateX", time=5, value=5)
+    cmds.setKeyframe("multiA.translateY", time=1, value=1)
+    cmds.connectAttr("multiB.translateZ", "multiA.translateZ")
+    _events()
+    expected = (
+        ("translateX", "keyed", "#CD2729"),
+        ("translateY", "animated", "#DD727A"),
+        ("translateZ", "connected", "#F1F1A5"),
+        ("rotateX", "unconnected", None),
+    )
+    for name, state, color in expected:
+        row = _row(editor, name)
+        background = (
+            row.input_indicator.palette()
+            .color(qt.QPalette.ColorRole.Window)
+            .name()
+            .upper()
+        )
+        assert row.input_indicator.width() == 6
+        assert row.input_indicator.input_state == state
+        assert _indicator_color(row) == (
+            background if color is None else color
+        )
+        assert _indicator_color(row, "top") == background
+        assert _indicator_color(row, "bottom") == background
+        assert row.row.binding.target_states[0].input_state == state
+    assert (
+        "接続状態は選択ノード間で混在"
+        in _row(editor, "translateX").input_indicator.toolTip()
+    )
+    cmds.flushUndo()
+    _click(_row(editor, "translateX").input_indicator)
+    assert editor.table_view.selected_keys() == _keys(editor, "translateX")
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_indicator_tracks_equal_value_keys_time_lock_and_selection(
+    editor: ChannelBoxWidget,
+) -> None:
+    """値と編集可否が変わらなくてもキー色を更新し、選択色と分離する。"""
+    cmds.setKeyframe("multiA.translateX", time=1, value=5)
+    cmds.currentTime(5)
+    _events()
+    row = _row(editor, "translateX")
+    assert _indicator_color(row) == "#DD727A"
+    cmds.setKeyframe("multiA.translateX", time=5, value=5)
+    _events()
+    assert _indicator_color(row) == "#CD2729"
+    editor.table_view.select_keys(_keys(editor, "translateX"))
+    assert _indicator_color(row) == "#CD2729"
+    cmds.setAttr("multiA.translateX", lock=True)
+    _events()
+    assert not row.row.binding.view_model.set_value_command.can_execute
+    assert _indicator_color(row) == "#CD2729"
+    cmds.setAttr("multiA.translateX", lock=False)
+    cmds.cutKey("multiA.translateX", time=(5, 5), clear=True)
+    _events()
+    assert _indicator_color(row) == "#DD727A"
+    cmds.currentTime(1)
+    _events()
+    assert _indicator_color(row) == "#CD2729"
+    assert cmds.getAttr("multiA.translateX") == 5
 
 
 def test_rows_use_current_viewport_after_host_replacement(

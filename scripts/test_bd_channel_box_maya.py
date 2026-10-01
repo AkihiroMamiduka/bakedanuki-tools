@@ -121,6 +121,7 @@ class _MayaSmokeSession:
             self._show_after_reload,
             self._capture_after_reload,
             self._benchmark,
+            self._inspect_input_colors,
             self._finish,
         )
         if self._phase == "restart":
@@ -1435,9 +1436,15 @@ class _MayaSmokeSession:
             row = self._row(path)
             if row.name_label.contentsMargins().right() != 4:
                 raise AssertionError(f"属性名の右余白が不正です: {path}")
-            if row.editor.x() != row.name_label.x() + row.name_label.width():
+            if (
+                row.input_indicator.x()
+                != row.name_label.x() + row.name_label.width()
+                or row.input_indicator.width() != 6
+                or row.editor.x()
+                != row.input_indicator.x() + row.input_indicator.width()
+            ):
                 raise AssertionError(
-                    f"属性名と入力欄の間に隙間があります: {path}"
+                    f"属性名・接続表示・入力欄の配置が不正です: {path}"
                 )
             if (
                 row.name_label.palette().color(qt.QPalette.ColorRole.Window)
@@ -2368,6 +2375,57 @@ class _MayaSmokeSession:
             )
             self.measurements[f"{key}_rows"] = len(widget.row_widgets)
         self._assert_values("field00", (11.0,) * len(self.nodes))
+
+    def _inspect_input_colors(self) -> None:
+        """Maya本体で接続色・通常背景・上下の隙間を確認して撮影する。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+
+        widget = self._require_window().widget
+        widget.controller.set_mode("values")
+        widget.controller.set_attribute_filter("visible")
+        cmds.file(new=True, force=True)
+        target = cmds.createNode("transform", name="bdChannelBoxInputColors")
+        driver = cmds.createNode("transform", name="bdChannelBoxInputDriver")
+        cmds.currentTime(5)
+        cmds.setKeyframe(target + ".translateX", time=5, value=5)
+        cmds.setKeyframe(target + ".translateY", time=1, value=1)
+        cmds.connectAttr(driver + ".translateZ", target + ".translateZ")
+        cmds.select(target, replace=True)
+        self._flush_gui()
+        expected = (
+            ("translate.translateX", "#CD2729"),
+            ("translate.translateY", "#DD727A"),
+            ("translate.translateZ", "#F1F1A5"),
+            ("rotate.rotateX", None),
+        )
+        for path, color in expected:
+            indicator = self._row(path).input_indicator
+            image = indicator.grab().toImage()
+            background = (
+                indicator.palette()
+                .color(qt.QPalette.ColorRole.Window)
+                .name()
+                .upper()
+            )
+            actual = (
+                image.pixelColor(image.width() // 2, image.height() // 2)
+                .name()
+                .upper()
+            )
+            if actual != (background if color is None else color):
+                raise AssertionError(
+                    f"入力接続の帯色が不正です: {path}: {actual} != {color}"
+                )
+            for y in (0, image.height() - 1):
+                edge = image.pixelColor(image.width() // 2, y).name().upper()
+                if edge != background:
+                    raise AssertionError(
+                        f"入力接続の上下余白が不正です: {path}: {edge}"
+                    )
+        self._capture("39-input-connection-colors.png")
+        self.steps.append("four_input_connection_colors")
 
     def _finish(self) -> None:
         """すべての操作結果を保存し、検証専用Mayaを終了する。"""
