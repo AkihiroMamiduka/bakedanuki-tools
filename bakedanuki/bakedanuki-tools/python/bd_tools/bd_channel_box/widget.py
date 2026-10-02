@@ -377,6 +377,26 @@ class AttributeRowWidget(qt.QWidget):
         animation_paste_actions = cast(_MenuActions, self.animation_paste_menu)
         animation_paste_actions.addAction(self.animation_paste_same_action)
         animation_paste_actions.addAction(self.animation_paste_selected_action)
+        self.animation_cut_menu = qt.QMenu(
+            "アニメーションカーブ：カット", self.context_menu
+        )
+        self.animation_cut_selected_action = qt.QAction("選択属性", self)
+        self.animation_cut_selected_action.setObjectName(
+            "animation_cut_selected"
+        )
+        self.animation_cut_selected_action.setToolTip(
+            "選択属性の全時間のカーブをコピーして削除（Hide属性も対象）"
+        )
+        self.animation_cut_all_action = qt.QAction(
+            "全アニメーション属性", self
+        )
+        self.animation_cut_all_action.setObjectName("animation_cut_all")
+        self.animation_cut_all_action.setToolTip(
+            "各選択ノードのKeyable／ChannelBox表示属性のカーブをカット"
+        )
+        animation_cut_actions = cast(_MenuActions, self.animation_cut_menu)
+        animation_cut_actions.addAction(self.animation_cut_selected_action)
+        animation_cut_actions.addAction(self.animation_cut_all_action)
         self.animation_delete_menu = qt.QMenu(
             "アニメーションカーブ：削除", self.context_menu
         )
@@ -463,6 +483,7 @@ class AttributeRowWidget(qt.QWidget):
         self.context_menu.addSeparator()
         self.context_menu.addMenu(self.animation_copy_menu)
         self.context_menu.addMenu(self.animation_paste_menu)
+        self.context_menu.addMenu(self.animation_cut_menu)
         self.context_menu.addMenu(self.animation_delete_menu)
         self.context_menu.addSeparator()
         self.context_menu.addMenu(self.copy_menu)
@@ -1562,6 +1583,9 @@ class ChannelBoxWidget(qt.QWidget):
             elif action == "animation_paste_selected":
                 self._clear_message()
                 self.controller.paste_animation_curves_to_selected(selected)
+            elif action == "animation_cut_selected":
+                self._clear_message()
+                self.controller.cut_animation_curves_selected(selected)
             elif action == "animation_delete_selected":
                 self._clear_message()
                 self.controller.delete_animation_curves_selected(selected)
@@ -1616,6 +1640,16 @@ class ChannelBoxWidget(qt.QWidget):
         self._clear_message()
         try:
             self.controller.paste_animation_curves_same_attributes()
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _cut_animation_curves_all_visible(self) -> None:
+        """各選択ノードのChannel Box表示属性の全時間のキーをカットする。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.cut_animation_curves_all_visible()
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
@@ -1802,6 +1836,10 @@ class ChannelBoxWidget(qt.QWidget):
             widget.animation_paste_selected_action.setEnabled(
                 can_paste_animation and has_selection
             )
+            widget.animation_cut_selected_action.setEnabled(
+                has_nodes and has_selection
+            )
+            widget.animation_cut_all_action.setEnabled(has_nodes)
             widget.animation_delete_selected_action.setEnabled(
                 has_nodes and has_selection
             )
@@ -1975,6 +2013,16 @@ class ChannelBoxWidget(qt.QWidget):
                             "animation_paste_selected",
                             key,
                         )
+                    )
+                    widget.animation_cut_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action,
+                            "animation_cut_selected",
+                            key,
+                        )
+                    )
+                    widget.animation_cut_all_action.triggered.connect(
+                        self._cut_animation_curves_all_visible
                     )
                     widget.animation_delete_selected_action.triggered.connect(
                         partial(

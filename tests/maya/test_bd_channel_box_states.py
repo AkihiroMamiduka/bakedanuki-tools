@@ -226,6 +226,7 @@ def test_state_input_opens_row_context_menu(
             "ミュート解除",
             "アニメーションカーブ：コピー",
             "アニメーションカーブ：ペースト",
+            "アニメーションカーブ：カット",
             "アニメーションカーブ：削除",
         )
         for action in row.context_menu.actions()

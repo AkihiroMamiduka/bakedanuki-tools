@@ -1496,6 +1496,7 @@ def test_selected_menu_lock_hide_and_alignment(
         "ミュート解除",
         "アニメーションカーブ：コピー",
         "アニメーションカーブ：ペースト",
+        "アニメーションカーブ：カット",
         "アニメーションカーブ：削除",
         "コピー",
         "ペースト",
@@ -1509,7 +1510,7 @@ def test_selected_menu_lock_hide_and_alignment(
     )
     assert [
         (action.text(), action.isSeparator())
-        for action in row.context_menu.actions()[:13]
+        for action in row.context_menu.actions()[:14]
     ] == [
         ("この値に揃える", False),
         ("", True),
@@ -1520,6 +1521,7 @@ def test_selected_menu_lock_hide_and_alignment(
         ("", True),
         ("アニメーションカーブ：コピー", False),
         ("アニメーションカーブ：ペースト", False),
+        ("アニメーションカーブ：カット", False),
         ("アニメーションカーブ：削除", False),
         ("", True),
         ("コピー", False),
@@ -1566,6 +1568,13 @@ def test_selected_menu_lock_hide_and_alignment(
     ] == [
         ("コピー元と同じ属性", "animation_paste_same"),
         ("選択属性", "animation_paste_selected"),
+    ]
+    assert [
+        (action.text(), action.objectName())
+        for action in row.animation_cut_menu.actions()
+    ] == [
+        ("選択属性", "animation_cut_selected"),
+        ("全アニメーション属性", "animation_cut_all"),
     ]
     assert [
         (action.text(), action.objectName())
@@ -1981,6 +1990,165 @@ def test_unmute_selected_preserves_animated_mute_node(
     _events()
     assert cmds.mute("multiA.translateX", query=True) is True
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_animation_curve_cut_selected_updates_both_clipboards_and_undoes_once(
+    editor: ChannelBoxWidget,
+) -> None:
+    """選択属性をカットし、Maya標準と画面の貼り付けへ渡してUndoする。"""
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    for time, value in ((1, 2), (10, 5)):
+        cmds.setKeyframe("multiA.translateX", time=time, value=value)
+    cmds.setKeyframe("multiA.translateY", time=1, value=8)
+    cmds.flushUndo()
+
+    _row(editor, "translateX").animation_cut_selected_action.trigger()
+    _events()
+    assert not cmds.keyframe(
+        "multiA.translateX", query=True, keyframeCount=True
+    )
+    assert cmds.keyframe("multiA.translateY", query=True, keyframeCount=True)
+    assert editor.controller.can_paste_animation_curves()
+    assert not editor.message_label.isVisible()
+    _row(editor, "translateX").animation_cut_selected_action.trigger()
+    _events()
+    cmds.undo()
+    _events()
+    assert (
+        cmds.keyframe("multiA.translateX", query=True, keyframeCount=True) == 2
+    )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    cmds.redo()
+    _events()
+
+    cmds.select("multiB", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+    assert (
+        cmds.pasteKey(
+            "multiB.translateY",
+            clipboard="anim",
+            animation="objects",
+            time=(20, 20),
+            option="insert",
+        )
+        == 1
+    )
+    assert cmds.keyframe("multiB.translateY", query=True, timeChange=True) == [
+        20.0,
+        29.0,
+    ]
+    _row(editor, "translateX").animation_paste_same_action.trigger()
+    _events()
+    assert cmds.keyframe("multiB.translateX", query=True, timeChange=True) == [
+        20.0,
+        29.0,
+    ]
+
+
+def test_animation_curve_cut_all_uses_visible_flags_and_preserves_noop_copy(
+    editor: ChannelBoxWidget,
+) -> None:
+    """全属性カットは表示フラグに従い、対象なしならコピーを保持する。"""
+    cmds.select("multiA", replace=True)
+    for attribute in ("translateX", "translateY", "translateZ"):
+        cmds.setKeyframe(f"multiA.{attribute}", time=1, value=2)
+    cmds.setAttr("multiA.translateY", keyable=False, channelBox=True)
+    cmds.setAttr("multiA.translateZ", keyable=False, channelBox=False)
+    editor.refresh()
+    editor.controller.set_attribute_filter("keyable")
+    cmds.flushUndo()
+
+    _row(editor, "translateX").animation_cut_all_action.trigger()
+    _events()
+    for attribute in ("translateX", "translateY"):
+        assert not cmds.keyframe(
+            f"multiA.{attribute}", query=True, keyframeCount=True
+        )
+    assert cmds.keyframe("multiA.translateZ", query=True, keyframeCount=True)
+    cmds.flushUndo()
+    _row(editor, "translateX").animation_cut_all_action.trigger()
+    _events()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    cmds.select("multiB", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+    _row(editor, "translateX").animation_paste_same_action.trigger()
+    _events()
+    for attribute in ("translateX", "translateY"):
+        assert cmds.keyframe(
+            f"multiB.{attribute}", query=True, keyframeCount=True
+        )
+    assert not cmds.keyframe(
+        "multiB.translateZ", query=True, keyframeCount=True
+    )
+
+
+def test_animation_curve_cut_selected_includes_other_type_nodes(
+    editor: ChannelBoxWidget,
+) -> None:
+    """異なる型の同じ正式pathもコピーと削除の同一対象にする。"""
+    cmds.addAttr(
+        "multiA", longName="transfer", attributeType="double", keyable=True
+    )
+    cmds.addAttr(
+        "multiB", longName="transfer", attributeType="bool", keyable=True
+    )
+    for node in ("multiA", "multiB"):
+        cmds.setKeyframe(f"{node}.transfer", time=1, value=1)
+    editor.refresh()
+    row = _row(editor, "transfer")
+    assert len(row.row.target_names) == 1
+    cmds.flushUndo()
+
+    row.animation_cut_selected_action.trigger()
+    _events()
+    for node in ("multiA", "multiB"):
+        assert not cmds.keyframe(
+            f"{node}.transfer", query=True, keyframeCount=True
+        )
+    cmds.currentTime(20)
+    _row(editor, "transfer").animation_paste_same_action.trigger()
+    _events()
+    for node in ("multiA", "multiB"):
+        assert cmds.keyframe(
+            f"{node}.transfer", query=True, timeChange=True
+        ) == [20.0]
+
+
+def test_animation_curve_cut_skips_shared_curve_and_keeps_copy_aligned(
+    editor: ChannelBoxWidget,
+) -> None:
+    """共有曲線を除外し、削除した独立曲線だけを貼り付け対象にする。"""
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    cmds.setKeyframe("multiA.translateX", time=1, value=2)
+    cmds.setKeyframe("multiA.translateY", time=1, value=3)
+    curves = cmds.keyframe("multiA.translateX", query=True, name=True)
+    assert isinstance(curves, list) and len(curves) == 1
+    cmds.connectAttr(f"{curves[0]}.output", "multiB.translateX", force=True)
+    editor.table_view.select_keys(_keys(editor, "translateX", "translateY"))
+    cmds.flushUndo()
+
+    _row(editor, "translateX").animation_cut_selected_action.trigger()
+    _events()
+    for node in ("multiA", "multiB"):
+        assert cmds.keyframe(
+            f"{node}.translateX", query=True, keyframeCount=True
+        )
+    assert not cmds.keyframe(
+        "multiA.translateY", query=True, keyframeCount=True
+    )
+    cmds.select("multiB", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+    _row(editor, "translateY").animation_paste_same_action.trigger()
+    _events()
+    assert cmds.keyframe("multiB.translateY", query=True, timeChange=True) == [
+        20.0
+    ]
 
 
 def test_animation_curve_delete_selected_includes_hidden_and_undoes_once(

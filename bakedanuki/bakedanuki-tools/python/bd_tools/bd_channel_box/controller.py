@@ -729,8 +729,8 @@ class ChannelBoxController(qt.QObject):
 
     def _copy_animation_curves(
         self, sources: Sequence[_AnimationCurveSource]
-    ) -> int:
-        """対象曲線をMayaの二つのキー用クリップボードへコピーする。"""
+    ) -> tuple[_CopiedAnimationCurve, ...]:
+        """対象曲線をキー用clipboardへコピーし、元属性との対応を返す。"""
         self.state_edit_session.finish()
         self._finish_value_edit()
         selected: list[_AnimationCurveSource] = []
@@ -744,7 +744,7 @@ class ChannelBoxController(qt.QObject):
             except (RuntimeError, TypeError):
                 continue
         if not selected:
-            return 0
+            return ()
 
         names = tuple(
             f"{self.node_names[source.node_index]}.{source.path}"
@@ -765,7 +765,7 @@ class ChannelBoxController(qt.QObject):
                 shape=False,
             )
             if not count:
-                return 0
+                return ()
             snapshot = oma.MAnimCurveClipboard()
             snapshot.set(api_clipboard)
             known = {
@@ -789,15 +789,21 @@ class ChannelBoxController(qt.QObject):
                         )
                     )
             if not copied:
-                return 0
+                return ()
+            copied_names = tuple(
+                dict.fromkeys(
+                    f"{self.node_names[curve.node_index]}.{curve.path}"
+                    for curve in copied
+                )
+            )
             native_count = cmds.copyKey(
-                *names,
+                *copied_names,
                 animation="objects",
                 clipboard="anim",
                 hierarchy="none",
                 shape=False,
             )
-            if native_count != count:
+            if native_count != len(copied):
                 raise RuntimeError(
                     "Mayaのキー用clipboardへコピーできませんでした"
                 )
@@ -827,7 +833,7 @@ class ChannelBoxController(qt.QObject):
                 for curve in copied
             ),
         )
-        return len(copied)
+        return tuple(copied)
 
     def copy_animation_curves_selected(
         self, keys: Sequence[tuple[str, str]]
@@ -843,7 +849,7 @@ class ChannelBoxController(qt.QObject):
             if isinstance(row, ChannelRow)
             for node in row.target_names
         )
-        return self._copy_animation_curves(sources)
+        return len(self._copy_animation_curves(sources))
 
     def copy_animation_curves_all_visible(self) -> int:
         """各選択ノードのKeyable／ChannelBox表示属性の曲線をコピーする。"""
@@ -855,7 +861,73 @@ class ChannelBoxController(qt.QObject):
             for info in inspect_scalar_attributes(node)
             if info.keyable or info.channel_box
         )
-        return self._copy_animation_curves(sources)
+        return len(self._copy_animation_curves(sources))
+
+    def _cut_animation_curves(
+        self, sources: Sequence[_AnimationCurveSource]
+    ) -> int:
+        """コピーと削除が一致する属性だけ、全時間のキーをカットする。"""
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        eligible = tuple(
+            source
+            for source in dict.fromkeys(sources)
+            if source.kind != "string"
+            and self._deletable_animation_curve_target(
+                f"{self.node_names[source.node_index]}.{source.path}"
+            )
+            is not None
+        )
+        if not eligible:
+            return 0
+
+        # 実際にコピーできた属性だけを削除し、貼り付け情報との食い違いを防ぐ
+        copied = self._copy_animation_curves(eligible)
+        if not copied:
+            return 0
+        targets = tuple(
+            dict.fromkeys(
+                f"{self.node_names[curve.node_index]}.{curve.path}"
+                for curve in copied
+            )
+        )
+        cmds.cutKey(
+            *targets,
+            animation="objects",
+            clear=True,
+            hierarchy="none",
+            shape=False,
+        )
+        return len(targets)
+
+    def cut_animation_curves_selected(
+        self, keys: Sequence[tuple[str, str]]
+    ) -> int:
+        """選択行と同じ正式pathの全選択ノードの曲線をカットする。"""
+        selected_paths = {
+            row.attribute.path
+            for row in self._selected_rows(keys)
+            if isinstance(row, ChannelRow)
+        }
+        sources = tuple(
+            _AnimationCurveSource(index, info.path, info.kind)
+            for index, node in enumerate(self.node_names)
+            for info in inspect_scalar_attributes(node)
+            if info.path in selected_paths
+        )
+        return self._cut_animation_curves(sources)
+
+    def cut_animation_curves_all_visible(self) -> int:
+        """各選択ノードのKeyable／ChannelBox表示属性をカットする。"""
+        sources = tuple(
+            _AnimationCurveSource(index, info.path, info.kind)
+            for index, node in enumerate(self.node_names)
+            for info in inspect_scalar_attributes(node)
+            if info.keyable or info.channel_box
+        )
+        return self._cut_animation_curves(sources)
 
     @staticmethod
     def _deletable_animation_curve_target(name: str) -> str | None:
