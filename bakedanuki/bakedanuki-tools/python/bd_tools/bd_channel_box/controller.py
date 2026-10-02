@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from functools import partial
 from typing import Literal, TypeAlias
 
+from maya import cmds
 from maya.api import OpenMaya as om
 from maya.api import OpenMayaAnim as oma
 
@@ -43,6 +44,7 @@ from bd_util.maya.ui import (
     apply_plugs_values,
     capture_all_scalar_node_values,
     capture_scalar_node_values,
+    inspect_plug_input_state,
     read_enum_definition,
     resolve_bool_plug,
     resolve_enum_plug,
@@ -532,6 +534,82 @@ class ChannelBoxController(qt.QObject):
                 "属性の構成が変わりました。選択し直してください"
             )
         return tuple(lookup[key] for key in unique)
+
+    @staticmethod
+    def _keyframe_plug(name: str) -> str | None:
+        """キー設定可能な単一属性だけを、接続を変更しない対象として返す。"""
+        selection = om.MSelectionList()
+        try:
+            selection.add(name)
+            plug = selection.getPlug(0)
+        except (RuntimeError, TypeError):
+            return None
+        attribute = plug.attribute()
+        if (
+            plug.isArray
+            or plug.isCompound
+            or not (
+                attribute.hasFn(om.MFn.kNumericAttribute)
+                or attribute.hasFn(om.MFn.kEnumAttribute)
+                or attribute.hasFn(om.MFn.kUnitAttribute)
+            )
+        ):
+            return None
+        if not om.MFnAttribute(attribute).writable:
+            return None
+        if om.MFnDependencyNode(plug.node()).isLocked:
+            return None
+        ancestor = plug
+        while True:
+            if ancestor.isLocked or (
+                ancestor != plug and ancestor.isDestination
+            ):
+                return None
+            if not ancestor.isChild:
+                break
+            ancestor = ancestor.parent()
+        if inspect_plug_input_state(plug) not in (
+            "unconnected",
+            "nonkeyable",
+            "keyed",
+            "animated",
+            "key_altered",
+            "animation_layer",
+        ):
+            return None
+        return plug.name()
+
+    def set_keyframes_all_keyable(self) -> int:
+        """選択ノード自身の全Keyable属性へ、画面の行選択と無関係にキーを打つ。"""
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        targets: list[str] = []
+        for node in self.node_names:
+            for attribute in cmds.listAttr(node, keyable=True) or ():
+                plug = self._keyframe_plug(f"{node}.{attribute}")
+                if plug is not None:
+                    targets.append(plug)
+        if not targets:
+            return 0
+        return cmds.setKeyframe(*dict.fromkeys(targets), insertBlend=False)
+
+    def set_keyframes_selected(self, keys: Sequence[tuple[str, str]]) -> int:
+        """表示中の選択行に対応する全ノードのキー可能属性へキーを打つ。"""
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        targets: list[str] = []
+        for row in self._selected_rows(keys):
+            if not isinstance(row, ChannelRow):
+                continue
+            for node in row.target_names:
+                plug = self._keyframe_plug(f"{node}.{row.attribute.path}")
+                if plug is not None:
+                    targets.append(plug)
+        if not targets:
+            return 0
+        return cmds.setKeyframe(*dict.fromkeys(targets), insertBlend=False)
 
     def apply_numeric_values(
         self, keys: Sequence[tuple[str, str]], display_value: float

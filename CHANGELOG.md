@@ -9,6 +9,11 @@
 
 ### Added
 
+- bdChannelBoxの値編集行メニューに「キーフレーム > セット > 全 Keyable／選択属性」を追加。
+  全Keyableは選択ノード自身のKeyable属性、選択属性は選択行と各ノードの対応属性を現在時刻に
+  キー設定する。キーを打てない属性は静かに除外し、通常接続にpairBlendを暗黙に挿入しない。
+  状態編集モードには表示しない。scene・保存設定の移行は不要。
+  toolsのみの変更で、`bd_tools.reload_package()`で反映できる。
 - bdChannelBoxの接続色へDriven Key、Expression、Animation Layer、
   Animation Clip（Time Editor）、Muted、Key Altered、Nonkeyableを追加。
   直結元の実接続、muteの有効状態、現在値とカーブ評価値、keyableフラグで判定する。

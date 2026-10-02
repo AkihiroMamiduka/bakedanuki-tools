@@ -1483,6 +1483,7 @@ def test_selected_menu_lock_hide_and_alignment(
         if isinstance(submenu := action.menu(), qt.QMenu)
     ]
     assert [menu.title() for menu in selection_menus] == [
+        "キーフレーム",
         "コピー",
         "ペースト",
         "Step設定",
@@ -1493,6 +1494,27 @@ def test_selected_menu_lock_hide_and_alignment(
         action.objectName().startswith("selected_")
         for action in row.context_menu.actions()
     )
+    assert [
+        (action.text(), action.isSeparator())
+        for action in row.context_menu.actions()[:6]
+    ] == [
+        ("この値に揃える", False),
+        ("", True),
+        ("キーフレーム", False),
+        ("", True),
+        ("コピー", False),
+        ("ペースト", False),
+    ]
+    assert [action.text() for action in row.keyframe_menu.actions()] == [
+        "セット"
+    ]
+    assert [
+        (action.text(), action.objectName())
+        for action in row.set_keyframe_menu.actions()
+    ] == [
+        ("全 Keyable", "set_key_all_keyable"),
+        ("選択属性", "set_key_selected"),
+    ]
     lock_menu, display_menu = selection_menus[-2:]
     assert [action.text() for action in lock_menu.actions()] == [
         "ロック",
@@ -1535,6 +1557,161 @@ def test_selected_menu_lock_hide_and_alignment(
     cmds.undo()
     _events()
     assert _row(editor, "translateY")
+
+
+def test_set_key_all_keyable_uses_each_selected_node(
+    editor: ChannelBoxWidget,
+) -> None:
+    """全Keyableは画面の行選択に依存せず各ノード自身の属性をキーにする。"""
+    for node in ("multiA", "multiB"):
+        cmds.addAttr(
+            node,
+            longName="hiddenCount",
+            attributeType="long",
+            keyable=True,
+        )
+    cmds.setAttr("multiA.translateX", keyable=False, channelBox=True)
+    cmds.setAttr("multiB.translateX", lock=True)
+    cmds.currentTime(7)
+    _events()
+    editor.controller.set_attribute_filter("keyable")
+    editor.table_view.select_keys(_keys(editor, "translateY"))
+    assert not any(
+        row.row.attribute.name == "hiddenCount" for row in editor.row_widgets
+    )
+    cmds.flushUndo()
+
+    _row(editor, "translateY").set_key_all_keyable_action.trigger()
+    _events()
+    for node in ("multiA", "multiB"):
+        for attribute in ("translateY", "hiddenCount"):
+            assert (
+                cmds.keyframe(
+                    f"{node}.{attribute}",
+                    query=True,
+                    time=(7, 7),
+                    keyframeCount=True,
+                )
+                == 1
+            )
+    for node in ("multiA", "multiB"):
+        assert not cmds.keyframe(
+            f"{node}.translateX",
+            query=True,
+            keyframeCount=True,
+        )
+    assert not editor.message_label.isVisible()
+    cmds.undo()
+    _events()
+    assert not cmds.keyframe(
+        "multiA.hiddenCount", query=True, keyframeCount=True
+    )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_set_key_selected_skips_unavailable_plugs_silently(
+    editor: ChannelBoxWidget,
+) -> None:
+    """選択属性は非Keyableも明示指定し、不可属性と通常接続は静かに除外する。"""
+    for node in ("multiA", "multiB"):
+        cmds.addAttr(node, longName="note", dataType="string")
+        cmds.setAttr(f"{node}.note", "memo", type="string")
+        cmds.setAttr(f"{node}.note", channelBox=True)
+    cmds.setAttr("multiA.translateX", keyable=False, channelBox=True)
+    cmds.setAttr("multiB.translateX", lock=True)
+    driver = cmds.createNode("transform", name="driver")
+    cmds.connectAttr(f"{driver}.translateX", "multiA.translateY")
+    cmds.currentTime(7)
+    cmds.select("multiA", "multiB", replace=True)
+    editor.refresh()
+    _events()
+    selected = _keys(editor, "translateX", "translateY", "note")
+    editor.table_view.select_keys(selected)
+    cmds.flushUndo()
+
+    _row(editor, "translateX").set_key_selected_action.trigger()
+    _events()
+    for node, attribute in (
+        ("multiA", "translateX"),
+        ("multiB", "translateY"),
+    ):
+        assert (
+            cmds.keyframe(
+                f"{node}.{attribute}",
+                query=True,
+                time=(7, 7),
+                keyframeCount=True,
+            )
+            == 1
+        )
+    for node, attribute in (
+        ("multiB", "translateX"),
+        ("multiA", "translateY"),
+        ("multiA", "note"),
+        ("multiB", "note"),
+    ):
+        assert not cmds.keyframe(
+            f"{node}.{attribute}", query=True, keyframeCount=True
+        )
+    assert cmds.listConnections(
+        "multiA.translateY", source=True, destination=False, plugs=True
+    ) == ["driver.translateX"]
+    assert not editor.message_label.isVisible()
+    cmds.undo()
+    _events()
+    assert not cmds.keyframe(
+        "multiA.translateX", query=True, keyframeCount=True
+    )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_set_key_selected_uses_active_animation_layer(
+    editor: ChannelBoxWidget,
+) -> None:
+    """選択属性のキーは現在選択中のAnimation Layerへ設定する。"""
+    layer = cast(str, cmds.animLayer("keyLayer"))
+    cmds.animLayer(layer, edit=True, attribute="multiA.translateX")
+    cmds.animLayer(layer, edit=True, selected=True)
+    cmds.currentTime(7)
+    editor.refresh()
+    cmds.flushUndo()
+
+    _row(editor, "translateX").set_key_selected_action.trigger()
+    _events()
+    curves = (
+        cast(
+            list[str] | None,
+            cmds.animLayer(layer, query=True, animCurves=True),
+        )
+        or ()
+    )
+    assert curves
+    assert any(
+        cmds.keyframe(curve, query=True, time=(7, 7), keyframeCount=True) == 1
+        for curve in curves
+    )
+    cmds.undo()
+    _events()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_set_key_selected_with_no_keyable_targets_is_noop(
+    editor: ChannelBoxWidget,
+) -> None:
+    """キー不可の選択属性だけなら通知もUndo項目も作らない。"""
+    for node in ("multiA", "multiB"):
+        cmds.setAttr(f"{node}.translateX", lock=True)
+    _events()
+    cmds.flushUndo()
+
+    _row(editor, "translateX").set_key_selected_action.trigger()
+    _events()
+    assert not editor.message_label.isVisible()
+    for node in ("multiA", "multiB"):
+        assert not cmds.keyframe(
+            f"{node}.translateX", query=True, keyframeCount=True
+        )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_state_batch_stops_and_restores_when_controller_closes(

@@ -269,6 +269,22 @@ class AttributeRowWidget(qt.QWidget):
         self.align_action = qt.QAction("この値に揃える", self)
         self.align_action.setToolTip("編集可能な対象を基準ノードの値に揃える")
         self.align_action.triggered.connect(self._align_values)
+        self.keyframe_menu = qt.QMenu("キーフレーム", self.context_menu)
+        self.set_keyframe_menu = qt.QMenu("セット", self.keyframe_menu)
+        self.set_key_all_keyable_action = qt.QAction("全 Keyable", self)
+        self.set_key_all_keyable_action.setObjectName("set_key_all_keyable")
+        self.set_key_all_keyable_action.setToolTip(
+            "選択ノード自身の全Keyable属性に現在時刻のキーを設定"
+        )
+        self.set_key_selected_action = qt.QAction("選択属性", self)
+        self.set_key_selected_action.setObjectName("set_key_selected")
+        self.set_key_selected_action.setToolTip(
+            "選択した属性に現在時刻のキーを設定"
+        )
+        keyframe_actions = cast(_MenuActions, self.set_keyframe_menu)
+        keyframe_actions.addAction(self.set_key_all_keyable_action)
+        keyframe_actions.addAction(self.set_key_selected_action)
+        self.keyframe_menu.addMenu(self.set_keyframe_menu)
         self.copy_menu = qt.QMenu("コピー", self.context_menu)
         self.copy_all_values_action = qt.QAction("全属性", self)
         self.copy_all_values_action.setObjectName("copy_all_values")
@@ -323,6 +339,8 @@ class AttributeRowWidget(qt.QWidget):
         self.refresh_action.triggered.connect(self.refresh_requested.emit)
         menu_actions = cast(_MenuActions, self.context_menu)
         menu_actions.addAction(self.align_action)
+        self.context_menu.addSeparator()
+        self.context_menu.addMenu(self.keyframe_menu)
         self.context_menu.addSeparator()
         self.context_menu.addMenu(self.copy_menu)
         self.context_menu.addMenu(self.paste_menu)
@@ -1405,6 +1423,9 @@ class ChannelBoxWidget(qt.QWidget):
         try:
             if action == "align":
                 self.controller.align_selected_values(selected)
+            elif action == "key_selected":
+                self._clear_message()
+                self.controller.set_keyframes_selected(selected)
             elif action == "copy_selected":
                 self.controller.copy_selected_values(selected)
             elif action == "paste_selected":
@@ -1416,6 +1437,16 @@ class ChannelBoxWidget(qt.QWidget):
                 self.controller.set_selected_display(selected, action)
             else:
                 raise ValueError(f"未対応の選択操作です: {action}")
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _set_keyframes_all_keyable(self) -> None:
+        """選択ノードの全Keyable属性に現在時刻のキーを設定する。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.set_keyframes_all_keyable()
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
@@ -1698,6 +1729,12 @@ class ChannelBoxWidget(qt.QWidget):
                     )
                     widget.step_changed.connect(
                         partial(self._apply_step_value, key)
+                    )
+                    widget.set_key_all_keyable_action.triggered.connect(
+                        self._set_keyframes_all_keyable
+                    )
+                    widget.set_key_selected_action.triggered.connect(
+                        partial(self._run_selected_action, "key_selected", key)
                     )
                     widget.copy_all_values_action.triggered.connect(
                         self._copy_all_values
