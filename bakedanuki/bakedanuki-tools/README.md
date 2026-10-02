@@ -24,6 +24,8 @@ bakedanuki/
   bakedanuki-tools/
     python/
       bd_tools/
+    scripts/
+      userSetup.py
   bakedanuki-util/
     python/
       bd_util/
@@ -31,6 +33,23 @@ bakedanuki/
 
 共通の `installer.py` を Maya の viewport へドラッグ&ドロップするか、
 `bakedanuki/modules` を `MAYA_MODULE_PATH` へ追加してください。
+
+interactive Mayaの起動後、上部メニューバーの`bd > tools > bdChannelBox`から
+ツールを開けます。各Module内の`userSetup.py`がメニュー登録を予約します。
+この起動処理はユーザー自身の`userSetup.py`やsceneを書き換えません。
+共通installerは確認後にMaya.envの`MAYA_MODULE_PATH`を更新します。batchでは
+メニューを登録しません。起動スクリプトを無効にした環境では、Script Editorから
+次を実行できます。
+
+```python
+import bd_tools
+
+bd_tools.install_menu()
+```
+
+`install_menu()`はUI未初期化時に`False`を返します。ツールを直接開く場合は
+`bd_tools.bd_channel_box.show()`も使用できます。メニュー基盤を利用するには、
+対応する`bakedanuki-util`を同時に配置してください。
 
 ## Import Check
 

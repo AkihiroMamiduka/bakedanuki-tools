@@ -33,3 +33,15 @@ def test_reload_can_rebuild_util_before_tools() -> None:
     assert reloaded_tools is sys.modules["bd_tools"]
     assert reloaded_tools is not original_tools
     assert original_tools.__version__ == reloaded_tools.__version__
+
+
+def test_menu_registration_skips_batch_maya() -> None:
+    """mayapyのbatch起動ではMaya上部メニューを構築しない。"""
+    from maya import cmds
+
+    import bd_tools
+    from bd_tools.menu import was_menu_installed
+
+    assert cmds.about(batch=True)
+    assert not bd_tools.install_menu()
+    assert not was_menu_installed()

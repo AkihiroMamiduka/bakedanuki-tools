@@ -26,6 +26,7 @@ import しません。この制約により、tools は rig の導入有無に�
 - 値型、node 操作、undo を扱う共通基盤
 - Qt binding facade
 - Window、workspaceControl、callback、UI 状態保存の共通 lifecycle
+- Maya上部の`bd`メニュー、categoryとownerごとの項目登録・解除
 
 ### `bd_tools`
 
@@ -33,6 +34,7 @@ import しません。この制約により、tools は rig の導入有無に�
 - UI とユーザー操作
 - ツール固有のユースケースと設定
 - `bd_util` の汎用 API を組み合わせた Maya scene 操作
+- `tools` categoryとbdChannelBox項目、起動時登録hook
 
 ### `bd_rig`
 
@@ -110,6 +112,14 @@ UI 基盤は `bd_util.ui` と `bd_util.maya.ui` を利用します。
 - Maya callback は Window owner に関連付ける。
 - import 時には UI を表示せず、明示的な `show()` で表示する。
 - reload 前には controller、workspaceControl、callback を完全に破棄する。
+
+`bd_tools`のMaya Moduleは、専用の`scripts/userSetup.py`を持ちます。
+interactive起動時だけ`maya.utils.executeDeferred()`へメニュー登録を予約し、
+`bd_util.maya.ui.register_menu_item()`で`bd > tools > bdChannelBox`を追加します。
+`bdChannelBox`本体はクリックされるまで読み込みません。登録のownerは`bd_tools`、
+categoryは`tools`とし、将来のrig・physicsは別owner/categoryで同じ`bd`を共有します。
+メニューのMaya UI構築と他ownerを保つ解除処理はutilが所有します。
+toolsのreload前には所有項目を解除し、reload後に新しいcallbackで再登録します。
 
 各 module が保持する controller の `dispose()` を package の
 `register_reload_disposer()` へ登録し、古い UI と callback を残したまま code を

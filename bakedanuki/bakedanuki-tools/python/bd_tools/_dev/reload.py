@@ -11,6 +11,7 @@ from collections.abc import Callable
 from types import ModuleType
 from typing import TypeAlias, cast
 
+from ..menu import was_menu_installed
 from .lifecycle import dispose_for_reload
 from .reopen_targets import KNOWN_DOCK_TOOLS
 
@@ -125,7 +126,8 @@ def reload_package(
         )
         open_tools = snapshot(PACKAGE_NAME, dock_tools=KNOWN_DOCK_TOOLS)
 
-    # Maya外部状態を破棄してからPython moduleへ触れる
+    # 既存メニューの有無を退避し、Maya外部状態を破棄する
+    menu_was_installed = was_menu_installed()
     dispose_for_reload()
 
     # 明示指定された場合だけbytecode cacheを削除する
@@ -150,6 +152,13 @@ def reload_package(
     if old_package is not None and old_package is not new_package:
         old_package.__dict__.clear()
         old_package.__dict__.update(new_package.__dict__)
+
+    # 起動時に登録済みだったtoolsメニューだけを新しいcallbackで作り直す
+    if menu_was_installed:
+        install_menu = cast(
+            Callable[[], bool], getattr(new_package, "install_menu")
+        )
+        install_menu()
 
     # 新しいutilとtoolsの表示関数から、以前開いていたツールだけを再生成する
     if open_tools:

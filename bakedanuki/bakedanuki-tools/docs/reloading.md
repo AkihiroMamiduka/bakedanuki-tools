@@ -37,6 +37,7 @@ Python module を `sys.modules` から外すだけでは、次の Maya 外部状
 - scriptJob
 - signal connection
 - timer やその他の process state
+- `bd > tools` のメニュー項目
 
 外部状態を作成する module は、再読込前に必要な終了処理を登録します。
 
@@ -65,11 +66,13 @@ bd_tools.register_reload_disposer(dispose)
 3. `bd_util.reload_package()`
 4. `bd_tools` 配下の古い module 参照を削除
 5. `bd_tools` の再 import
-6. 新しいutilから、リロード前に開いていたtoolsだけを再表示
+6. 登録されていたtoolsメニューを新しいcallbackで再作成
+7. 新しいutilから、リロード前に開いていたtoolsだけを再表示
 
-toolsだけをreloadする場合も、1、2、4、5、6の順に実行します。タイトルバーや
+toolsだけをreloadする場合も、1、2、4、5、6、7の順に実行します。タイトルバーや
 `close()`で閉じたtoolは再表示しません。再表示が失敗したtoolがあっても残りを試し、
 失敗内容を例外で通知します。Mayaの起動時復元は従来どおり`uiScript`へ任せます。
+メニュー未登録の状態でreloadした場合、メニューは自動登録しません。
 Widget生成を後回しにしたdockは、tools側で定義したworkspaceControl名から検出します。
 開発reload時のタブ位置やアクティブなタブの完全復元は対象外です。
 

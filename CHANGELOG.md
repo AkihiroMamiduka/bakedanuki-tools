@@ -9,6 +9,13 @@
 
 ### Added
 
+- Maya Module内の`userSetup.py`からinteractive起動後に`bd > tools > bdChannelBox`
+  を登録する。ユーザーの`userSetup.py`は変更せず、batchでは登録しない。
+  メニュー未表示の場合は`bd_tools.install_menu()`で手動登録できる。
+  `bd_tools.uninstall_menu()`はtools所有項目だけを解除する。
+  開発reloadでは登録済み項目を新しいcallbackで戻す。
+  共有メニュー基盤を備えた`bakedanuki-util`との同時更新が必要。
+  scene・保存設定の移行は不要。
 - 開いているbdChannelBoxを`bd_tools.reload_package()`の後に自動再表示する。
   `reload_util=True`にも対応し、閉じていたWindowは再表示しない。
   汎用の開閉記録・再表示は`bakedanuki-util`のMaya UI基盤を利用する。

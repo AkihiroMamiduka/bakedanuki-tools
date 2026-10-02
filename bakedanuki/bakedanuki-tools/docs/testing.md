@@ -31,6 +31,23 @@ QWidgetも同じ入口で検証できるよう、Maya初期化前にQt facadeか
 workspaceControl の実表示や Maya 再起動後の復元は `mayapy` だけでは完結しないため、対象
 Maya 本体でも操作確認します。
 
+上部メニューの起動hookは、`userSetup.py`を有効にした専用のMaya本体processで
+確認します。Maya 2025の例です。
+
+```powershell
+& "C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe" `
+    scripts/test_menu_maya.py --maya-version 2025 `
+    --util-root D:\develop\bakedanuki_dev\bakedanuki-util
+```
+
+`bd > tools > bdChannelBox`の表示・クリック、メニューセット切替、同じ項目の
+再登録とreload後の再登録を確認します。専用profileにもユーザー側の
+`userSetup.py`を配置し、Module側のhookと両方が実行されたことを確認します。
+正常終了後は、出力先profileの`menuSetPrefs.mel`にbdのメニュー項目が
+保存されていないことを手動で確認します。従来の
+`test_bd_channel_box_maya.py`は`userSetup.py`を読み込まないため、
+この起動経路の代用にはなりません。
+
 `test_bd_channel_box_order.py`はtransform・jointの優先順、drawOverrideのRGB子、
 残りの属性の相対順、両モードと5フィルターの組合せを検証します。
 drawOverride内ではoverrideEnabledが先頭になることも確認します。

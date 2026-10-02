@@ -19,6 +19,9 @@ bool・float系・enum・stringの複数ノード編集、step操作、表示・
 
 ## 起動と終了
 
+Maya上部の`bd > tools > bdChannelBox`から開けます。スクリプトから開く場合は
+次を実行します。
+
 ```python
 from bd_tools import bd_channel_box
 

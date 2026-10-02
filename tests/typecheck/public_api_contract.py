@@ -9,6 +9,8 @@ import bd_tools
 
 # 公開APIの戻り値型を固定し、IDE補完の退行を検出する
 assert_type(bd_tools.__version__, str)
+assert_type(bd_tools.install_menu(), bool)
+assert_type(bd_tools.uninstall_menu(), None)
 assert_type(bd_tools.reload_package(), ModuleType)
 # utilを含むreload指定でも戻り値型を維持することを確認する
 assert_type(

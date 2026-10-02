@@ -92,3 +92,10 @@ util を既定以外の場所へ置く場合、command line の `-UtilRoot` は�
 この repository は共通 installer を所有しません。配布時に tools と util の
 `bakedanuki/` を共通 root へ重ね、必要に応じて rig も同梱します。各 repository の
 `.mod` が同じ `modules` directory に集まる構成です。
+
+toolsのMaya Module内には`scripts/userSetup.py`を同梱します。
+MayaはModuleの`scripts`を探索し、起動時にそのファイルを実行します。
+このファイルはinteractive時のメニュー登録をdeferred queueへ予約するだけで、
+ユーザー自身の`userSetup.py`やsceneには書き込みません。
+共通installerは、確認を得てMaya.envの`MAYA_MODULE_PATH`を設定します。
+複数のbakedanuki packageを重ねる場合も、それぞれが自分の項目だけを登録します。
