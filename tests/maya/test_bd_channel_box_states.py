@@ -218,7 +218,13 @@ def test_state_input_opens_row_context_menu(
         "表示",
     ]
     assert not any(
-        action.text() == "キーフレーム"
+        action.text()
+        in (
+            "キーフレーム",
+            "ブレイクダウンフレーム",
+            "ミュート",
+            "ミュート解除",
+        )
         for action in row.context_menu.actions()
     )
     assert not any(

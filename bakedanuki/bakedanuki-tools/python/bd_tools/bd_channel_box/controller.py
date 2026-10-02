@@ -617,6 +617,83 @@ class ChannelBoxController(qt.QObject):
             *dict.fromkeys(targets), insertBlend=False, breakdown=breakdown
         )
 
+    @staticmethod
+    def _mute_target(name: str, *, muted: bool) -> str | None:
+        """入力接続があり、指定したミュート状態へ変更できる単一属性を返す。"""
+        selection = om.MSelectionList()
+        try:
+            selection.add(name)
+            plug = selection.getPlug(0)
+        except (RuntimeError, TypeError):
+            return None
+        attribute = plug.attribute()
+        if (
+            plug.isArray
+            or plug.isCompound
+            or not (
+                attribute.hasFn(om.MFn.kNumericAttribute)
+                or attribute.hasFn(om.MFn.kEnumAttribute)
+                or attribute.hasFn(om.MFn.kUnitAttribute)
+            )
+            or not plug.isDestination
+            or not om.MFnAttribute(attribute).writable
+            or om.MFnDependencyNode(plug.node()).isLocked
+        ):
+            return None
+        ancestor = plug
+        while True:
+            if ancestor.isLocked:
+                return None
+            if not ancestor.isChild:
+                break
+            ancestor = ancestor.parent()
+        try:
+            if bool(cmds.mute(plug.name(), query=True)) == muted:
+                return None
+        except (RuntimeError, TypeError):
+            return None
+        return plug.name()
+
+    def set_muted_all_visible(self, *, muted: bool) -> int:
+        """各選択ノードのKeyable／ChannelBox表示属性を一括ミュートする。"""
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        targets: list[str] = []
+        # 画面の検索・表示フィルターではなく各ノード自身の表示フラグで列挙する
+        for node in self.node_names:
+            attributes = inspect_scalar_attributes(node)
+            for path in filter_scalar_attribute_paths(attributes, "visible"):
+                target = self._mute_target(f"{node}.{path}", muted=muted)
+                if target is not None:
+                    targets.append(target)
+        if not targets:
+            return 0
+        cmds.mute(*dict.fromkeys(targets), disable=not muted)
+        return len(targets)
+
+    def set_muted_selected(
+        self, keys: Sequence[tuple[str, str]], *, muted: bool
+    ) -> int:
+        """選択行と対応する全ノードの属性を表示状態に関係なくミュートする。"""
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        targets: list[str] = []
+        for row in self._selected_rows(keys):
+            if not isinstance(row, ChannelRow):
+                continue
+            for node in row.target_names:
+                target = self._mute_target(
+                    f"{node}.{row.attribute.path}", muted=muted
+                )
+                if target is not None:
+                    targets.append(target)
+        if not targets:
+            return 0
+        cmds.mute(*dict.fromkeys(targets), disable=not muted)
+        return len(targets)
+
     def apply_numeric_values(
         self, keys: Sequence[tuple[str, str]], display_value: float
     ) -> bool:

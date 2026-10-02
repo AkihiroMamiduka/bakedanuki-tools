@@ -1492,6 +1492,8 @@ def test_selected_menu_lock_hide_and_alignment(
     assert [menu.title() for menu in selection_menus] == [
         "キーフレーム",
         "ブレイクダウンフレーム",
+        "ミュート",
+        "ミュート解除",
         "コピー",
         "ペースト",
         "Step設定",
@@ -1504,12 +1506,14 @@ def test_selected_menu_lock_hide_and_alignment(
     )
     assert [
         (action.text(), action.isSeparator())
-        for action in row.context_menu.actions()[:7]
+        for action in row.context_menu.actions()[:9]
     ] == [
         ("この値に揃える", False),
         ("", True),
         ("キーフレーム", False),
         ("ブレイクダウンフレーム", False),
+        ("ミュート", False),
+        ("ミュート解除", False),
         ("", True),
         ("コピー", False),
         ("ペースト", False),
@@ -1527,6 +1531,20 @@ def test_selected_menu_lock_hide_and_alignment(
     ] == [
         ("選択属性", "set_breakdown_selected"),
         ("全 Keyable", "set_breakdown_all_keyable"),
+    ]
+    assert [
+        (action.text(), action.objectName())
+        for action in row.mute_menu.actions()
+    ] == [
+        ("選択属性", "mute_selected"),
+        ("全アニメーション属性", "mute_all_animation"),
+    ]
+    assert [
+        (action.text(), action.objectName())
+        for action in row.unmute_menu.actions()
+    ] == [
+        ("選択属性", "unmute_selected"),
+        ("全アニメーション属性", "unmute_all_animation"),
     ]
     lock_menu, display_menu = selection_menus[-2:]
     assert [action.text() for action in lock_menu.actions()] == [
@@ -1788,6 +1806,152 @@ def test_set_key_and_breakdown_convert_existing_key(
     cmds.undo()
     _events()
     assert _has_breakdown("multiA.translateX", 7)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize("muted", (True, False))
+def test_mute_selected_includes_hidden_attributes_and_undoes_together(
+    editor: ChannelBoxWidget, muted: bool
+) -> None:
+    """選択属性はHideでも全選択ノードへ適用し、未接続行を静かに除外する。"""
+    for node in ("multiA", "multiB"):
+        cmds.setKeyframe(f"{node}.translateX", time=1)
+        cmds.setAttr(f"{node}.translateX", keyable=False, channelBox=False)
+    if not muted:
+        cmds.mute("multiA.translateX", "multiB.translateX")
+    editor.controller.set_attribute_filter("all")
+    editor.table_view.select_keys(_keys(editor, "translateX", "translateY"))
+    cmds.flushUndo()
+
+    row = _row(editor, "translateX")
+    action = row.mute_selected_action if muted else row.unmute_selected_action
+    action.trigger()
+    _events()
+    for node in ("multiA", "multiB"):
+        assert cmds.mute(f"{node}.translateX", query=True) is muted
+        assert not cmds.listConnections(
+            f"{node}.translateY", source=True, destination=False, type="mute"
+        )
+    assert (
+        _row(editor, "translateX").input_indicator.input_state == "muted"
+    ) is muted
+    assert not editor.message_label.isVisible()
+    cmds.undo()
+    _events()
+    for node in ("multiA", "multiB"):
+        assert cmds.mute(f"{node}.translateX", query=True) is not muted
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize("muted", (True, False))
+def test_mute_all_uses_visible_flags_independent_of_filter(
+    editor: ChannelBoxWidget, muted: bool
+) -> None:
+    """全アニメーション属性は各ノードの表示フラグで選び、Hideは残す。"""
+    for node in ("multiA", "multiB"):
+        for attribute in ("translateX", "translateY", "translateZ"):
+            cmds.setKeyframe(f"{node}.{attribute}", time=1)
+        cmds.setAttr(f"{node}.translateY", keyable=False, channelBox=True)
+        cmds.setAttr(f"{node}.translateZ", keyable=False, channelBox=False)
+    if not muted:
+        cmds.mute(
+            *(
+                f"{node}.{attribute}"
+                for node in ("multiA", "multiB")
+                for attribute in ("translateX", "translateY", "translateZ")
+            )
+        )
+    editor.controller.set_attribute_filter("keyable")
+    assert not any(
+        row.row.attribute.name in ("translateY", "translateZ")
+        for row in editor.row_widgets
+    )
+    cmds.flushUndo()
+
+    row = _row(editor, "translateX")
+    action = (
+        row.mute_all_animation_action
+        if muted
+        else row.unmute_all_animation_action
+    )
+    action.trigger()
+    _events()
+    for node in ("multiA", "multiB"):
+        assert cmds.mute(f"{node}.translateX", query=True) is muted
+        assert cmds.mute(f"{node}.translateY", query=True) is muted
+        assert cmds.mute(f"{node}.translateZ", query=True) is not muted
+    assert not editor.message_label.isVisible()
+    cmds.undo()
+    _events()
+    for node in ("multiA", "multiB"):
+        assert cmds.mute(f"{node}.translateX", query=True) is not muted
+        assert cmds.mute(f"{node}.translateY", query=True) is not muted
+        assert cmds.mute(f"{node}.translateZ", query=True) is not muted
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_mute_all_without_connections_is_noop(
+    editor: ChannelBoxWidget,
+) -> None:
+    """未接続属性しかない全操作ではmuteノードもUndo項目も作らない。"""
+    cmds.flushUndo()
+    _row(editor, "translateX").mute_all_animation_action.trigger()
+    _events()
+    assert not cmds.ls(type="mute")
+    assert not editor.message_label.isVisible()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_mute_all_covers_visible_noncurve_inputs(
+    editor: ChannelBoxWidget,
+) -> None:
+    """Maya標準同様、表示中なら通常接続とExpressionもミュートする。"""
+    driver = cmds.createNode("transform", name="muteDriver")
+    cmds.connectAttr(f"{driver}.translateX", "multiA.rotateX")
+    cmds.expression(string=f"multiB.rotateX = {driver}.translateY * 2;")
+    cmds.select("multiA", "multiB", replace=True)
+    editor.refresh()
+    cmds.flushUndo()
+
+    _row(editor, "rotateX").mute_all_animation_action.trigger()
+    _events()
+    assert cmds.mute("multiA.rotateX", query=True) is True
+    assert cmds.mute("multiB.rotateX", query=True) is True
+    assert not editor.message_label.isVisible()
+    cmds.undo()
+    _events()
+    assert cmds.listConnections(
+        "multiA.rotateX",
+        source=True,
+        destination=False,
+        plugs=True,
+        skipConversionNodes=True,
+    ) == [f"{driver}.translateX"]
+    assert cmds.mute("multiB.rotateX", query=True) is False
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_unmute_selected_preserves_animated_mute_node(
+    editor: ChannelBoxWidget,
+) -> None:
+    """ミュート状態にキーがある場合は解除してもそのキーを削除しない。"""
+    cmds.setKeyframe("multiA.translateX", time=1)
+    mute_node = cmds.mute("multiA.translateX")[0]
+    cmds.setKeyframe(f"{mute_node}.mute", time=1, value=1)
+    cmds.setKeyframe(f"{mute_node}.mute", time=10, value=1)
+    editor.refresh()
+    cmds.flushUndo()
+
+    _row(editor, "translateX").unmute_selected_action.trigger()
+    _events()
+    assert cmds.mute("multiA.translateX", query=True) is False
+    assert cmds.objExists(mute_node)
+    assert (
+        cmds.keyframe(f"{mute_node}.mute", query=True, keyframeCount=True) == 2
+    )
+    cmds.undo()
+    _events()
+    assert cmds.mute("multiA.translateX", query=True) is True
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 

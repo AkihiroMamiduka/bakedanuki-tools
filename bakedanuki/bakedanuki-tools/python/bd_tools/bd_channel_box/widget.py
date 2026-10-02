@@ -303,6 +303,40 @@ class AttributeRowWidget(qt.QWidget):
         breakdown_actions = cast(_MenuActions, self.breakdown_menu)
         breakdown_actions.addAction(self.set_breakdown_selected_action)
         breakdown_actions.addAction(self.set_breakdown_all_keyable_action)
+        self.mute_menu = qt.QMenu("ミュート", self.context_menu)
+        self.mute_selected_action = qt.QAction("選択属性", self)
+        self.mute_selected_action.setObjectName("mute_selected")
+        self.mute_selected_action.setToolTip(
+            "選択属性の入力接続をミュート（Hide属性も対象）"
+        )
+        self.mute_all_animation_action = qt.QAction(
+            "全アニメーション属性", self
+        )
+        self.mute_all_animation_action.setObjectName("mute_all_animation")
+        self.mute_all_animation_action.setToolTip(
+            "各選択ノードのKeyable／ChannelBox表示属性の入力接続をミュート"
+            "（画面の検索・表示条件に依存しません）"
+        )
+        mute_actions = cast(_MenuActions, self.mute_menu)
+        mute_actions.addAction(self.mute_selected_action)
+        mute_actions.addAction(self.mute_all_animation_action)
+        self.unmute_menu = qt.QMenu("ミュート解除", self.context_menu)
+        self.unmute_selected_action = qt.QAction("選択属性", self)
+        self.unmute_selected_action.setObjectName("unmute_selected")
+        self.unmute_selected_action.setToolTip(
+            "選択属性のミュートを解除（Hide属性も対象）"
+        )
+        self.unmute_all_animation_action = qt.QAction(
+            "全アニメーション属性", self
+        )
+        self.unmute_all_animation_action.setObjectName("unmute_all_animation")
+        self.unmute_all_animation_action.setToolTip(
+            "各選択ノードのKeyable／ChannelBox表示属性のミュートを解除"
+            "（画面の検索・表示条件に依存しません）"
+        )
+        unmute_actions = cast(_MenuActions, self.unmute_menu)
+        unmute_actions.addAction(self.unmute_selected_action)
+        unmute_actions.addAction(self.unmute_all_animation_action)
         self.copy_menu = qt.QMenu("コピー", self.context_menu)
         self.copy_all_values_action = qt.QAction("全属性", self)
         self.copy_all_values_action.setObjectName("copy_all_values")
@@ -360,6 +394,8 @@ class AttributeRowWidget(qt.QWidget):
         self.context_menu.addSeparator()
         self.context_menu.addMenu(self.keyframe_menu)
         self.context_menu.addMenu(self.breakdown_menu)
+        self.context_menu.addMenu(self.mute_menu)
+        self.context_menu.addMenu(self.unmute_menu)
         self.context_menu.addSeparator()
         self.context_menu.addMenu(self.copy_menu)
         self.context_menu.addMenu(self.paste_menu)
@@ -1447,6 +1483,11 @@ class ChannelBoxWidget(qt.QWidget):
                 self.controller.set_keyframes_selected(
                     selected, breakdown=action == "breakdown_selected"
                 )
+            elif action in ("mute_selected", "unmute_selected"):
+                self._clear_message()
+                self.controller.set_muted_selected(
+                    selected, muted=action == "mute_selected"
+                )
             elif action == "copy_selected":
                 self.controller.copy_selected_values(selected)
             elif action == "paste_selected":
@@ -1468,6 +1509,16 @@ class ChannelBoxWidget(qt.QWidget):
         self._clear_message()
         try:
             self.controller.set_keyframes_all_keyable(breakdown=breakdown)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _set_muted_all_visible(self, muted: bool) -> None:
+        """各選択ノードのChannel Box表示属性を一括ミュート・解除する。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.set_muted_all_visible(muted=muted)
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
@@ -1766,6 +1817,22 @@ class ChannelBoxWidget(qt.QWidget):
                             "breakdown_selected",
                             key,
                         )
+                    )
+                    widget.mute_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action, "mute_selected", key
+                        )
+                    )
+                    widget.mute_all_animation_action.triggered.connect(
+                        partial(self._set_muted_all_visible, True)
+                    )
+                    widget.unmute_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action, "unmute_selected", key
+                        )
+                    )
+                    widget.unmute_all_animation_action.triggered.connect(
+                        partial(self._set_muted_all_visible, False)
                     )
                     widget.copy_all_values_action.triggered.connect(
                         self._copy_all_values
