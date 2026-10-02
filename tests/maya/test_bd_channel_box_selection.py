@@ -1477,9 +1477,44 @@ def test_selected_menu_lock_hide_and_alignment(
     assert cmds.getAttr("multiB.translateX") == 9.0
     assert cmds.getAttr("multiB.translateY") == 3.0
     row = _row(editor, "translateX")
+    selection_menus = [
+        submenu
+        for action in row.context_menu.actions()
+        if isinstance(submenu := action.menu(), qt.QMenu)
+    ]
+    assert [menu.title() for menu in selection_menus] == [
+        "コピー",
+        "ペースト",
+        "Step設定",
+        "ロック",
+        "表示",
+    ]
+    assert not any(
+        action.objectName().startswith("selected_")
+        for action in row.context_menu.actions()
+    )
+    lock_menu, display_menu = selection_menus[-2:]
+    assert [action.text() for action in lock_menu.actions()] == [
+        "ロック",
+        "解除",
+    ]
+    assert [action.text() for action in display_menu.actions()] == [
+        "Keyable",
+        "ChannelBox",
+        "Hide",
+    ]
+    assert [action.objectName() for action in lock_menu.actions()] == [
+        "selected_lock",
+        "selected_unlock",
+    ]
+    assert [action.objectName() for action in display_menu.actions()] == [
+        "selected_keyable",
+        "selected_channel_box",
+        "selected_hidden",
+    ]
     lock_action = next(
         action
-        for action in row.context_menu.actions()
+        for action in lock_menu.actions()
         if action.objectName() == "selected_lock"
     )
     lock_action.trigger()

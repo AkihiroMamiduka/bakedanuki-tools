@@ -208,6 +208,38 @@ def test_state_input_opens_row_context_menu(
     _events()
     assert row.context_menu.isVisible()
     assert row.refresh_action in row.context_menu.actions()
+    selection_menus = [
+        submenu
+        for action in row.context_menu.actions()
+        if isinstance(submenu := action.menu(), qt.QMenu)
+    ]
+    assert [menu.title() for menu in selection_menus] == [
+        "ロック",
+        "表示",
+    ]
+    assert not any(
+        action.objectName().startswith("selected_")
+        for action in row.context_menu.actions()
+    )
+    lock_menu, display_menu = selection_menus
+    assert [action.text() for action in lock_menu.actions()] == [
+        "ロック",
+        "解除",
+    ]
+    assert [action.text() for action in display_menu.actions()] == [
+        "Keyable",
+        "ChannelBox",
+        "Hide",
+    ]
+    assert [action.objectName() for action in lock_menu.actions()] == [
+        "selected_lock",
+        "selected_unlock",
+    ]
+    assert [action.objectName() for action in display_menu.actions()] == [
+        "selected_keyable",
+        "selected_channel_box",
+        "selected_hidden",
+    ]
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
     row.context_menu.close()
 

@@ -40,6 +40,9 @@
 
 ### Changed
 
+- bdChannelBoxの属性行の右クリックメニューで、「ロック／解除」を「ロック」、
+  「Keyable／ChannelBox／Hide」を「表示」のサブメニューへ整理する。
+  操作対象・Undo・scene・保存設定の変更はなく、`bd_tools.reload_package()`で反映できる。
 - bdChannelBoxの属性行では、属性名・値・Step・Slider・bool・enum・stringと
   表示／ロック入力欄のどこから右クリックしても、その行の操作メニューを開く。
   一括数値入力中も入力元の行メニューを開き、未確定値はフォーカス移動として確定する。

@@ -1619,19 +1619,26 @@ class ChannelBoxWidget(qt.QWidget):
         if isinstance(widget, AttributeRowWidget):
             menu.addMenu(self.step_settings_menu)
             menu.addSeparator()
-        for action, label in (
-            ("lock", "ロック"),
-            ("unlock", "ロック解除"),
-            ("keyable", "Keyable"),
-            ("channel_box", "ChannelBox"),
-            ("hidden", "Hide"),
+        for title, actions in (
+            ("ロック", (("lock", "ロック"), ("unlock", "解除"))),
+            (
+                "表示",
+                (
+                    ("keyable", "Keyable"),
+                    ("channel_box", "ChannelBox"),
+                    ("hidden", "Hide"),
+                ),
+            ),
         ):
-            item = qt.QAction(label, menu)
-            item.setObjectName(f"selected_{action}")
-            item.triggered.connect(
-                partial(self._run_selected_action, action, key)
-            )
-            cast(_MenuActions, menu).addAction(item)
+            group = qt.QMenu(title, menu)
+            for action, label in actions:
+                item = qt.QAction(label, group)
+                item.setObjectName(f"selected_{action}")
+                item.triggered.connect(
+                    partial(self._run_selected_action, action, key)
+                )
+                cast(_MenuActions, group).addAction(item)
+            menu.addMenu(group)
         menu.aboutToShow.connect(partial(self._prepare_row_menu, widget))
 
     def _rebuild_rows(self) -> None:
