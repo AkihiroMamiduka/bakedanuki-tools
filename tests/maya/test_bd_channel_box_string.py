@@ -122,6 +122,26 @@ def test_string_rows_show_mixed_and_edit_selected_paths_once(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
+def test_string_field_opens_attribute_context_menu(
+    editor: ChannelBoxWidget,
+) -> None:
+    """文字列欄の右クリックは属性操作を開き、値を書き込まない。"""
+    row = _row(editor, "caption")
+    assert isinstance(row.editor, StringLineEdit)
+    position = row.editor.rect().center()
+    event = qt.QtGui.QContextMenuEvent(
+        qt.QtGui.QContextMenuEvent.Reason.Mouse,
+        position,
+        row.editor.mapToGlobal(position),
+    )
+    qt.QApplication.sendEvent(row.editor, event)
+    _events()
+    assert row.context_menu.isVisible()
+    assert cmds.getAttr("channelStringA.caption") == "先頭"
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    row.context_menu.close()
+
+
 def test_string_copy_paste_and_filter_follow_existing_rules(
     editor: ChannelBoxWidget,
 ) -> None:

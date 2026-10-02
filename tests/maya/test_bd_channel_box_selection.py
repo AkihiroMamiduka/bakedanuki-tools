@@ -209,6 +209,51 @@ def _begin_input(
     return focused
 
 
+def test_batch_input_opens_origin_row_menu(
+    editor: ChannelBoxWidget,
+) -> None:
+    """一括入力中の右クリックは元の行メニューを開いて値を確定する。"""
+    selected = _keys(editor, "translateX", "translateY")
+    editor.table_view.select_keys(selected)
+    field = _begin_input(editor, "7")
+    row = _row(editor, "translateX")
+    position = field.rect().center()
+    event = qt.QtGui.QContextMenuEvent(
+        qt.QtGui.QContextMenuEvent.Reason.Mouse,
+        position,
+        field.mapToGlobal(position),
+    )
+    qt.QApplication.sendEvent(field, event)
+    _events()
+    assert row.context_menu.isVisible()
+    assert editor.table_view.selected_keys() == selected
+    assert cmds.getAttr("multiA.translateY") == 7.0
+    assert cmds.getAttr("multiB.translateX") == 7.0
+    row.context_menu.close()
+
+
+def test_locked_value_field_opens_row_context_menu(
+    editor: ChannelBoxWidget,
+) -> None:
+    """入力不能の数値欄からもロック解除などの属性操作を開ける。"""
+    cmds.setAttr("multiA.translateX", lock=True)
+    cmds.setAttr("multiB.translateX", lock=True)
+    _events()
+    row = _row(editor, "translateX")
+    field = _spin(editor, "translateX")
+    assert not field.isEnabled()
+    position = field.rect().center()
+    event = qt.QtGui.QContextMenuEvent(
+        qt.QtGui.QContextMenuEvent.Reason.Mouse,
+        position,
+        field.mapToGlobal(position),
+    )
+    qt.QApplication.sendEvent(field, event)
+    _events()
+    assert row.context_menu.isVisible()
+    row.context_menu.close()
+
+
 def _click(
     widget: qt.QWidget,
     modifiers: qt.Qt.KeyboardModifier = qt.Qt.KeyboardModifier.NoModifier,

@@ -103,6 +103,7 @@ class ChannelTableView(qt.QTableView):
         self._drag_base: tuple[_RowKey, ...] = ()
         self._numeric_editor: qt.QLineEdit | None = None
         self._numeric_keys: tuple[_RowKey, ...] = ()
+        self._numeric_row = -1
         self._disposed = False
 
         # 行を一つのセルへ置き、一覧の余剰幅を既存layoutへ配分する
@@ -294,6 +295,7 @@ class ChannelTableView(qt.QTableView):
         """明示入力だけを確定し、閉じた後で凍結した対象へ通知する。"""
         editor, self._numeric_editor = self._numeric_editor, None
         keys, self._numeric_keys = self._numeric_keys, ()
+        self._numeric_row = -1
         if editor is None:
             return
         entered = editor.text().strip()
@@ -517,9 +519,11 @@ class ChannelTableView(qt.QTableView):
             return False
         self.finish_numeric_edit(commit=True)
         self._numeric_keys = self.selected_keys()
+        self._numeric_row = index
         editor = qt.QLineEdit(self.viewport())
         self._numeric_editor = editor
         editor.setObjectName("channel_batch_numeric_editor")
+        editor.setContextMenuPolicy(qt.Qt.ContextMenuPolicy.NoContextMenu)
         editor.setAlignment(field.alignment())
         cast(_FontEditor, editor).setFont(field.font())
         editor.setText(field.cleanText())
@@ -549,6 +553,19 @@ class ChannelTableView(qt.QTableView):
         watched = object
         kind = event.type()
         if watched is self._numeric_editor:
+            if isinstance(event, qt.QtGui.QContextMenuEvent):
+                # 行外に置いた一括入力欄から元の属性メニューへ通知する
+                if 0 <= self._numeric_row < len(self.rows):
+                    row = self.rows[self._numeric_row].widget
+                    forwarded = qt.QtGui.QContextMenuEvent(
+                        event.reason(),
+                        row.mapFromGlobal(event.globalPos()),
+                        event.globalPos(),
+                        event.modifiers(),
+                    )
+                    qt.QApplication.sendEvent(row, forwarded)
+                event.accept()
+                return True
             if isinstance(event, qt.QtGui.QKeyEvent):
                 if kind == qt.QEvent.Type.KeyPress:
                     if event.key() == qt.Qt.Key.Key_Escape:

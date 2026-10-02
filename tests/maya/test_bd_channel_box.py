@@ -104,6 +104,48 @@ def _open_context_menu(widget: qt.QWidget) -> None:
     _events()
 
 
+@pytest.mark.parametrize(
+    ("name", "surface"),
+    [
+        ("translateX", "value"),
+        ("translateX", "value_text"),
+        ("translateX", "step"),
+        ("translateX", "step_text"),
+        ("weight", "value"),
+        ("weight", "slider"),
+        ("visibility", "editor"),
+        ("mode", "editor"),
+    ],
+)
+def test_attribute_input_opens_row_context_menu(
+    editor: ChannelBoxWidget, name: str, surface: str
+) -> None:
+    """入力部品の種類にかかわらず属性メニューを開き、値は変更しない。"""
+    row = _row(editor, name)
+    target = cast(qt.QWidget, row.editor)
+    if surface in ("value", "value_text", "step", "step_text", "slider"):
+        view = row.editor
+        assert isinstance(view, (FloatSliderSpinBox, FloatValueStepSpinBox))
+        if surface in ("value", "value_text"):
+            target = view.spin_box
+        elif surface == "slider":
+            assert isinstance(view, FloatSliderSpinBox)
+            target = view.slider
+        else:
+            assert isinstance(view, FloatValueStepSpinBox)
+            target = view.step_spin_box
+        if surface.endswith("_text"):
+            line_edit = target.findChild(qt.QLineEdit)
+            assert line_edit is not None
+            target = line_edit
+    cmds.flushUndo()
+    _open_context_menu(cast(qt.QWidget, target))
+    assert row.context_menu.isVisible()
+    assert row.refresh_action in row.context_menu.actions()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    row.context_menu.close()
+
+
 @pytest.fixture
 def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     """異なる値を持つ2ノードを、値を揃えずに表示する。"""

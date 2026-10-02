@@ -131,6 +131,17 @@ class _MenuActions(Protocol):
         ...
 
 
+def _use_row_context_menu(editor: qt.QWidget) -> None:
+    """入力部品の右クリックを属性行へ渡し、値編集は維持する。"""
+    find_children = cast(
+        Callable[[type[qt.QWidget]], list[qt.QWidget]],
+        getattr(editor, "findChildren"),
+    )
+    for widget in (editor, *find_children(qt.QWidget)):
+        if not widget.isWindow():
+            widget.setContextMenuPolicy(qt.Qt.ContextMenuPolicy.NoContextMenu)
+
+
 class _AttributeNameLabel(qt.QLabel):
     """設定モードの長い属性名でも入力列を押し広げない名前欄。"""
 
@@ -321,6 +332,7 @@ class AttributeRowWidget(qt.QWidget):
             single_step,
             wheel_editing_without_focus,
         )
+        _use_row_context_menu(self.editor)
         # 入力グループを固定幅にし、余剰幅は属性名側へ配分する
         self.editor.setFixedWidth(_EDITOR_WIDTH)
         if isinstance(
@@ -343,7 +355,7 @@ class AttributeRowWidget(qt.QWidget):
         self._update_state()
 
     def contextMenuEvent(self, event: qt.QtGui.QContextMenuEvent) -> None:
-        """属性名や行の余白から操作を開き、値欄の標準メニューを維持する。"""
+        """属性行のどこからでも共通の操作メニューを開く。"""
         self.context_menu.popup(event.globalPos())
         event.accept()
 
@@ -584,6 +596,7 @@ class AttributeStateRowWidget(qt.QWidget):
             f"{row.attribute.nice_name} ロック"
         )
         controls.addWidget(self.lock_check_box)
+        _use_row_context_menu(self.editor)
         # 操作部品に必要な幅だけを確保し、属性名へ残りを配分する
         self.editor.setFixedWidth(controls.sizeHint().width())
         layout = qt.QHBoxLayout(self)

@@ -186,6 +186,32 @@ def state_editor(
     file_command(new=True, force=True)
 
 
+@pytest.mark.parametrize("surface", ["display", "lock"])
+def test_state_input_opens_row_context_menu(
+    state_editor: ChannelBoxWidget, surface: str
+) -> None:
+    """状態入力欄からも属性行の操作メニューを開く。"""
+    _states(state_editor)
+    row = _state_row(state_editor)
+    target = (
+        row.display_buttons["keyable"]
+        if surface == "display"
+        else row.lock_check_box
+    )
+    position = target.rect().center()
+    event = qt.QtGui.QContextMenuEvent(
+        qt.QtGui.QContextMenuEvent.Reason.Mouse,
+        position,
+        target.mapToGlobal(position),
+    )
+    qt.QApplication.sendEvent(target, event)
+    _events()
+    assert row.context_menu.isVisible()
+    assert row.refresh_action in row.context_menu.actions()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    row.context_menu.close()
+
+
 def test_mode_switch_only_reads_and_preserves_value_step(
     state_editor: ChannelBoxWidget,
 ) -> None:
