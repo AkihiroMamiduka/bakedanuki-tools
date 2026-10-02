@@ -88,6 +88,7 @@ utilの共通Bindingと一括書込み基盤を明示的に有効化し、値欄
 - [x] Maya本体での利用者による表示確認（2026-10-01）
 - [x] pairBlend・constraint・ロックの専用色を属性名に依存せず追加
 - [x] Driven Key・Expression・Animation Layer・Animation Clip・Muted・Key Altered・Nonkeyableの専用色を追加
+- [x] Maya公式の13状態の表示を利用者が確認（2026-10-02）
 
 ### bdChannelBoxの拡張候補
 
