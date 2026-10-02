@@ -158,6 +158,13 @@ def _keys(
     )
 
 
+def _has_breakdown(path: str, time: float) -> bool:
+    """指定時刻にBreakdownキーがあるかMayaの抽出結果で判定する。"""
+    return bool(
+        cmds.keyframe(path, query=True, time=(time, time), breakdown=True)
+    )
+
+
 def _spin(editor: ChannelBoxWidget, name: str) -> qt.QDoubleSpinBox:
     """数値行の値欄だけを取得し、StepやSliderを区別する。"""
     view = _row(editor, name).editor
@@ -1506,7 +1513,8 @@ def test_selected_menu_lock_hide_and_alignment(
         ("ペースト", False),
     ]
     assert [action.text() for action in row.keyframe_menu.actions()] == [
-        "セット"
+        "キー",
+        "ブレイクダウン",
     ]
     assert [
         (action.text(), action.objectName())
@@ -1514,6 +1522,13 @@ def test_selected_menu_lock_hide_and_alignment(
     ] == [
         ("全 Keyable", "set_key_all_keyable"),
         ("選択属性", "set_key_selected"),
+    ]
+    assert [
+        (action.text(), action.objectName())
+        for action in row.breakdown_menu.actions()
+    ] == [
+        ("全 Keyable", "set_breakdown_all_keyable"),
+        ("選択属性", "set_breakdown_selected"),
     ]
     lock_menu, display_menu = selection_menus[-2:]
     assert [action.text() for action in lock_menu.actions()] == [
@@ -1559,10 +1574,11 @@ def test_selected_menu_lock_hide_and_alignment(
     assert _row(editor, "translateY")
 
 
+@pytest.mark.parametrize("breakdown", (False, True))
 def test_set_key_all_keyable_uses_each_selected_node(
-    editor: ChannelBoxWidget,
+    editor: ChannelBoxWidget, breakdown: bool
 ) -> None:
-    """全Keyableは画面の行選択に依存せず各ノード自身の属性をキーにする。"""
+    """全Keyableは画面の行選択に依存せず各ノード自身へ指定種別を打つ。"""
     for node in ("multiA", "multiB"):
         cmds.addAttr(
             node,
@@ -1581,7 +1597,13 @@ def test_set_key_all_keyable_uses_each_selected_node(
     )
     cmds.flushUndo()
 
-    _row(editor, "translateY").set_key_all_keyable_action.trigger()
+    row = _row(editor, "translateY")
+    action = (
+        row.set_breakdown_all_keyable_action
+        if breakdown
+        else row.set_key_all_keyable_action
+    )
+    action.trigger()
     _events()
     for node in ("multiA", "multiB"):
         for attribute in ("translateY", "hiddenCount"):
@@ -1594,6 +1616,7 @@ def test_set_key_all_keyable_uses_each_selected_node(
                 )
                 == 1
             )
+            assert _has_breakdown(f"{node}.{attribute}", 7) is breakdown
     for node in ("multiA", "multiB"):
         assert not cmds.keyframe(
             f"{node}.translateX",
@@ -1609,10 +1632,11 @@ def test_set_key_all_keyable_uses_each_selected_node(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
+@pytest.mark.parametrize("breakdown", (False, True))
 def test_set_key_selected_skips_unavailable_plugs_silently(
-    editor: ChannelBoxWidget,
+    editor: ChannelBoxWidget, breakdown: bool
 ) -> None:
-    """選択属性は非Keyableも明示指定し、不可属性と通常接続は静かに除外する。"""
+    """選択属性は指定種別で、非Keyableも対象にし不可属性は静かに除外する。"""
     for node in ("multiA", "multiB"):
         cmds.addAttr(node, longName="note", dataType="string")
         cmds.setAttr(f"{node}.note", "memo", type="string")
@@ -1629,7 +1653,13 @@ def test_set_key_selected_skips_unavailable_plugs_silently(
     editor.table_view.select_keys(selected)
     cmds.flushUndo()
 
-    _row(editor, "translateX").set_key_selected_action.trigger()
+    row = _row(editor, "translateX")
+    action = (
+        row.set_breakdown_selected_action
+        if breakdown
+        else row.set_key_selected_action
+    )
+    action.trigger()
     _events()
     for node, attribute in (
         ("multiA", "translateX"),
@@ -1644,6 +1674,7 @@ def test_set_key_selected_skips_unavailable_plugs_silently(
             )
             == 1
         )
+        assert _has_breakdown(f"{node}.{attribute}", 7) is breakdown
     for node, attribute in (
         ("multiB", "translateX"),
         ("multiA", "translateY"),
@@ -1665,10 +1696,11 @@ def test_set_key_selected_skips_unavailable_plugs_silently(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
+@pytest.mark.parametrize("breakdown", (False, True))
 def test_set_key_selected_uses_active_animation_layer(
-    editor: ChannelBoxWidget,
+    editor: ChannelBoxWidget, breakdown: bool
 ) -> None:
-    """選択属性のキーは現在選択中のAnimation Layerへ設定する。"""
+    """選択属性の指定種別は現在選択中のAnimation Layerへ設定する。"""
     layer = cast(str, cmds.animLayer("keyLayer"))
     cmds.animLayer(layer, edit=True, attribute="multiA.translateX")
     cmds.animLayer(layer, edit=True, selected=True)
@@ -1676,7 +1708,13 @@ def test_set_key_selected_uses_active_animation_layer(
     editor.refresh()
     cmds.flushUndo()
 
-    _row(editor, "translateX").set_key_selected_action.trigger()
+    row = _row(editor, "translateX")
+    action = (
+        row.set_breakdown_selected_action
+        if breakdown
+        else row.set_key_selected_action
+    )
+    action.trigger()
     _events()
     curves = (
         cast(
@@ -1690,27 +1728,68 @@ def test_set_key_selected_uses_active_animation_layer(
         cmds.keyframe(curve, query=True, time=(7, 7), keyframeCount=True) == 1
         for curve in curves
     )
+    assert any(_has_breakdown(curve, 7) is breakdown for curve in curves)
     cmds.undo()
     _events()
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
+@pytest.mark.parametrize("breakdown", (False, True))
 def test_set_key_selected_with_no_keyable_targets_is_noop(
-    editor: ChannelBoxWidget,
+    editor: ChannelBoxWidget, breakdown: bool
 ) -> None:
-    """キー不可の選択属性だけなら通知もUndo項目も作らない。"""
+    """キー不可の選択属性だけなら両種別とも通知やUndo項目を作らない。"""
     for node in ("multiA", "multiB"):
         cmds.setAttr(f"{node}.translateX", lock=True)
     _events()
     cmds.flushUndo()
 
-    _row(editor, "translateX").set_key_selected_action.trigger()
+    row = _row(editor, "translateX")
+    action = (
+        row.set_breakdown_selected_action
+        if breakdown
+        else row.set_key_selected_action
+    )
+    action.trigger()
     _events()
     assert not editor.message_label.isVisible()
     for node in ("multiA", "multiB"):
         assert not cmds.keyframe(
             f"{node}.translateX", query=True, keyframeCount=True
         )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_set_key_and_breakdown_convert_existing_key(
+    editor: ChannelBoxWidget,
+) -> None:
+    """現在時刻の既存キーを指定種別へ切り替え、各操作をUndoできる。"""
+    cmds.currentTime(7)
+    cmds.setKeyframe("multiA.translateX")
+    cmds.setAttr("multiB.translateX", lock=True)
+    _events()
+    cmds.flushUndo()
+
+    _row(editor, "translateX").set_breakdown_selected_action.trigger()
+    assert _has_breakdown("multiA.translateX", 7)
+    assert cmds.keyframe(
+        "multiA.translateX", query=True, time=(7, 7), valueChange=True
+    ) == [5.0]
+    assert (
+        cmds.keyframe("multiA.translateX", query=True, keyframeCount=True) == 1
+    )
+    cmds.undo()
+    _events()
+    assert not _has_breakdown("multiA.translateX", 7)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    cmds.setKeyframe("multiA.translateX", breakdown=True)
+    cmds.flushUndo()
+    _row(editor, "translateX").set_key_selected_action.trigger()
+    assert not _has_breakdown("multiA.translateX", 7)
+    cmds.undo()
+    _events()
+    assert _has_breakdown("multiA.translateX", 7)
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 

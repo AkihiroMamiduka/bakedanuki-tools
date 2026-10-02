@@ -579,8 +579,8 @@ class ChannelBoxController(qt.QObject):
             return None
         return plug.name()
 
-    def set_keyframes_all_keyable(self) -> int:
-        """選択ノード自身の全Keyable属性へ、画面の行選択と無関係にキーを打つ。"""
+    def set_keyframes_all_keyable(self, *, breakdown: bool = False) -> int:
+        """選択ノード自身の全Keyable属性へ、指定種別のキーを打つ。"""
         if self._disposed:
             raise RuntimeError("終了済みの画面には入力できません")
         self.state_edit_session.finish()
@@ -593,10 +593,14 @@ class ChannelBoxController(qt.QObject):
                     targets.append(plug)
         if not targets:
             return 0
-        return cmds.setKeyframe(*dict.fromkeys(targets), insertBlend=False)
+        return cmds.setKeyframe(
+            *dict.fromkeys(targets), insertBlend=False, breakdown=breakdown
+        )
 
-    def set_keyframes_selected(self, keys: Sequence[tuple[str, str]]) -> int:
-        """表示中の選択行に対応する全ノードのキー可能属性へキーを打つ。"""
+    def set_keyframes_selected(
+        self, keys: Sequence[tuple[str, str]], *, breakdown: bool = False
+    ) -> int:
+        """表示中の選択行に対応する全ノードへ指定種別のキーを打つ。"""
         self.state_edit_session.finish()
         self._finish_value_edit()
         targets: list[str] = []
@@ -609,7 +613,9 @@ class ChannelBoxController(qt.QObject):
                     targets.append(plug)
         if not targets:
             return 0
-        return cmds.setKeyframe(*dict.fromkeys(targets), insertBlend=False)
+        return cmds.setKeyframe(
+            *dict.fromkeys(targets), insertBlend=False, breakdown=breakdown
+        )
 
     def apply_numeric_values(
         self, keys: Sequence[tuple[str, str]], display_value: float

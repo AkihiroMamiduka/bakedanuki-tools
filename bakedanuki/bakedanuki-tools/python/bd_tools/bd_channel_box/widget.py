@@ -270,7 +270,7 @@ class AttributeRowWidget(qt.QWidget):
         self.align_action.setToolTip("編集可能な対象を基準ノードの値に揃える")
         self.align_action.triggered.connect(self._align_values)
         self.keyframe_menu = qt.QMenu("キーフレーム", self.context_menu)
-        self.set_keyframe_menu = qt.QMenu("セット", self.keyframe_menu)
+        self.set_keyframe_menu = qt.QMenu("キー", self.keyframe_menu)
         self.set_key_all_keyable_action = qt.QAction("全 Keyable", self)
         self.set_key_all_keyable_action.setObjectName("set_key_all_keyable")
         self.set_key_all_keyable_action.setToolTip(
@@ -285,6 +285,25 @@ class AttributeRowWidget(qt.QWidget):
         keyframe_actions.addAction(self.set_key_all_keyable_action)
         keyframe_actions.addAction(self.set_key_selected_action)
         self.keyframe_menu.addMenu(self.set_keyframe_menu)
+        self.breakdown_menu = qt.QMenu("ブレイクダウン", self.keyframe_menu)
+        self.set_breakdown_all_keyable_action = qt.QAction("全 Keyable", self)
+        self.set_breakdown_all_keyable_action.setObjectName(
+            "set_breakdown_all_keyable"
+        )
+        self.set_breakdown_all_keyable_action.setToolTip(
+            "選択ノード自身の全Keyable属性に現在時刻のブレイクダウンを設定"
+        )
+        self.set_breakdown_selected_action = qt.QAction("選択属性", self)
+        self.set_breakdown_selected_action.setObjectName(
+            "set_breakdown_selected"
+        )
+        self.set_breakdown_selected_action.setToolTip(
+            "選択した属性に現在時刻のブレイクダウンを設定"
+        )
+        breakdown_actions = cast(_MenuActions, self.breakdown_menu)
+        breakdown_actions.addAction(self.set_breakdown_all_keyable_action)
+        breakdown_actions.addAction(self.set_breakdown_selected_action)
+        self.keyframe_menu.addMenu(self.breakdown_menu)
         self.copy_menu = qt.QMenu("コピー", self.context_menu)
         self.copy_all_values_action = qt.QAction("全属性", self)
         self.copy_all_values_action.setObjectName("copy_all_values")
@@ -1423,9 +1442,11 @@ class ChannelBoxWidget(qt.QWidget):
         try:
             if action == "align":
                 self.controller.align_selected_values(selected)
-            elif action == "key_selected":
+            elif action in ("key_selected", "breakdown_selected"):
                 self._clear_message()
-                self.controller.set_keyframes_selected(selected)
+                self.controller.set_keyframes_selected(
+                    selected, breakdown=action == "breakdown_selected"
+                )
             elif action == "copy_selected":
                 self.controller.copy_selected_values(selected)
             elif action == "paste_selected":
@@ -1440,13 +1461,13 @@ class ChannelBoxWidget(qt.QWidget):
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
-    def _set_keyframes_all_keyable(self) -> None:
-        """選択ノードの全Keyable属性に現在時刻のキーを設定する。"""
+    def _set_keyframes_all_keyable(self, breakdown: bool = False) -> None:
+        """選択ノードの全Keyable属性に現在時刻の指定種別のキーを設定する。"""
         self.state_sweep.finish()
         self.lock_sweep.finish()
         self._clear_message()
         try:
-            self.controller.set_keyframes_all_keyable()
+            self.controller.set_keyframes_all_keyable(breakdown=breakdown)
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
@@ -1731,10 +1752,20 @@ class ChannelBoxWidget(qt.QWidget):
                         partial(self._apply_step_value, key)
                     )
                     widget.set_key_all_keyable_action.triggered.connect(
-                        self._set_keyframes_all_keyable
+                        partial(self._set_keyframes_all_keyable, False)
                     )
                     widget.set_key_selected_action.triggered.connect(
                         partial(self._run_selected_action, "key_selected", key)
+                    )
+                    widget.set_breakdown_all_keyable_action.triggered.connect(
+                        partial(self._set_keyframes_all_keyable, True)
+                    )
+                    widget.set_breakdown_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action,
+                            "breakdown_selected",
+                            key,
+                        )
                     )
                     widget.copy_all_values_action.triggered.connect(
                         self._copy_all_values
