@@ -9,6 +9,12 @@
 
 ### Added
 
+- bdChannelBoxの接続色へDriven Key、Expression、Animation Layer、
+  Animation Clip（Time Editor）、Muted、Key Altered、Nonkeyableを追加。
+  直結元の実接続、muteの有効状態、現在値とカーブ評価値、keyableフラグで判定する。
+  ロック色を優先し、実接続はtooltipへ残す。scene・保存設定の移行は不要。
+  `MayaPlugInputState`の網羅的な分岐には新状態を追加し、対応する
+  `bakedanuki-util`へ更新してください。
 - bdChannelBoxの接続色へpairBlendの淡い緑、constraintの淡い青を追加。
   属性自身かcompound親へ直結するノード型で判定し、属性名には依存しない。
   自身または親がロックされた場合は青みのある灰色を優先し、元の接続状態は

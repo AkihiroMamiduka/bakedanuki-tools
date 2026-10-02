@@ -89,8 +89,10 @@ bd_channel_box.show()
 bool は属性名の右に置く CheckBox です。対応する既存アニメーション属性を編集すると、
 現在時刻のキーを追加・更新します。未接続属性は通常の値設定のままです。
 属性名と値欄の間の帯で、現在キー（赤）・アニメーション中のキーなし（淡い赤）・
-pairBlend（淡い緑）・constraint（淡い青）・その他の入力接続（淡い黄）・
-ロック（青みのある灰色）を確認できます。未接続の帯はMayaの通常背景色です。
+Key Altered（淡い桃）・Driven Key（青）・Expression（紫）・
+Animation Layer（青緑）・Animation Clip（橙）・Muted（茶）・
+Nonkeyable（灰色）も確認できます。pairBlend、constraint、その他の入力接続、
+ロックにも専用色を使い、キー設定可能な未接続属性はMayaの通常背景色です。
 ロックや未対応の入力接続は表示専用です。対象範囲は[値編集の仕様](bakedanuki/bakedanuki-tools/docs/bd_channel_box.md#アニメーション属性の値編集)を参照してください。
 enumはComboBoxで項目名を表示し、整数値と項目名の対応が一致する対象へ一括適用します。
 定義不一致の除外理由はtooltipで確認できます。未定義の現在値は自動修正しません。

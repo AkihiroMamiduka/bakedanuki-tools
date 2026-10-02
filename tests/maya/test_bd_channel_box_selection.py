@@ -473,6 +473,79 @@ def test_indicator_tracks_equal_value_keys_time_lock_and_selection(
     assert cmds.getAttr("multiA.translateX") == 5
 
 
+def test_additional_maya_input_colors_follow_actual_plug_states(
+    editor: ChannelBoxWidget,
+) -> None:
+    """追加した七種の状態を実接続と現在値から色分けする。"""
+    cmds.select("multiA", replace=True)
+    cmds.currentTime(1)
+    cmds.setKeyframe("multiA.scaleX", time=1, value=1)
+    cmds.setKeyframe("multiA.scaleX", time=10, value=2)
+    cmds.timeEditorComposition("ProbeComposition", createTrack=True)
+    cmds.timeEditorClip(
+        "ProbeClip",
+        addSelectedObjects=True,
+        type=["animCurveTU"],
+        track="ProbeComposition:0",
+    )
+    driver = cmds.createNode("transform")
+    cmds.addAttr(
+        driver, longName="control", attributeType="double", keyable=True
+    )
+    cmds.setDrivenKeyframe(
+        "multiA.translateX", currentDriver=driver + ".control", value=5
+    )
+    cmds.expression(string=f"multiA.translateY = {driver}.translateY * 2;")
+    cmds.setKeyframe("multiA.translateZ", time=1, value=1)
+    cmds.mute("multiA.translateZ")
+    layer = cast(
+        str, cmds.animLayer("ProbeLayer", attribute=["multiA.rotateZ"])
+    )
+    cmds.setKeyframe("multiA.rotateZ", time=1, value=5, animLayer=layer)
+    cmds.setAttr("multiA.rotateY", keyable=False, channelBox=True)
+    cmds.setKeyframe("multiA.scaleY", time=1, value=2)
+    _set_value("multiA.scaleY", 5)
+    cmds.select("multiA", replace=True)
+    _events()
+
+    expected = (
+        ("translateX", "driven_key", "#5099DA"),
+        ("translateY", "expression", "#CBA5F1"),
+        ("translateZ", "muted", "#BFA182"),
+        ("rotateZ", "animation_layer", "#4DB6AC"),
+        ("rotateY", "nonkeyable", "#949494"),
+        ("scaleX", "animation_clip", "#FFCC80"),
+        ("scaleY", "key_altered", "#FDCBC4"),
+    )
+    for name, state, color in expected:
+        row = _row(editor, name)
+        assert row.row.binding.target_states[0].input_state == state, (
+            name,
+            row.row.binding.target_states,
+            cmds.listConnections(
+                "multiA." + name, source=True, destination=False, plugs=True
+            ),
+            cmds.ls(selection=True),
+        )
+        assert row.input_indicator.input_state == state
+        assert _indicator_color(row) == color
+        background = (
+            row.input_indicator.palette()
+            .color(qt.QPalette.ColorRole.Window)
+            .name()
+            .upper()
+        )
+        assert _indicator_color(row, "top") == background
+        assert _indicator_color(row, "bottom") == background
+
+    cmds.setAttr("multiA.translateX", lock=True)
+    _events()
+    row = _row(editor, "translateX")
+    assert row.row.binding.target_states[0].input_state == "driven_key"
+    assert row.input_indicator.input_state == "locked"
+    assert _indicator_color(row) == "#5C6874"
+
+
 def test_rows_use_current_viewport_after_host_replacement(
     editor: ChannelBoxWidget,
 ) -> None:

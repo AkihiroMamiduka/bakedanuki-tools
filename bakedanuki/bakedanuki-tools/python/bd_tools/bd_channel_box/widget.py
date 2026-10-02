@@ -58,8 +58,15 @@ _INPUT_STATE_WIDTH = 6
 _INPUT_STATE_VERTICAL_INSET = 1
 _IndicatorState = MayaPlugInputState | Literal["locked"]
 _INPUT_STATE_COLORS: dict[_IndicatorState, str] = {
+    "nonkeyable": "#949494",
     "keyed": "#CD2729",
     "animated": "#DD727A",
+    "key_altered": "#FDCBC4",
+    "driven_key": "#5099DA",
+    "expression": "#CBA5F1",
+    "animation_layer": "#4DB6AC",
+    "animation_clip": "#FFCC80",
+    "muted": "#BFA182",
     "pair_blend": "#ACF1AC",
     "constraint": "#A3CBF0",
     "connected": "#F1F1A5",
@@ -67,8 +74,15 @@ _INPUT_STATE_COLORS: dict[_IndicatorState, str] = {
 }
 _INPUT_STATE_LABELS: dict[MayaPlugInputState, str] = {
     "unconnected": "入力接続なし",
+    "nonkeyable": "入力接続なし・キー設定不可",
     "keyed": "現在時刻にキーあり",
     "animated": "アニメーションあり・現在時刻にキーなし",
+    "key_altered": "キーの評価値と現在値が異なります",
+    "driven_key": "Driven Keyの入力接続あり",
+    "expression": "Expressionの入力接続あり",
+    "animation_layer": "Animation Layerの入力接続あり",
+    "animation_clip": "Animation Clipの入力接続あり",
+    "muted": "入力接続がミュートされています",
     "pair_blend": "pairBlendの入力接続あり",
     "constraint": "constraintの入力接続あり",
     "connected": "その他の入力接続あり",
@@ -468,8 +482,8 @@ class AttributeRowWidget(qt.QWidget):
                 details.append("ロック状態は選択ノード間で混在")
         if not isinstance(binding, MayaStringPlugsBinding):
             details.append(
-                "アニメーション付きの編集対象は、値の変更時に現在時刻へ"
-                "キーを設定します"
+                "編集可能な通常時間カーブ接続では、値の変更時に"
+                "現在時刻へキーを設定します"
             )
         if binding.is_mixed:
             details.append(

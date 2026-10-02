@@ -2438,6 +2438,63 @@ class _MayaSmokeSession:
         self._capture("39-input-connection-colors.png")
         self.steps.append("input_connection_and_lock_colors")
 
+        # 特殊な駆動元を一つのtransformへ置いて、新しい色を実画面で照合する
+        target = cmds.createNode("transform", name="bdChannelBoxSpecialColors")
+        cmds.select(target, replace=True)
+        cmds.currentTime(1)
+        cmds.setKeyframe(target + ".scaleX", time=1, value=1)
+        cmds.setKeyframe(target + ".scaleX", time=10, value=2)
+        cmds.timeEditorComposition("ProbeComposition", createTrack=True)
+        cmds.timeEditorClip(
+            "ProbeClip",
+            addSelectedObjects=True,
+            type=["animCurveTU"],
+            track="ProbeComposition:0",
+        )
+        driver = cmds.createNode("transform", name="bdChannelBoxSpecialDriver")
+        cmds.addAttr(
+            driver, longName="control", attributeType="double", keyable=True
+        )
+        cmds.setDrivenKeyframe(
+            target + ".translateX",
+            currentDriver=driver + ".control",
+            value=5,
+        )
+        cmds.expression(
+            string=f"{target}.translateY = {driver}.translateY * 2;"
+        )
+        cmds.setKeyframe(target + ".translateZ", time=1, value=1)
+        cmds.mute(target + ".translateZ")
+        layer = cmds.animLayer("ProbeLayer", attribute=[target + ".rotateZ"])
+        cmds.setKeyframe(target + ".rotateZ", time=1, value=5, animLayer=layer)
+        cmds.setAttr(target + ".rotateY", keyable=False, channelBox=True)
+        cmds.setKeyframe(target + ".scaleY", time=1, value=2)
+        cmds.setAttr(target + ".scaleY", 5)
+        cmds.select(target, replace=True)
+        self._flush_gui()
+        for path, color in (
+            ("translate.translateX", "#5099DA"),
+            ("translate.translateY", "#CBA5F1"),
+            ("translate.translateZ", "#BFA182"),
+            ("rotate.rotateZ", "#4DB6AC"),
+            ("rotate.rotateY", "#949494"),
+            ("scale.scaleX", "#FFCC80"),
+            ("scale.scaleY", "#FDCBC4"),
+        ):
+            indicator = self._row(path).input_indicator
+            image = indicator.grab().toImage()
+            actual = (
+                image.pixelColor(image.width() // 2, image.height() // 2)
+                .name()
+                .upper()
+            )
+            if actual != color:
+                raise AssertionError(
+                    f"特殊入力の帯色が不正です: {path}: {actual} != {color}"
+                )
+        self._capture("40-special-input-colors.png")
+        self.steps.append("special_input_colors")
+
     def _finish(self) -> None:
         """すべての操作結果を保存し、検証専用Mayaを終了する。"""
         from bd_tools import bd_channel_box

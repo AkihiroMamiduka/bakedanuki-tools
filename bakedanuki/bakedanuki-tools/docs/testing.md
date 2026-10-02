@@ -133,6 +133,8 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 - `39-input-connection-colors.png`: 現在キー・現在キーなし・その他の入力接続・
   pairBlend・constraint・ロックをMaya本体で描画した画像。
   帯の中央画素と通常背景色、上下1pxの余白を照合する。
+- `40-special-input-colors.png`: Driven Key・Expression・Muted・Animation Layer・
+  Nonkeyable・Animation Clip・Key Alteredを実接続で描画した画像。
 - `result-restart.json`、`clipboard-original.json`: 別Maya processでのOSクリップボード読取り結果と、
   検証後に復元する元のMIME data。
 - `progress.json`: 実行中の段階と完了済みの操作。

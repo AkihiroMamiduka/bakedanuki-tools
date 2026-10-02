@@ -504,19 +504,28 @@ Windowの終了・reload・Maya再起動後も復元します。sceneとUndo履�
 | --- | --- | --- |
 | 現在時刻にキーあり | `#CD2729` | 通常の時間カーブが直接接続され、現在時刻にキーがある |
 | アニメーションあり・現在キーなし | `#DD727A` | 同じカーブが接続され、現在時刻にキーがない |
+| Key Altered | `#FDCBC4` | 現在のplug値が通常時間カーブの現在時刻の評価値と異なる |
+| Driven Key | `#5099DA` | unitless入力のアニメーションカーブが直結している |
+| Expression | `#CBA5F1` | expressionノードが直結している |
+| Animation Layer | `#4DB6AC` | animLayerへ接続されたanimBlendNodeが直結している |
+| Animation Clip | `#FFCC80` | Time EditorのtimeEditorInterpolatorが直結している |
+| Muted | `#BFA182` | 直結するmuteノードのmuteが有効 |
 | pairBlend接続 | `#ACF1AC` | 自身またはcompound親へpairBlendが直結している |
 | constraint接続 | `#A3CBF0` | 自身またはcompound親へconstraint系ノードが直結している |
-| その他の入力接続あり | `#F1F1A5` | 直結元が上記以外の入力。SDK、Animation Layer、変換ノード経由の入力など |
-| 入力接続なし | Mayaの通常背景色 | 入力接続がない |
+| その他の入力接続あり | `#F1F1A5` | 直結元が上記以外の入力。演算ノード経由の入力など |
+| Nonkeyable | `#949494` | 入力接続がなく、keyableが無効 |
+| 入力接続なし | Mayaの通常背景色 | 入力接続がなく、keyableが有効 |
 | ロック | `#5C6874` | 自身またはcompound親がロックされている |
 
 キーの判定はサブフレームも含めて現在時刻に厳密に一致するキーを対象とします。
+Key Alteredは現在時刻だけで比較し、別時刻を指定した照会ではキー有無を返します。
+muteを解除した際はその入力元を分類し直します。Time Editor全体のミュートなどで
+実接続が外れた場合はAnimation Clip色を表示しません。
 接続種類はアトリビュート名でなく直結元ノードの型で判定します。ロック色を最優先し、
 ロック中も元の接続状態を保持してtooltipへ示すため、解除すると接続色へ戻ります。
 帯は読み取り専用の補助表示です。referenceなどによる編集可否は色分けしません。
 複数ノードでは基準ノードの色を表示し、接続・ロックが混在する場合はtooltipへ示します。
 時刻移動、キーの追加・削除、接続・ロックの変更、Undo／Redoに追従します。
-Layer・SDKなどの固有色は次の段階で扱います。
 
 ### アニメーション属性の値編集
 
@@ -1525,7 +1534,7 @@ Maya本体での今回の画面操作確認は未実施です。反映にはtool
 
 4状態を値入力可否と分離して表示します。未接続は通常背景色とし、接続色の上下に
 各1pxの余白を設けます。複数ノード時は基準ノードの帯色を採用し、状態の混在を
-tooltipに記載します。Layer・SDK・constraintの固有色は次の段階です。
+tooltipに記載します。この時点ではLayer・SDK・constraintの固有色は対象外でした。
 
 | 確認対象 | 結果 |
 | --- | --- |
@@ -1538,3 +1547,20 @@ Maya 2025本体の画像と結果は検証環境の
 `%TEMP%/bd-channel-box-maya2025-r7moiugg`にあります。操作と撮影は成功しましたが、
 既知のMaya本体終了待ちタイムアウトによりrunnerの終了codeは1です。
 Maya 2026 / 2027本体の画面操作は実施していません。
+
+### 特殊な入力接続とキー状態の色帯（2026-10-01）
+
+Driven Key、Expression、Animation Layer、Animation Clip、Muted、Key Altered、
+Nonkeyableを追加しました。実接続と現在値から判定し、ロックが重なると従来どおり
+ロック色を優先します。Maya 2025本体で七色と帯の表示を撮影・画素照合しました。
+
+| 確認対象 | 結果 |
+| --- | --- |
+| utilの`verify.cmd` | Black、Maya 2025～2027のPyrightとUI test、Maya 2025の全pytestに成功 |
+| toolsのMaya 2025 / 2026 runtime test | 各207件成功 |
+| toolsのMaya 2027 runtime test | 新しい色帯を含む206件成功。既知の20文字入力欄幅testだけ117px + 4px > 116pxで失敗 |
+| Maya 2025本体の画面操作 | `result.json`は`success: true`。七色の中央画素を照合し、`40-special-input-colors.png`を保存 |
+
+画面テストの結果と画像は検証環境の
+`%TEMP%/bd-channel-box-maya2025-9mfszzew`にあります。操作と撮影は成功しましたが、
+既知のMaya本体終了待ちタイムアウトによりrunnerの終了codeは1です。
