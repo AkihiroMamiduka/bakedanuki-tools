@@ -15,6 +15,7 @@ from maya.api import OpenMayaAnim as oma
 from bd_util.maya.node.inspection import (
     ScalarAttributeDisplayFilter,
     ScalarAttributeInfo,
+    ScalarAttributeKind,
     filter_scalar_attribute_paths,
     inspect_scalar_attributes,
     matches_scalar_attribute_display_filter,
@@ -106,6 +107,33 @@ class ChannelStateRow:
     target_names: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class _AnimationCurveSource:
+    """コピー元ノードの選択順と正式属性パスを保持する。"""
+
+    node_index: int
+    path: str
+    kind: ScalarAttributeKind
+
+
+@dataclass(frozen=True)
+class _CopiedAnimationCurve:
+    """Mayaのキー用クリップボード内の曲線を属性へ対応付ける。"""
+
+    node_index: int
+    path: str
+    item_index: int
+
+
+@dataclass(frozen=True)
+class _AnimationCurveCopy:
+    """コピー時の曲線とノード順をシーン変更後も保持する。"""
+
+    clipboard: oma.MAnimCurveClipboard
+    node_count: int
+    curves: tuple[_CopiedAnimationCurve, ...]
+
+
 class ChannelBoxController(qt.QObject):
     """選択・属性構成の変更時だけ入力行を組み直す。"""
 
@@ -140,6 +168,7 @@ class ChannelBoxController(qt.QObject):
             self, chunk_name="EditSelectedAttributes"
         )
         self._value_clipboard = MayaScalarValueClipboard()
+        self._animation_curve_copy: _AnimationCurveCopy | None = None
         self.state_edit_session.finished.connect(self._finish_state_edit)
         self._filter_refresh_pending = False
         self._events = MayaCallbackRegistry(self)
@@ -693,6 +722,246 @@ class ChannelBoxController(qt.QObject):
             return 0
         cmds.mute(*dict.fromkeys(targets), disable=not muted)
         return len(targets)
+
+    def can_paste_animation_curves(self) -> bool:
+        """この画面でコピーしたアニメーションカーブがあるか返す。"""
+        return self._animation_curve_copy is not None
+
+    def _copy_animation_curves(
+        self, sources: Sequence[_AnimationCurveSource]
+    ) -> int:
+        """対象曲線をMayaの二つのキー用クリップボードへコピーする。"""
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        selected: list[_AnimationCurveSource] = []
+        for source in dict.fromkeys(sources):
+            name = f"{self.node_names[source.node_index]}.{source.path}"
+            if source.kind == "string":
+                continue
+            try:
+                if cmds.keyframe(name, query=True, keyframeCount=True):
+                    selected.append(source)
+            except (RuntimeError, TypeError):
+                continue
+        if not selected:
+            return 0
+
+        names = tuple(
+            f"{self.node_names[source.node_index]}.{source.path}"
+            for source in selected
+        )
+        api_clipboard = oma.MAnimCurveClipboard.theAPIClipboard
+        previous = oma.MAnimCurveClipboard()
+        previous.set(api_clipboard)
+        undo_enabled = bool(cmds.undoInfo(query=True, state=True))
+        # 読み取り操作でsceneのUndo履歴を増やさず、Maya標準のキー用clipboardも更新する
+        cmds.undoInfo(stateWithoutFlush=False)
+        try:
+            count = cmds.copyKey(
+                *names,
+                animation="objects",
+                clipboard="api",
+                hierarchy="none",
+                shape=False,
+            )
+            if not count:
+                return 0
+            snapshot = oma.MAnimCurveClipboard()
+            snapshot.set(api_clipboard)
+            known = {
+                (
+                    self.node_names[source.node_index].lstrip("|"),
+                    source.path,
+                ): source
+                for source in selected
+            }
+            copied: list[_CopiedAnimationCurve] = []
+            for index, item in enumerate(snapshot.clipboardItems()):
+                source = known.get(
+                    (item.nodeName.lstrip("|"), item.fullAttributeName)
+                )
+                if source is not None:
+                    copied.append(
+                        _CopiedAnimationCurve(
+                            source.node_index,
+                            source.path,
+                            index,
+                        )
+                    )
+            if not copied:
+                return 0
+            native_count = cmds.copyKey(
+                *names,
+                animation="objects",
+                clipboard="anim",
+                hierarchy="none",
+                shape=False,
+            )
+            if native_count != count:
+                raise RuntimeError(
+                    "Mayaのキー用clipboardへコピーできませんでした"
+                )
+        finally:
+            cmds.undoInfo(stateWithoutFlush=undo_enabled)
+            api_clipboard.set(previous)
+
+        # キーを持つコピー元だけでノード順を詰め、次の貼り付けへ保持する
+        source_indices = tuple(
+            index
+            for index in range(len(self.node_names))
+            if any(curve.node_index == index for curve in copied)
+        )
+        compact_indices = {
+            source_index: index
+            for index, source_index in enumerate(source_indices)
+        }
+        self._animation_curve_copy = _AnimationCurveCopy(
+            snapshot,
+            len(source_indices),
+            tuple(
+                _CopiedAnimationCurve(
+                    compact_indices[curve.node_index],
+                    curve.path,
+                    curve.item_index,
+                )
+                for curve in copied
+            ),
+        )
+        return len(copied)
+
+    def copy_animation_curves_selected(
+        self, keys: Sequence[tuple[str, str]]
+    ) -> int:
+        """選択行と対応する各選択ノードの全時間の曲線をコピーする。"""
+        sources = tuple(
+            _AnimationCurveSource(
+                self.node_names.index(node),
+                row.attribute.path,
+                row.attribute.kind,
+            )
+            for row in self._selected_rows(keys)
+            if isinstance(row, ChannelRow)
+            for node in row.target_names
+        )
+        return self._copy_animation_curves(sources)
+
+    def copy_animation_curves_all_visible(self) -> int:
+        """各選択ノードのKeyable／ChannelBox表示属性の曲線をコピーする。"""
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        sources = tuple(
+            _AnimationCurveSource(index, info.path, info.kind)
+            for index, node in enumerate(self.node_names)
+            for info in inspect_scalar_attributes(node)
+            if info.keyable or info.channel_box
+        )
+        return self._copy_animation_curves(sources)
+
+    def _animation_paste_targets(
+        self, keys: Sequence[tuple[str, str]] | None
+    ) -> tuple[tuple[int, str], ...]:
+        """ノード順と正式pathを保ち、型によらず貼り付け先を決める。"""
+        copied = self._animation_curve_copy
+        if copied is None or not self.node_names:
+            return ()
+        if copied.node_count != 1 and copied.node_count != len(
+            self.node_names
+        ):
+            raise ValueError(
+                "複数ノードのカーブは、同じ数の選択ノードへ貼り付けてください"
+            )
+        selected_rows = self._selected_rows(keys) if keys is not None else None
+        selected_paths = (
+            tuple(
+                row.attribute.path
+                for row in selected_rows
+                if isinstance(row, ChannelRow)
+            )
+            if selected_rows is not None
+            else None
+        )
+        targets: list[tuple[int, str]] = []
+        for destination_index, node in enumerate(self.node_names):
+            source_index = 0 if copied.node_count == 1 else destination_index
+            source_curves = tuple(
+                curve
+                for curve in copied.curves
+                if curve.node_index == source_index
+            )
+            # 行の値編集対象から外れた異種型ノードも、曲線操作では個別に調べる
+            available_paths = {
+                info.path for info in inspect_scalar_attributes(node)
+            }
+            if selected_paths is not None:
+                available_paths.intersection_update(selected_paths)
+            for curve in source_curves:
+                paths = (
+                    selected_paths
+                    if selected_paths is not None and len(source_curves) == 1
+                    else (curve.path,)
+                )
+                for path in paths:
+                    if path not in available_paths:
+                        continue
+                    target = self._keyframe_plug(f"{node}.{path}")
+                    if target is not None:
+                        targets.append((curve.item_index, target))
+        return tuple(dict.fromkeys(targets))
+
+    def _paste_animation_curves(
+        self, keys: Sequence[tuple[str, str]] | None
+    ) -> int:
+        """各曲線だけをMayaのキー用clipboardへ移し、現在時刻へ一括貼付する。"""
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        targets = self._animation_paste_targets(keys)
+        copied = self._animation_curve_copy
+        if not targets or copied is None:
+            return 0
+        api_clipboard = oma.MAnimCurveClipboard.theAPIClipboard
+        previous = oma.MAnimCurveClipboard()
+        previous.set(api_clipboard)
+        items = copied.clipboard.clipboardItems()
+        current_time = cmds.currentTime(query=True)
+        pasted = 0
+        # 複数曲線の順序任せの割当を避け、各曲線を対応済みの一属性へ貼る
+        cmds.undoInfo(openChunk=True, chunkName="PasteAnimationCurves")
+        try:
+            for item_index, target in targets:
+                source = items[item_index]
+                item = oma.MAnimCurveClipboardItem()
+                item.setAnimCurve(source.animCurve)
+                item.setNameInfo(
+                    source.nodeName,
+                    source.fullAttributeName,
+                    source.leafAttributeName,
+                )
+                item.setAddressingInfo(0, 0, 0)
+                api_clipboard.set([item])
+                pasted += cmds.pasteKey(
+                    target,
+                    animation="objects",
+                    clipboard="api",
+                    time=(current_time, current_time),
+                    connect=True,
+                    option="insert",
+                )
+        finally:
+            cmds.undoInfo(closeChunk=True)
+            api_clipboard.set(previous)
+        return pasted
+
+    def paste_animation_curves_same_attributes(self) -> int:
+        """コピー元と同じ正式属性パスへ曲線を貼り付ける。"""
+        return self._paste_animation_curves(None)
+
+    def paste_animation_curves_to_selected(
+        self, keys: Sequence[tuple[str, str]]
+    ) -> int:
+        """一曲線は型を問わず選択属性へ、複数曲線は同じパスへ貼る。"""
+        return self._paste_animation_curves(keys)
 
     def apply_numeric_values(
         self, keys: Sequence[tuple[str, str]], display_value: float

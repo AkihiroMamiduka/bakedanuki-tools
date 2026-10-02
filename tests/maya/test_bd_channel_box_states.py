@@ -224,6 +224,8 @@ def test_state_input_opens_row_context_menu(
             "ブレイクダウンフレーム",
             "ミュート",
             "ミュート解除",
+            "アニメーションカーブ：コピー",
+            "アニメーションカーブ：ペースト",
         )
         for action in row.context_menu.actions()
     )

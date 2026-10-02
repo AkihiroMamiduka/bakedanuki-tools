@@ -337,6 +337,46 @@ class AttributeRowWidget(qt.QWidget):
         unmute_actions = cast(_MenuActions, self.unmute_menu)
         unmute_actions.addAction(self.unmute_selected_action)
         unmute_actions.addAction(self.unmute_all_animation_action)
+        self.animation_copy_menu = qt.QMenu(
+            "アニメーションカーブ：コピー", self.context_menu
+        )
+        self.animation_copy_selected_action = qt.QAction("選択属性", self)
+        self.animation_copy_selected_action.setObjectName(
+            "animation_copy_selected"
+        )
+        self.animation_copy_selected_action.setToolTip(
+            "選択属性の全時間のカーブをMayaのキー用clipboardへコピー"
+        )
+        self.animation_copy_all_action = qt.QAction(
+            "全アニメーション属性", self
+        )
+        self.animation_copy_all_action.setObjectName("animation_copy_all")
+        self.animation_copy_all_action.setToolTip(
+            "各選択ノードのKeyable／ChannelBox表示属性のカーブをコピー"
+        )
+        animation_copy_actions = cast(_MenuActions, self.animation_copy_menu)
+        animation_copy_actions.addAction(self.animation_copy_selected_action)
+        animation_copy_actions.addAction(self.animation_copy_all_action)
+        self.animation_paste_menu = qt.QMenu(
+            "アニメーションカーブ：ペースト", self.context_menu
+        )
+        self.animation_paste_same_action = qt.QAction(
+            "コピー元と同じ属性", self
+        )
+        self.animation_paste_same_action.setObjectName("animation_paste_same")
+        self.animation_paste_same_action.setToolTip(
+            "コピー元と同じ正式属性pathへ現在時刻からカーブを挿入"
+        )
+        self.animation_paste_selected_action = qt.QAction("選択属性", self)
+        self.animation_paste_selected_action.setObjectName(
+            "animation_paste_selected"
+        )
+        self.animation_paste_selected_action.setToolTip(
+            "一曲線は型を問わず選択属性へ、複数曲線は同じ正式pathへ挿入"
+        )
+        animation_paste_actions = cast(_MenuActions, self.animation_paste_menu)
+        animation_paste_actions.addAction(self.animation_paste_same_action)
+        animation_paste_actions.addAction(self.animation_paste_selected_action)
         self.copy_menu = qt.QMenu("コピー", self.context_menu)
         self.copy_all_values_action = qt.QAction("全属性", self)
         self.copy_all_values_action.setObjectName("copy_all_values")
@@ -396,6 +436,9 @@ class AttributeRowWidget(qt.QWidget):
         self.context_menu.addMenu(self.breakdown_menu)
         self.context_menu.addMenu(self.mute_menu)
         self.context_menu.addMenu(self.unmute_menu)
+        self.context_menu.addSeparator()
+        self.context_menu.addMenu(self.animation_copy_menu)
+        self.context_menu.addMenu(self.animation_paste_menu)
         self.context_menu.addSeparator()
         self.context_menu.addMenu(self.copy_menu)
         self.context_menu.addMenu(self.paste_menu)
@@ -1488,6 +1531,12 @@ class ChannelBoxWidget(qt.QWidget):
                 self.controller.set_muted_selected(
                     selected, muted=action == "mute_selected"
                 )
+            elif action == "animation_copy_selected":
+                self._clear_message()
+                self.controller.copy_animation_curves_selected(selected)
+            elif action == "animation_paste_selected":
+                self._clear_message()
+                self.controller.paste_animation_curves_to_selected(selected)
             elif action == "copy_selected":
                 self.controller.copy_selected_values(selected)
             elif action == "paste_selected":
@@ -1519,6 +1568,26 @@ class ChannelBoxWidget(qt.QWidget):
         self._clear_message()
         try:
             self.controller.set_muted_all_visible(muted=muted)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _copy_animation_curves_all_visible(self) -> None:
+        """各選択ノードのChannel Box表示属性の全時間の曲線をコピーする。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.copy_animation_curves_all_visible()
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _paste_animation_curves_same_attributes(self) -> None:
+        """コピー元と同じ正式属性パスへ曲線を貼り付ける。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.paste_animation_curves_same_attributes()
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
@@ -1684,6 +1753,17 @@ class ChannelBoxWidget(qt.QWidget):
             has_nodes = bool(self.controller.node_names)
             has_selection = bool(selected)
             can_paste = has_nodes and self.controller.can_paste_values()
+            can_paste_animation = (
+                has_nodes and self.controller.can_paste_animation_curves()
+            )
+            widget.animation_copy_selected_action.setEnabled(
+                has_nodes and has_selection
+            )
+            widget.animation_copy_all_action.setEnabled(has_nodes)
+            widget.animation_paste_same_action.setEnabled(can_paste_animation)
+            widget.animation_paste_selected_action.setEnabled(
+                can_paste_animation and has_selection
+            )
             widget.copy_all_values_action.setEnabled(has_nodes)
             widget.copy_selected_values_action.setEnabled(
                 has_nodes and has_selection
@@ -1833,6 +1913,26 @@ class ChannelBoxWidget(qt.QWidget):
                     )
                     widget.unmute_all_animation_action.triggered.connect(
                         partial(self._set_muted_all_visible, False)
+                    )
+                    widget.animation_copy_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action,
+                            "animation_copy_selected",
+                            key,
+                        )
+                    )
+                    widget.animation_copy_all_action.triggered.connect(
+                        self._copy_animation_curves_all_visible
+                    )
+                    widget.animation_paste_same_action.triggered.connect(
+                        self._paste_animation_curves_same_attributes
+                    )
+                    widget.animation_paste_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action,
+                            "animation_paste_selected",
+                            key,
+                        )
                     )
                     widget.copy_all_values_action.triggered.connect(
                         self._copy_all_values

@@ -1494,6 +1494,8 @@ def test_selected_menu_lock_hide_and_alignment(
         "ブレイクダウンフレーム",
         "ミュート",
         "ミュート解除",
+        "アニメーションカーブ：コピー",
+        "アニメーションカーブ：ペースト",
         "コピー",
         "ペースト",
         "Step設定",
@@ -1506,7 +1508,7 @@ def test_selected_menu_lock_hide_and_alignment(
     )
     assert [
         (action.text(), action.isSeparator())
-        for action in row.context_menu.actions()[:9]
+        for action in row.context_menu.actions()[:12]
     ] == [
         ("この値に揃える", False),
         ("", True),
@@ -1514,6 +1516,9 @@ def test_selected_menu_lock_hide_and_alignment(
         ("ブレイクダウンフレーム", False),
         ("ミュート", False),
         ("ミュート解除", False),
+        ("", True),
+        ("アニメーションカーブ：コピー", False),
+        ("アニメーションカーブ：ペースト", False),
         ("", True),
         ("コピー", False),
         ("ペースト", False),
@@ -1545,6 +1550,20 @@ def test_selected_menu_lock_hide_and_alignment(
     ] == [
         ("選択属性", "unmute_selected"),
         ("全アニメーション属性", "unmute_all_animation"),
+    ]
+    assert [
+        (action.text(), action.objectName())
+        for action in row.animation_copy_menu.actions()
+    ] == [
+        ("選択属性", "animation_copy_selected"),
+        ("全アニメーション属性", "animation_copy_all"),
+    ]
+    assert [
+        (action.text(), action.objectName())
+        for action in row.animation_paste_menu.actions()
+    ] == [
+        ("コピー元と同じ属性", "animation_paste_same"),
+        ("選択属性", "animation_paste_selected"),
     ]
     lock_menu, display_menu = selection_menus[-2:]
     assert [action.text() for action in lock_menu.actions()] == [
@@ -1953,6 +1972,410 @@ def test_unmute_selected_preserves_animated_mute_node(
     _events()
     assert cmds.mute("multiA.translateX", query=True) is True
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_animation_curve_copy_selected_and_paste_same_attributes(
+    editor: ChannelBoxWidget,
+) -> None:
+    """選択属性の全キーを現在時刻へ接続挿入し、コピーと貼付のUndoを分ける。"""
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    cmds.setKeyframe("multiA.translateX", time=1, value=1)
+    cmds.setKeyframe("multiA.translateX", time=10, value=4)
+    cmds.flushUndo()
+
+    row = _row(editor, "translateX")
+    row.animation_copy_selected_action.trigger()
+    _events()
+    assert (
+        editor.controller.can_paste_animation_curves()
+    ), editor.message_label.text()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    cmds.select("multiB", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+    cmds.flushUndo()
+
+    _row(editor, "translateY").animation_paste_same_action.trigger()
+    _events()
+    assert cmds.keyframe("multiB.translateX", query=True, timeChange=True) == [
+        20.0,
+        29.0,
+    ]
+    assert cmds.keyframe(
+        "multiB.translateX", query=True, valueChange=True
+    ) == [1.0, 4.0]
+    assert not cmds.keyframe(
+        "multiB.translateY", query=True, keyframeCount=True
+    )
+    assert not editor.message_label.isVisible()
+    cmds.undo()
+    _events()
+    assert not cmds.keyframe(
+        "multiB.translateX", query=True, keyframeCount=True
+    )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_animation_curve_copy_all_uses_visible_flags_not_filter(
+    editor: ChannelBoxWidget,
+) -> None:
+    """全カーブコピーは各ノードの表示属性を扱い、Hideと画面の絞込を分ける。"""
+    cmds.select("multiA", replace=True)
+    for attribute in ("translateX", "translateY", "translateZ"):
+        cmds.setKeyframe(f"multiA.{attribute}", time=1, value=2)
+    cmds.setAttr("multiA.translateY", keyable=False, channelBox=True)
+    cmds.setAttr("multiA.translateZ", keyable=False, channelBox=False)
+    editor.refresh()
+    editor.controller.set_attribute_filter("keyable")
+    assert not any(
+        row.row.attribute.name in ("translateY", "translateZ")
+        for row in editor.row_widgets
+    )
+
+    _row(editor, "translateX").animation_copy_all_action.trigger()
+    _events()
+    cmds.select("multiB", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+    _row(editor, "translateX").animation_paste_same_action.trigger()
+    _events()
+    assert (
+        cmds.keyframe("multiB.translateX", query=True, keyframeCount=True) == 1
+    )
+    assert (
+        cmds.keyframe("multiB.translateY", query=True, keyframeCount=True) == 1
+    )
+    assert not cmds.keyframe(
+        "multiB.translateZ", query=True, keyframeCount=True
+    )
+
+
+def test_animation_curve_paste_selected_one_curve_fans_out(
+    editor: ChannelBoxWidget,
+) -> None:
+    """一曲線なら複数選択属性へ展開する。"""
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    cmds.setKeyframe("multiA.translateX", time=1, value=1)
+    cmds.setKeyframe("multiA.translateX", time=10, value=4)
+    _row(editor, "translateX").animation_copy_selected_action.trigger()
+    cmds.select("multiB", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+    editor.table_view.select_keys(_keys(editor, "translateX", "translateY"))
+    cmds.flushUndo()
+
+    _row(editor, "translateY").animation_paste_selected_action.trigger()
+    _events()
+    for attribute in ("translateX", "translateY"):
+        path = f"multiB.{attribute}"
+        assert cmds.keyframe(path, query=True, timeChange=True) == [
+            20.0,
+            29.0,
+        ]
+        assert cmds.keyframe(path, query=True, valueChange=True) == [
+            1.0,
+            4.0,
+        ]
+    cmds.undo()
+    _events()
+    assert not cmds.keyframe(
+        "multiB.translateX", query=True, keyframeCount=True
+    )
+    assert not cmds.keyframe(
+        "multiB.translateY", query=True, keyframeCount=True
+    )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_animation_curve_paste_selected_across_scalar_types(
+    editor: ChannelBoxWidget,
+) -> None:
+    """数値カーブを単位・bool・enumへ貼り、時刻と生のキー値を保つ。"""
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    cmds.setKeyframe("multiA.gain", time=1, value=0.25)
+    cmds.setKeyframe("multiA.gain", time=10, value=1.75)
+    _row(editor, "gain").animation_copy_selected_action.trigger()
+    cmds.select("multiB", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+    editor.table_view.select_keys(
+        _keys(editor, "gain", "translateX", "rotateX", "enabled", "mode")
+    )
+    cmds.flushUndo()
+
+    _row(editor, "gain").animation_paste_selected_action.trigger()
+    _events()
+    for attribute in ("gain", "translateX", "rotateX", "enabled", "mode"):
+        assert cmds.keyframe(
+            f"multiB.{attribute}", query=True, timeChange=True
+        ) == [20.0, 29.0]
+    assert cmds.keyframe("multiB.enabled", query=True, valueChange=True) == [
+        0.25,
+        1.75,
+    ]
+    assert cmds.getAttr("multiB.enabled", time=20) == 0
+    assert cmds.getAttr("multiB.enabled", time=29) == 1
+    assert isclose(cmds.getAttr("multiB.rotateX", time=20), 0.25)
+    assert isclose(cmds.getAttr("multiB.rotateX", time=29), 1.75)
+    cmds.undo()
+    _events()
+    assert not cmds.keyframe("multiB.enabled", query=True, keyframeCount=True)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_animation_curve_paste_selected_angle_to_number(
+    editor: ChannelBoxWidget,
+) -> None:
+    """角度から単位なし数値へ貼っても表示数値とキー間隔を保つ。"""
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    cmds.setKeyframe("multiA.rotateX", time=1, value=0.25)
+    cmds.setKeyframe("multiA.rotateX", time=10, value=1.75)
+    _row(editor, "rotateX").animation_copy_selected_action.trigger()
+    cmds.select("multiB", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+    editor.table_view.select_keys(_keys(editor, "gain"))
+
+    _row(editor, "gain").animation_paste_selected_action.trigger()
+    _events()
+    assert cmds.keyframe("multiB.gain", query=True, timeChange=True) == [
+        20.0,
+        29.0,
+    ]
+    assert cmds.keyframe("multiB.gain", query=True, valueChange=True) == [
+        0.25,
+        1.75,
+    ]
+
+
+def test_animation_curve_paste_same_path_across_types(
+    editor: ChannelBoxWidget,
+) -> None:
+    """同名属性ならコピー元と貼付先の型が異なっても貼る。"""
+    cmds.addAttr(
+        "multiA", longName="transfer", attributeType="double", keyable=True
+    )
+    cmds.addAttr(
+        "multiB", longName="transfer", attributeType="bool", keyable=True
+    )
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    cmds.setKeyframe("multiA.transfer", time=1, value=0.25)
+    cmds.setKeyframe("multiA.transfer", time=10, value=1.75)
+    _row(editor, "transfer").animation_copy_selected_action.trigger()
+    cmds.select("multiB", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+
+    _row(editor, "transfer").animation_paste_same_action.trigger()
+    _events()
+    assert cmds.keyframe("multiB.transfer", query=True, timeChange=True) == [
+        20.0,
+        29.0,
+    ]
+    assert cmds.keyframe("multiB.transfer", query=True, valueChange=True) == [
+        0.25,
+        1.75,
+    ]
+
+
+def test_animation_curve_paste_selected_includes_other_type_nodes(
+    editor: ChannelBoxWidget,
+) -> None:
+    """値編集から外れる異種型ノードも選択属性の曲線貼付では扱う。"""
+    cmds.addAttr(
+        "multiA", longName="transfer", attributeType="double", keyable=True
+    )
+    cmds.addAttr(
+        "multiB", longName="transfer", attributeType="bool", keyable=True
+    )
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    cmds.setKeyframe("multiA.transfer", time=1, value=0.25)
+    cmds.setKeyframe("multiA.transfer", time=10, value=1.75)
+    _row(editor, "transfer").animation_copy_selected_action.trigger()
+    cmds.select("multiA", "multiB", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+    row = _row(editor, "transfer")
+    assert len(row.row.target_names) == 1
+    editor.table_view.select_keys(_keys(editor, "transfer"))
+
+    row.animation_paste_selected_action.trigger()
+    _events()
+    assert cmds.keyframe("multiB.transfer", query=True, timeChange=True) == [
+        20.0,
+        29.0,
+    ]
+    assert cmds.keyframe("multiB.transfer", query=True, valueChange=True) == [
+        0.25,
+        1.75,
+    ]
+
+
+def test_animation_curve_paste_selected_multiple_curves_match_paths(
+    editor: ChannelBoxWidget,
+) -> None:
+    """複数カーブの未一致分を選択順で別属性へ貼り付けない。"""
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    for attribute in ("translateX", "translateY"):
+        cmds.setKeyframe(f"multiA.{attribute}", time=1, value=1)
+    editor.table_view.select_keys(_keys(editor, "translateX", "translateY"))
+    _row(editor, "translateX").animation_copy_selected_action.trigger()
+    cmds.select("multiB", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+    editor.table_view.select_keys(_keys(editor, "translateY", "translateZ"))
+
+    _row(editor, "translateY").animation_paste_selected_action.trigger()
+    _events()
+    assert not cmds.keyframe(
+        "multiB.translateX", query=True, keyframeCount=True
+    )
+    assert (
+        cmds.keyframe("multiB.translateY", query=True, keyframeCount=True) == 1
+    )
+    assert not cmds.keyframe(
+        "multiB.translateZ", query=True, keyframeCount=True
+    )
+
+
+def test_animation_curve_copy_multiple_nodes_maps_by_selection_order(
+    editor: ChannelBoxWidget,
+) -> None:
+    """複数コピー元を同数の貼付先へ選択順で対応させ、一度でUndoする。"""
+    for node, values in (
+        ("multiA", (1.0, 4.0)),
+        ("multiB", (2.0, 8.0)),
+    ):
+        cmds.setKeyframe(f"{node}.translateX", time=1, value=values[0])
+        cmds.setKeyframe(f"{node}.translateX", time=10, value=values[1])
+    _row(editor, "translateX").animation_copy_selected_action.trigger()
+    for node in ("targetA", "targetB"):
+        cmds.createNode("transform", name=node)
+    cmds.select("targetA", "targetB", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+    cmds.flushUndo()
+
+    _row(editor, "translateX").animation_paste_same_action.trigger()
+    _events()
+    for node, values in (
+        ("targetA", (1.0, 4.0)),
+        ("targetB", (2.0, 8.0)),
+    ):
+        assert cmds.keyframe(
+            f"{node}.translateX", query=True, timeChange=True
+        ) == [20.0, 29.0]
+        assert cmds.keyframe(
+            f"{node}.translateX", query=True, valueChange=True
+        ) == list(values)
+    cmds.undo()
+    _events()
+    for node in ("targetA", "targetB"):
+        assert not cmds.keyframe(
+            f"{node}.translateX", query=True, keyframeCount=True
+        )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_animation_curve_paste_inserts_and_connects_to_existing_curve(
+    editor: ChannelBoxWidget,
+) -> None:
+    """既存カーブには標準Channel Box同様に現在時刻へ接続挿入する。"""
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    cmds.setKeyframe("multiA.translateX", time=1, value=1)
+    cmds.setKeyframe("multiA.translateX", time=10, value=4)
+    _row(editor, "translateX").animation_copy_selected_action.trigger()
+    cmds.setKeyframe("multiB.translateX", time=15, value=10)
+    cmds.setKeyframe("multiB.translateX", time=25, value=20)
+    cmds.select("multiB", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+    cmds.flushUndo()
+
+    _row(editor, "translateX").animation_paste_same_action.trigger()
+    _events()
+    times = cmds.keyframe("multiB.translateX", query=True, timeChange=True)
+    values = cmds.keyframe("multiB.translateX", query=True, valueChange=True)
+    assert times == [15.0, 20.0, 29.0, 34.0]
+    assert isinstance(values, list)
+    assert values[1:3] == [15.0, 18.0]
+    cmds.undo()
+    _events()
+    assert cmds.keyframe("multiB.translateX", query=True, timeChange=True) == [
+        15.0,
+        25.0,
+    ]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_animation_curve_copy_selected_includes_hidden_attribute(
+    editor: ChannelBoxWidget,
+) -> None:
+    """明示したHide属性のカーブは選択属性でコピーできる。"""
+    cmds.setKeyframe("multiA.translateZ", time=1, value=2)
+    cmds.setAttr("multiA.translateZ", keyable=False, channelBox=False)
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    editor.controller.set_attribute_filter("all")
+    _row(editor, "translateZ").animation_copy_selected_action.trigger()
+    cmds.select("multiB", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+
+    _row(editor, "translateX").animation_paste_same_action.trigger()
+    _events()
+    assert cmds.keyframe("multiB.translateZ", query=True, timeChange=True) == [
+        20.0
+    ]
+
+
+def test_animation_curve_paste_skips_locked_attribute_without_undo(
+    editor: ChannelBoxWidget,
+) -> None:
+    """貼り付け不能な属性だけならSceneとUndo履歴を変えない。"""
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    cmds.setKeyframe("multiA.translateX", time=1, value=2)
+    _row(editor, "translateX").animation_copy_selected_action.trigger()
+    cmds.select("multiB", replace=True)
+    cmds.setAttr("multiB.translateX", lock=True)
+    editor.refresh()
+    cmds.flushUndo()
+
+    _row(editor, "translateX").animation_paste_same_action.trigger()
+    _events()
+    assert not cmds.keyframe(
+        "multiB.translateX", query=True, keyframeCount=True
+    )
+    assert not editor.message_label.isVisible()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_animation_curve_paste_selected_ignores_enum_definition(
+    editor: ChannelBoxWidget,
+) -> None:
+    """キー時刻の転写ではenum項目名の差異で曲線を除外しない。"""
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    cmds.setKeyframe("multiA.mode", time=1, value=1)
+    _row(editor, "mode").animation_copy_selected_action.trigger()
+    cmds.select("multiB", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+    editor.table_view.select_keys(_keys(editor, "quality", "variant"))
+
+    _row(editor, "quality").animation_paste_selected_action.trigger()
+    _events()
+    assert cmds.keyframe("multiB.quality", query=True, keyframeCount=True) == 1
+    assert cmds.keyframe("multiB.variant", query=True, keyframeCount=True) == 1
 
 
 def test_state_batch_stops_and_restores_when_controller_closes(
