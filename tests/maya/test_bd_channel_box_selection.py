@@ -1496,6 +1496,7 @@ def test_selected_menu_lock_hide_and_alignment(
         "ミュート解除",
         "アニメーションカーブ：コピー",
         "アニメーションカーブ：ペースト",
+        "アニメーションカーブ：削除",
         "コピー",
         "ペースト",
         "Step設定",
@@ -1508,7 +1509,7 @@ def test_selected_menu_lock_hide_and_alignment(
     )
     assert [
         (action.text(), action.isSeparator())
-        for action in row.context_menu.actions()[:12]
+        for action in row.context_menu.actions()[:13]
     ] == [
         ("この値に揃える", False),
         ("", True),
@@ -1519,6 +1520,7 @@ def test_selected_menu_lock_hide_and_alignment(
         ("", True),
         ("アニメーションカーブ：コピー", False),
         ("アニメーションカーブ：ペースト", False),
+        ("アニメーションカーブ：削除", False),
         ("", True),
         ("コピー", False),
         ("ペースト", False),
@@ -1564,6 +1566,13 @@ def test_selected_menu_lock_hide_and_alignment(
     ] == [
         ("コピー元と同じ属性", "animation_paste_same"),
         ("選択属性", "animation_paste_selected"),
+    ]
+    assert [
+        (action.text(), action.objectName())
+        for action in row.animation_delete_menu.actions()
+    ] == [
+        ("選択属性", "animation_delete_selected"),
+        ("全アニメーション属性", "animation_delete_all"),
     ]
     lock_menu, display_menu = selection_menus[-2:]
     assert [action.text() for action in lock_menu.actions()] == [
@@ -1972,6 +1981,219 @@ def test_unmute_selected_preserves_animated_mute_node(
     _events()
     assert cmds.mute("multiA.translateX", query=True) is True
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_animation_curve_delete_selected_includes_hidden_and_undoes_once(
+    editor: ChannelBoxWidget,
+) -> None:
+    """選択属性の全キーをHide込みで削除し、全ノードを一度にUndoする。"""
+    for node in ("multiA", "multiB"):
+        for attribute in ("translateX", "translateY", "translateZ"):
+            cmds.setKeyframe(f"{node}.{attribute}", time=1, value=1)
+            cmds.setKeyframe(f"{node}.{attribute}", time=10, value=4)
+        cmds.setAttr(f"{node}.translateZ", keyable=False, channelBox=False)
+    cmds.currentTime(5)
+    before = cmds.getAttr("multiA.translateX")
+    editor.refresh()
+    editor.controller.set_attribute_filter("all")
+    editor.table_view.select_keys(_keys(editor, "translateX", "translateZ"))
+    cmds.flushUndo()
+
+    _row(editor, "translateX").animation_delete_selected_action.trigger()
+    _events()
+    for node in ("multiA", "multiB"):
+        for attribute in ("translateX", "translateZ"):
+            assert not cmds.keyframe(
+                f"{node}.{attribute}", query=True, keyframeCount=True
+            )
+        assert (
+            cmds.keyframe(f"{node}.translateY", query=True, keyframeCount=True)
+            == 2
+        )
+    assert isclose(cmds.getAttr("multiA.translateX"), before)
+    assert not editor.message_label.isVisible()
+    cmds.undo()
+    _events()
+    for node in ("multiA", "multiB"):
+        for attribute in ("translateX", "translateZ"):
+            assert (
+                cmds.keyframe(
+                    f"{node}.{attribute}", query=True, keyframeCount=True
+                )
+                == 2
+            )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_animation_curve_delete_all_uses_visible_flags_not_filter(
+    editor: ChannelBoxWidget,
+) -> None:
+    """全属性削除は各ノードの表示フラグで選び、画面絞込とHideを区別する。"""
+    cmds.select("multiA", replace=True)
+    for attribute in ("translateX", "translateY", "translateZ"):
+        cmds.setKeyframe(f"multiA.{attribute}", time=1, value=2)
+    cmds.setAttr("multiA.translateY", keyable=False, channelBox=True)
+    cmds.setAttr("multiA.translateZ", keyable=False, channelBox=False)
+    driver = cmds.createNode("transform", name="deleteDriver")
+    cmds.connectAttr(f"{driver}.translateX", "multiA.rotateX")
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    editor.controller.set_attribute_filter("keyable")
+    assert not any(
+        row.row.attribute.name in ("translateY", "translateZ")
+        for row in editor.row_widgets
+    )
+    cmds.flushUndo()
+
+    _row(editor, "translateX").animation_delete_all_action.trigger()
+    _events()
+    for attribute in ("translateX", "translateY"):
+        assert not cmds.keyframe(
+            f"multiA.{attribute}", query=True, keyframeCount=True
+        )
+    assert cmds.keyframe("multiA.translateZ", query=True, keyframeCount=True)
+    assert cmds.listConnections(
+        "multiA.rotateX",
+        source=True,
+        destination=False,
+        plugs=True,
+        skipConversionNodes=True,
+    ) == [f"{driver}.translateX"]
+    cmds.undo()
+    _events()
+    for attribute in ("translateX", "translateY"):
+        assert (
+            cmds.keyframe(
+                f"multiA.{attribute}", query=True, keyframeCount=True
+            )
+            == 1
+        )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_animation_curve_delete_selected_keeps_copied_keys(
+    editor: ChannelBoxWidget,
+) -> None:
+    """削除してもコピー済みカーブを別ノードへ貼り付けられる。"""
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    cmds.setKeyframe("multiA.translateX", time=1, value=2)
+    cmds.setKeyframe("multiA.translateX", time=10, value=5)
+    row = _row(editor, "translateX")
+    row.animation_copy_selected_action.trigger()
+    row.animation_delete_selected_action.trigger()
+    _events()
+    assert not cmds.keyframe(
+        "multiA.translateX", query=True, keyframeCount=True
+    )
+    assert editor.controller.can_paste_animation_curves()
+    cmds.select("multiB", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+    assert (
+        cmds.pasteKey(
+            "multiB.translateY",
+            clipboard="anim",
+            animation="objects",
+            time=(20, 20),
+            option="insert",
+        )
+        == 1
+    )
+    assert cmds.keyframe("multiB.translateY", query=True, timeChange=True) == [
+        20.0,
+        29.0,
+    ]
+
+    _row(editor, "translateX").animation_paste_same_action.trigger()
+    _events()
+    assert cmds.keyframe("multiB.translateX", query=True, timeChange=True) == [
+        20.0,
+        29.0,
+    ]
+
+
+def test_animation_curve_delete_skips_shared_curve_without_undo(
+    editor: ChannelBoxWidget,
+) -> None:
+    """同じ曲線が別属性も駆動する場合は何も変更しない。"""
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    cmds.setKeyframe("multiA.translateX", time=1, value=2)
+    cmds.setKeyframe("multiA.translateX", time=10, value=5)
+    curves = cmds.keyframe("multiA.translateX", query=True, name=True)
+    assert isinstance(curves, list) and len(curves) == 1
+    cmds.connectAttr(f"{curves[0]}.output", "multiB.translateX", force=True)
+    cmds.flushUndo()
+
+    _row(editor, "translateX").animation_delete_selected_action.trigger()
+    _events()
+    for node in ("multiA", "multiB"):
+        assert (
+            cmds.keyframe(f"{node}.translateX", query=True, keyframeCount=True)
+            == 2
+        )
+    assert not editor.message_label.isVisible()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_animation_curve_delete_selected_covers_muted_and_driven_keys(
+    editor: ChannelBoxWidget,
+) -> None:
+    """Maya標準同様にミュート中とDriven Keyの全曲線も削除する。"""
+    cmds.setKeyframe("multiA.translateX", time=1, value=2)
+    mute_node = cmds.mute("multiA.translateX")[0]
+    driver = cmds.createNode("transform", name="deleteDriver")
+    _set_value(f"{driver}.translateX", 0.0)
+    cmds.setDrivenKeyframe(
+        "multiA.gain", currentDriver=f"{driver}.translateX", value=1
+    )
+    _set_value(f"{driver}.translateX", 2.0)
+    cmds.setDrivenKeyframe(
+        "multiA.gain", currentDriver=f"{driver}.translateX", value=3
+    )
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    editor.table_view.select_keys(_keys(editor, "translateX", "gain"))
+    cmds.flushUndo()
+
+    _row(editor, "translateX").animation_delete_selected_action.trigger()
+    _events()
+    assert not cmds.keyframe(
+        "multiA.translateX", query=True, keyframeCount=True
+    )
+    assert not cmds.keyframe("multiA.gain", query=True, keyframeCount=True)
+    assert not cmds.objExists(mute_node)
+    cmds.undo()
+    _events()
+    assert cmds.keyframe("multiA.translateX", query=True, keyframeCount=True)
+    assert cmds.keyframe("multiA.gain", query=True, keyframeCount=True)
+    assert cmds.objExists(mute_node)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_animation_curve_delete_selected_includes_other_type_nodes(
+    editor: ChannelBoxWidget,
+) -> None:
+    """値編集から外れた同名異種型ノードの曲線も削除する。"""
+    cmds.addAttr(
+        "multiA", longName="transfer", attributeType="double", keyable=True
+    )
+    cmds.addAttr(
+        "multiB", longName="transfer", attributeType="bool", keyable=True
+    )
+    for node in ("multiA", "multiB"):
+        cmds.setKeyframe(f"{node}.transfer", time=1, value=1)
+    editor.refresh()
+    row = _row(editor, "transfer")
+    assert len(row.row.target_names) == 1
+
+    row.animation_delete_selected_action.trigger()
+    _events()
+    for node in ("multiA", "multiB"):
+        assert not cmds.keyframe(
+            f"{node}.transfer", query=True, keyframeCount=True
+        )
 
 
 def test_animation_curve_copy_selected_and_paste_same_attributes(

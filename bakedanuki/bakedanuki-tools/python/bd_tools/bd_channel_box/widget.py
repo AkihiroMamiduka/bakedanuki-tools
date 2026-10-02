@@ -377,6 +377,30 @@ class AttributeRowWidget(qt.QWidget):
         animation_paste_actions = cast(_MenuActions, self.animation_paste_menu)
         animation_paste_actions.addAction(self.animation_paste_same_action)
         animation_paste_actions.addAction(self.animation_paste_selected_action)
+        self.animation_delete_menu = qt.QMenu(
+            "アニメーションカーブ：削除", self.context_menu
+        )
+        self.animation_delete_selected_action = qt.QAction("選択属性", self)
+        self.animation_delete_selected_action.setObjectName(
+            "animation_delete_selected"
+        )
+        self.animation_delete_selected_action.setToolTip(
+            "選択属性の全時間のキーを削除（Hide属性も対象）"
+        )
+        self.animation_delete_all_action = qt.QAction(
+            "全アニメーション属性", self
+        )
+        self.animation_delete_all_action.setObjectName("animation_delete_all")
+        self.animation_delete_all_action.setToolTip(
+            "各選択ノードのKeyable／ChannelBox表示属性の全時間のキーを削除"
+        )
+        animation_delete_actions = cast(
+            _MenuActions, self.animation_delete_menu
+        )
+        animation_delete_actions.addAction(
+            self.animation_delete_selected_action
+        )
+        animation_delete_actions.addAction(self.animation_delete_all_action)
         self.copy_menu = qt.QMenu("コピー", self.context_menu)
         self.copy_all_values_action = qt.QAction("全属性", self)
         self.copy_all_values_action.setObjectName("copy_all_values")
@@ -439,6 +463,7 @@ class AttributeRowWidget(qt.QWidget):
         self.context_menu.addSeparator()
         self.context_menu.addMenu(self.animation_copy_menu)
         self.context_menu.addMenu(self.animation_paste_menu)
+        self.context_menu.addMenu(self.animation_delete_menu)
         self.context_menu.addSeparator()
         self.context_menu.addMenu(self.copy_menu)
         self.context_menu.addMenu(self.paste_menu)
@@ -1537,6 +1562,9 @@ class ChannelBoxWidget(qt.QWidget):
             elif action == "animation_paste_selected":
                 self._clear_message()
                 self.controller.paste_animation_curves_to_selected(selected)
+            elif action == "animation_delete_selected":
+                self._clear_message()
+                self.controller.delete_animation_curves_selected(selected)
             elif action == "copy_selected":
                 self.controller.copy_selected_values(selected)
             elif action == "paste_selected":
@@ -1588,6 +1616,16 @@ class ChannelBoxWidget(qt.QWidget):
         self._clear_message()
         try:
             self.controller.paste_animation_curves_same_attributes()
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _delete_animation_curves_all_visible(self) -> None:
+        """各選択ノードのChannel Box表示属性の全時間のキーを削除する。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.delete_animation_curves_all_visible()
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
@@ -1764,6 +1802,10 @@ class ChannelBoxWidget(qt.QWidget):
             widget.animation_paste_selected_action.setEnabled(
                 can_paste_animation and has_selection
             )
+            widget.animation_delete_selected_action.setEnabled(
+                has_nodes and has_selection
+            )
+            widget.animation_delete_all_action.setEnabled(has_nodes)
             widget.copy_all_values_action.setEnabled(has_nodes)
             widget.copy_selected_values_action.setEnabled(
                 has_nodes and has_selection
@@ -1933,6 +1975,16 @@ class ChannelBoxWidget(qt.QWidget):
                             "animation_paste_selected",
                             key,
                         )
+                    )
+                    widget.animation_delete_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action,
+                            "animation_delete_selected",
+                            key,
+                        )
+                    )
+                    widget.animation_delete_all_action.triggered.connect(
+                        self._delete_animation_curves_all_visible
                     )
                     widget.copy_all_values_action.triggered.connect(
                         self._copy_all_values

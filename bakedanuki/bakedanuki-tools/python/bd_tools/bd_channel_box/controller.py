@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from collections.abc import Sequence
 from functools import partial
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, cast
 
 from maya import cmds
 from maya.api import OpenMaya as om
@@ -856,6 +856,96 @@ class ChannelBoxController(qt.QObject):
             if info.keyable or info.channel_box
         )
         return self._copy_animation_curves(sources)
+
+    @staticmethod
+    def _deletable_animation_curve_target(name: str) -> str | None:
+        """キーがあり、他属性と曲線を共有しない属性だけを返す。"""
+        try:
+            if not cmds.keyframe(name, query=True, keyframeCount=True):
+                return None
+            curves = (
+                cast(
+                    list[str] | None,
+                    cmds.keyframe(name, query=True, name=True),
+                )
+                or ()
+            )
+            if not curves:
+                return None
+            # 共有曲線の全キー削除が選択外の属性へ波及することを防ぐ
+            for curve in curves:
+                destinations = (
+                    cast(
+                        list[str] | None,
+                        cmds.listConnections(
+                            f"{curve}.output",
+                            source=False,
+                            destination=True,
+                            plugs=True,
+                            skipConversionNodes=True,
+                        ),
+                    )
+                    or ()
+                )
+                if len(set(destinations)) != 1:
+                    return None
+        except (RuntimeError, TypeError):
+            return None
+        return name
+
+    def _delete_animation_curves(self, names: Sequence[str]) -> int:
+        """対象属性の全時間のキーをMaya標準の方法で一括削除する。"""
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        targets = tuple(
+            dict.fromkeys(
+                target
+                for name in names
+                if (target := self._deletable_animation_curve_target(name))
+                is not None
+            )
+        )
+        if not targets:
+            return 0
+        cmds.cutKey(
+            *targets,
+            animation="objects",
+            clear=True,
+            hierarchy="none",
+            shape=False,
+        )
+        return len(targets)
+
+    def delete_animation_curves_selected(
+        self, keys: Sequence[tuple[str, str]]
+    ) -> int:
+        """選択行と同じ正式pathの全選択ノードの曲線を削除する。"""
+        selected_paths = {
+            row.attribute.path
+            for row in self._selected_rows(keys)
+            if isinstance(row, ChannelRow)
+        }
+        names = tuple(
+            f"{node}.{info.path}"
+            for node in self.node_names
+            for info in inspect_scalar_attributes(node)
+            if info.path in selected_paths
+        )
+        return self._delete_animation_curves(names)
+
+    def delete_animation_curves_all_visible(self) -> int:
+        """各選択ノードのKeyable／ChannelBox表示属性の曲線を削除する。"""
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        names = tuple(
+            f"{node}.{info.path}"
+            for node in self.node_names
+            for info in inspect_scalar_attributes(node)
+            if info.keyable or info.channel_box
+        )
+        return self._delete_animation_curves(names)
 
     def _animation_paste_targets(
         self, keys: Sequence[tuple[str, str]] | None
