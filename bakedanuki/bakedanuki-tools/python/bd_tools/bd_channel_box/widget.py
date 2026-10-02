@@ -270,7 +270,6 @@ class AttributeRowWidget(qt.QWidget):
         self.align_action.setToolTip("編集可能な対象を基準ノードの値に揃える")
         self.align_action.triggered.connect(self._align_values)
         self.keyframe_menu = qt.QMenu("キーフレーム", self.context_menu)
-        self.set_keyframe_menu = qt.QMenu("キー", self.keyframe_menu)
         self.set_key_all_keyable_action = qt.QAction("全 Keyable", self)
         self.set_key_all_keyable_action.setObjectName("set_key_all_keyable")
         self.set_key_all_keyable_action.setToolTip(
@@ -281,11 +280,12 @@ class AttributeRowWidget(qt.QWidget):
         self.set_key_selected_action.setToolTip(
             "選択した属性に現在時刻のキーを設定"
         )
-        keyframe_actions = cast(_MenuActions, self.set_keyframe_menu)
-        keyframe_actions.addAction(self.set_key_all_keyable_action)
+        keyframe_actions = cast(_MenuActions, self.keyframe_menu)
         keyframe_actions.addAction(self.set_key_selected_action)
-        self.keyframe_menu.addMenu(self.set_keyframe_menu)
-        self.breakdown_menu = qt.QMenu("ブレイクダウン", self.keyframe_menu)
+        keyframe_actions.addAction(self.set_key_all_keyable_action)
+        self.breakdown_menu = qt.QMenu(
+            "ブレイクダウンフレーム", self.context_menu
+        )
         self.set_breakdown_all_keyable_action = qt.QAction("全 Keyable", self)
         self.set_breakdown_all_keyable_action.setObjectName(
             "set_breakdown_all_keyable"
@@ -301,9 +301,8 @@ class AttributeRowWidget(qt.QWidget):
             "選択した属性に現在時刻のブレイクダウンを設定"
         )
         breakdown_actions = cast(_MenuActions, self.breakdown_menu)
-        breakdown_actions.addAction(self.set_breakdown_all_keyable_action)
         breakdown_actions.addAction(self.set_breakdown_selected_action)
-        self.keyframe_menu.addMenu(self.breakdown_menu)
+        breakdown_actions.addAction(self.set_breakdown_all_keyable_action)
         self.copy_menu = qt.QMenu("コピー", self.context_menu)
         self.copy_all_values_action = qt.QAction("全属性", self)
         self.copy_all_values_action.setObjectName("copy_all_values")
@@ -316,8 +315,8 @@ class AttributeRowWidget(qt.QWidget):
             "基準ノードで選択中の属性値をOSクリップボードへコピー"
         )
         copy_actions = cast(_MenuActions, self.copy_menu)
-        copy_actions.addAction(self.copy_all_values_action)
         copy_actions.addAction(self.copy_selected_values_action)
+        copy_actions.addAction(self.copy_all_values_action)
         self.paste_menu = qt.QMenu("ペースト", self.context_menu)
         self.paste_copied_values_menu = qt.QMenu(
             "コピー元と同じ属性", self.paste_menu
@@ -360,6 +359,7 @@ class AttributeRowWidget(qt.QWidget):
         menu_actions.addAction(self.align_action)
         self.context_menu.addSeparator()
         self.context_menu.addMenu(self.keyframe_menu)
+        self.context_menu.addMenu(self.breakdown_menu)
         self.context_menu.addSeparator()
         self.context_menu.addMenu(self.copy_menu)
         self.context_menu.addMenu(self.paste_menu)
@@ -818,8 +818,8 @@ class ChannelBoxWidget(qt.QWidget):
         )
         self.copy_selected_values_action.setEnabled(False)
         copy_actions = cast(_MenuActions, self.copy_menu)
-        copy_actions.addAction(self.copy_all_values_action)
         copy_actions.addAction(self.copy_selected_values_action)
+        copy_actions.addAction(self.copy_all_values_action)
         self.edit_menu.addMenu(self.copy_menu)
         self.paste_menu = qt.QMenu("ペースト", self.edit_menu)
         self.paste_copied_values_menu = qt.QMenu(
@@ -980,8 +980,8 @@ class ChannelBoxWidget(qt.QWidget):
             "選択中でStep欄を持つ属性の保存設定を削除して初期値へ戻す"
         )
         step_actions = cast(_MenuActions, self.step_settings_menu)
-        step_actions.addAction(self.reset_all_steps_action)
         step_actions.addAction(self.reset_selected_steps_action)
+        step_actions.addAction(self.reset_all_steps_action)
         self.refresh_action = qt.QAction("表示を更新", self)
         self.refresh_action.setToolTip("属性の構成と入力範囲を読み直す")
         self.refresh_action.triggered.connect(self.refresh)

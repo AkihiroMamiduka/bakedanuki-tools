@@ -859,8 +859,8 @@ def test_step_reset_context_menu_resets_selected_then_all(
     assert tuple(
         action.text() for action in editor.step_settings_menu.actions()
     ) == (
-        "初期値に戻す: 全ての属性",
         "初期値に戻す: 選択属性",
+        "初期値に戻す: 全ての属性",
     )
 
     editor.context_menu.aboutToShow.emit()
@@ -1491,6 +1491,7 @@ def test_selected_menu_lock_hide_and_alignment(
     ]
     assert [menu.title() for menu in selection_menus] == [
         "キーフレーム",
+        "ブレイクダウンフレーム",
         "コピー",
         "ペースト",
         "Step設定",
@@ -1503,32 +1504,29 @@ def test_selected_menu_lock_hide_and_alignment(
     )
     assert [
         (action.text(), action.isSeparator())
-        for action in row.context_menu.actions()[:6]
+        for action in row.context_menu.actions()[:7]
     ] == [
         ("この値に揃える", False),
         ("", True),
         ("キーフレーム", False),
+        ("ブレイクダウンフレーム", False),
         ("", True),
         ("コピー", False),
         ("ペースト", False),
     ]
-    assert [action.text() for action in row.keyframe_menu.actions()] == [
-        "キー",
-        "ブレイクダウン",
-    ]
     assert [
         (action.text(), action.objectName())
-        for action in row.set_keyframe_menu.actions()
+        for action in row.keyframe_menu.actions()
     ] == [
-        ("全 Keyable", "set_key_all_keyable"),
         ("選択属性", "set_key_selected"),
+        ("全 Keyable", "set_key_all_keyable"),
     ]
     assert [
         (action.text(), action.objectName())
         for action in row.breakdown_menu.actions()
     ] == [
-        ("全 Keyable", "set_breakdown_all_keyable"),
         ("選択属性", "set_breakdown_selected"),
+        ("全 Keyable", "set_breakdown_all_keyable"),
     ]
     lock_menu, display_menu = selection_menus[-2:]
     assert [action.text() for action in lock_menu.actions()] == [
@@ -1924,6 +1922,10 @@ def test_copy_all_values_uses_reference_node_and_does_not_write(
         row = _row(editor, "translateX")
         _show_row_menu(row)
         assert row.copy_menu.title() == "コピー"
+        assert [action.text() for action in row.copy_menu.actions()] == [
+            "選択属性",
+            "全属性",
+        ]
         assert row.copy_all_values_action.isEnabled()
         assert row.copy_selected_values_action.isEnabled()
         assert row.paste_menu.title() == "ペースト"
@@ -1940,6 +1942,10 @@ def test_copy_all_values_uses_reference_node_and_does_not_write(
         )
         assert editor.edit_menu.title() == "編集"
         assert editor.copy_menu.title() == "コピー"
+        assert [action.text() for action in editor.copy_menu.actions()] == [
+            "選択属性",
+            "全属性",
+        ]
         assert editor.paste_menu.title() == "ペースト"
         editor.edit_menu.aboutToShow.emit()
         assert editor.copy_all_values_action.isEnabled()
