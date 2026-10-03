@@ -646,6 +646,113 @@ class ChannelBoxController(qt.QObject):
             *dict.fromkeys(targets), insertBlend=False, breakdown=breakdown
         )
 
+    def selected_animation_layers(self) -> tuple[str, ...]:
+        """選択中の実アニメーションレイヤを取得し、BaseAnimationを除く。"""
+        if self._disposed:
+            return ()
+        root = cast(str | None, cmds.animLayer(query=True, root=True))
+        layers = cast(list[str] | None, cmds.ls(type="animLayer")) or ()
+        return tuple(
+            layer
+            for layer in layers
+            if layer != root
+            and cmds.animLayer(layer, query=True, selected=True)
+        )
+
+    @staticmethod
+    def _animation_layer_members(layer: str) -> set[str]:
+        """レイヤ所属属性をDAGの完全パスで正規化して返す。"""
+        attributes = (
+            cast(
+                list[str] | None,
+                cmds.animLayer(layer, query=True, attribute=True),
+            )
+            or ()
+        )
+        if not attributes:
+            return set()
+        return set(
+            cast(list[str] | None, cmds.ls(*attributes, long=True)) or ()
+        )
+
+    def _edit_animation_layer_membership(
+        self, targets: Sequence[str], *, add: bool
+    ) -> int:
+        """選択レイヤと対象属性の所属を変更し、全変更を一度のUndoへまとめる。"""
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        layers = self.selected_animation_layers()
+        # 正式属性pathをMayaのレイヤ所属照会と同じプラグ名へ揃える
+        unique_targets = (
+            tuple(
+                dict.fromkeys(
+                    cast(list[str] | None, cmds.ls(*targets, long=True)) or ()
+                )
+            )
+            if targets
+            else ()
+        )
+        if not layers or not unique_targets:
+            return 0
+
+        changed = 0
+        cmds.undoInfo(
+            openChunk=True,
+            chunkName=(
+                "AddSelectedAttributesToAnimationLayers"
+                if add
+                else "RemoveSelectedAttributesFromAnimationLayers"
+            ),
+        )
+        try:
+            for layer in layers:
+                before = self._animation_layer_members(layer)
+                # 対応できない属性はMayaのレイヤ操作に任せて静かに除外する
+                for target in unique_targets:
+                    if (target in before) == add:
+                        continue
+                    try:
+                        if add:
+                            cmds.animLayer(layer, edit=True, attribute=target)
+                        else:
+                            cmds.animLayer(
+                                layer, edit=True, removeAttribute=target
+                            )
+                    except (RuntimeError, TypeError):
+                        continue
+                after = self._animation_layer_members(layer)
+                changed += len(
+                    (
+                        (after - before) if add else (before - after)
+                    ).intersection(unique_targets)
+                )
+        finally:
+            cmds.undoInfo(closeChunk=True)
+        return changed
+
+    def edit_animation_layers_selected(
+        self, keys: Sequence[tuple[str, str]], *, add: bool
+    ) -> int:
+        """選択行と同じ正式path・型の各ノード属性を選択レイヤで変更する。"""
+        targets = tuple(
+            f"{node}.{row.attribute.path}"
+            for row in self._selected_rows(keys)
+            if row.attribute.kind != "string"
+            for node in row.target_names
+        )
+        return self._edit_animation_layer_membership(targets, add=add)
+
+    def edit_animation_layers_all_keyable(self, *, add: bool) -> int:
+        """各選択ノードの全Keyable属性を選択レイヤで変更する。"""
+        targets = tuple(
+            f"{node}.{attribute}"
+            for node in self.node_names
+            for attribute in cmds.listAttr(node, keyable=True) or ()
+        )
+        return self._edit_animation_layer_membership(targets, add=add)
+
     @staticmethod
     def _mute_target(name: str, *, muted: bool) -> str | None:
         """入力接続があり、指定したミュート状態へ変更できる単一属性を返す。"""

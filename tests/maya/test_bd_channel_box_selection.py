@@ -177,6 +177,16 @@ def _has_breakdown(path: str, time: float) -> bool:
     )
 
 
+def _animation_layer_attributes(layer: str) -> set[str]:
+    """レイヤに登録された属性名を返す。"""
+    return set(
+        cast(
+            list[str] | None, cmds.animLayer(layer, query=True, attribute=True)
+        )
+        or ()
+    )
+
+
 def _spin(editor: ChannelBoxWidget, name: str) -> qt.QDoubleSpinBox:
     """数値行の値欄だけを取得し、StepやSliderを区別する。"""
     view = _row(editor, name).editor
@@ -1510,6 +1520,8 @@ def test_selected_menu_lock_hide_and_alignment(
         "アニメーションカーブ：ペースト",
         "アニメーションカーブ：カット",
         "アニメーションカーブ：削除",
+        "アニメーションレイヤ：追加",
+        "アニメーションレイヤ：除去",
         "コピー",
         "ペースト",
         "フリーズ",
@@ -1523,7 +1535,7 @@ def test_selected_menu_lock_hide_and_alignment(
     )
     assert [
         (action.text(), action.isSeparator())
-        for action in row.context_menu.actions()[:14]
+        for action in row.context_menu.actions()[:17]
     ] == [
         ("この値に揃える", False),
         ("", True),
@@ -1537,12 +1549,15 @@ def test_selected_menu_lock_hide_and_alignment(
         ("アニメーションカーブ：カット", False),
         ("アニメーションカーブ：削除", False),
         ("", True),
+        ("アニメーションレイヤ：追加", False),
+        ("アニメーションレイヤ：除去", False),
+        ("", True),
         ("コピー", False),
         ("ペースト", False),
     ]
     assert [
         (action.text(), action.isSeparator())
-        for action in row.context_menu.actions()[14:18]
+        for action in row.context_menu.actions()[17:21]
     ] == [
         ("", True),
         ("フリーズ", False),
@@ -1614,6 +1629,22 @@ def test_selected_menu_lock_hide_and_alignment(
         ("選択属性", "animation_delete_selected"),
         ("全アニメーション属性", "animation_delete_all"),
     ]
+    assert [
+        (action.text(), action.objectName())
+        for action in row.animation_layer_add_menu.actions()
+    ] == [
+        ("選択属性", "animation_layer_add_selected"),
+        ("全 Keyable", "animation_layer_add_all_keyable"),
+    ]
+    assert [
+        (action.text(), action.objectName())
+        for action in row.animation_layer_remove_menu.actions()
+    ] == [
+        ("選択属性", "animation_layer_remove_selected"),
+        ("全 Keyable", "animation_layer_remove_all_keyable"),
+    ]
+    assert row.animation_layer_remove_menu.toolTipsVisible()
+    assert "キーも削除" in row.animation_layer_remove_selected_action.toolTip()
     lock_menu, display_menu = selection_menus[-2:]
     assert [action.text() for action in lock_menu.actions()] == [
         "ロック",
@@ -1656,6 +1687,145 @@ def test_selected_menu_lock_hide_and_alignment(
     cmds.undo()
     _events()
     assert _row(editor, "translateY")
+
+
+def test_animation_layer_selected_adds_to_all_selected_layers_and_undoes(
+    editor: ChannelBoxWidget,
+) -> None:
+    """非Keyable数値も含む選択属性を全選択ノード・レイヤへ追加する。"""
+    for node in ("multiA", "multiB"):
+        cmds.setAttr(f"{node}.gain", keyable=False, channelBox=True)
+        cmds.addAttr(node, longName="tag", dataType="string")
+        cmds.setAttr(f"{node}.tag", channelBox=True)
+    first = cast(str, cmds.animLayer("membershipA"))
+    second = cast(str, cmds.animLayer("membershipB"))
+    root = cast(str, cmds.animLayer(query=True, root=True))
+    cmds.animLayer(first, edit=True, selected=False)
+    cmds.animLayer(second, edit=True, selected=False)
+    cmds.animLayer(root, edit=True, selected=True)
+    editor.refresh()
+    _events()
+    row = _row(editor, "gain")
+    _open_row_menu(row)
+    assert not row.animation_layer_add_menu.isEnabled()
+    row.context_menu.close()
+
+    cmds.animLayer(first, edit=True, selected=True)
+    cmds.animLayer(second, edit=True, selected=True)
+    editor.refresh()
+    _events()
+    editor.table_view.select_keys(_keys(editor, "translateX", "gain", "tag"))
+    row = _row(editor, "gain")
+    _open_row_menu(row)
+    assert row.animation_layer_add_menu.isEnabled()
+    row.context_menu.close()
+    cmds.flushUndo()
+
+    row.animation_layer_add_selected_action.trigger()
+    _events()
+    expected = {
+        f"{node}.{attribute}"
+        for node in ("multiA", "multiB")
+        for attribute in ("translateX", "gain")
+    }
+    for layer in (first, second):
+        assert _animation_layer_attributes(layer) == expected
+    assert not editor.message_label.isVisible()
+    _row(editor, "gain").animation_layer_add_selected_action.trigger()
+    _events()
+    cmds.undo()
+    _events()
+    for layer in (first, second):
+        assert not _animation_layer_attributes(layer)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_animation_layer_all_keyable_uses_each_node_flags(
+    editor: ChannelBoxWidget,
+) -> None:
+    """全Keyableは画面の選択・フィルターによらずノード別フラグを使う。"""
+    cmds.setAttr("multiA.gain", keyable=False, channelBox=True)
+    layer = cast(str, cmds.animLayer("keyableLayer"))
+    cmds.animLayer(layer, edit=True, selected=True)
+    editor.controller.set_attribute_filter("channel_box")
+    _events()
+    row = _row(editor, "gain")
+    assert "translateX" not in {
+        item.row.attribute.name for item in editor.row_widgets
+    }
+    cmds.flushUndo()
+
+    row.animation_layer_add_all_keyable_action.trigger()
+    _events()
+    members = _animation_layer_attributes(layer)
+    assert "multiB.gain" in members
+    assert "multiA.gain" not in members
+    assert "multiA.translateX" in members
+    assert "multiB.translateX" in members
+    cmds.undo()
+    _events()
+    assert not _animation_layer_attributes(layer)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    # 非Keyableでも明示登録した属性は全Keyableの除去では残す
+    for name in ("multiA.gain", "multiB.gain", "multiA.translateX"):
+        cmds.animLayer(layer, edit=True, attribute=name)
+    _events()
+    cmds.flushUndo()
+    _row(editor, "gain").animation_layer_remove_all_keyable_action.trigger()
+    _events()
+    assert _animation_layer_attributes(layer) == {"multiA.gain"}
+    cmds.undo()
+    _events()
+    assert _animation_layer_attributes(layer) == {
+        "multiA.gain",
+        "multiB.gain",
+        "multiA.translateX",
+    }
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_animation_layer_remove_deletes_layer_keys_and_undo_restores(
+    editor: ChannelBoxWidget,
+) -> None:
+    """選択レイヤからの除去はそのレイヤのキーも失わせUndoで戻す。"""
+    cmds.setKeyframe("multiA.translateX", time=1, value=5)
+    layer = cast(str, cmds.animLayer("keyedLayer"))
+    cmds.animLayer(layer, edit=True, attribute="multiA.translateX")
+    cmds.setKeyframe("multiA.translateX", time=5, value=11, animLayer=layer)
+    cmds.animLayer(layer, edit=True, selected=True)
+    editor.refresh()
+    _events()
+    curves = cast(
+        list[str] | None, cmds.animLayer(layer, query=True, animCurves=True)
+    )
+    assert curves
+    assert any(
+        cmds.keyframe(curve, query=True, time=(5, 5), keyframeCount=True)
+        for curve in curves
+    )
+    cmds.flushUndo()
+
+    _row(editor, "translateX").animation_layer_remove_selected_action.trigger()
+    _events()
+    assert "multiA.translateX" not in _animation_layer_attributes(layer)
+    assert (
+        cmds.keyframe(
+            "multiA.translateX", query=True, time=(1, 1), keyframeCount=True
+        )
+        == 1
+    )
+    assert not cmds.keyframe(
+        "multiA.translateX", query=True, time=(5, 5), keyframeCount=True
+    )
+    cmds.undo()
+    _events()
+    assert "multiA.translateX" in _animation_layer_attributes(layer)
+    assert any(
+        cmds.keyframe(curve, query=True, time=(5, 5), keyframeCount=True)
+        for curve in curves
+    )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 @pytest.mark.parametrize(
@@ -1750,8 +1920,8 @@ def test_freeze_menu_uses_base_transform_and_skips_other_node_types(
     _open_row_menu(row)
     assert not row.freeze_menu.menuAction().isVisible()
     assert not row.freeze_separator_action.isVisible()
-    assert row.context_menu.actions()[16].isSeparator()
-    assert row.context_menu.actions()[16].isVisible()
+    assert row.context_menu.actions()[19].isSeparator()
+    assert row.context_menu.actions()[19].isVisible()
     row.context_menu.close()
 
 

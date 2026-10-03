@@ -131,6 +131,39 @@ class _MenuActions(Protocol):
         ...
 
 
+def _create_animation_layer_menu(
+    parent: qt.QMenu, operation: Literal["add", "remove"]
+) -> tuple[qt.QMenu, qt.QAction, qt.QAction]:
+    """選択レイヤへの属性追加・除去メニューを両表示モードへ共通に作る。"""
+    adding = operation == "add"
+    title = (
+        "アニメーションレイヤ：追加"
+        if adding
+        else "アニメーションレイヤ：除去"
+    )
+    menu = qt.QMenu(title, parent)
+    menu.setToolTipsVisible(True)
+    selected = qt.QAction("選択属性", menu)
+    selected.setObjectName(f"animation_layer_{operation}_selected")
+    selected.setToolTip(
+        "選択属性を選択中のアニメーションレイヤへ追加"
+        if adding
+        else "選択属性を選択中のレイヤから除去（そのレイヤ上のキーも削除）"
+    )
+    all_keyable = qt.QAction("全 Keyable", menu)
+    all_keyable.setObjectName(f"animation_layer_{operation}_all_keyable")
+    all_keyable.setToolTip(
+        "各選択ノードの全Keyable属性を選択中のレイヤへ追加"
+        if adding
+        else "各選択ノードの全Keyable属性を選択中のレイヤから除去"
+        "（そのレイヤ上のキーも削除）"
+    )
+    actions = cast(_MenuActions, menu)
+    actions.addAction(selected)
+    actions.addAction(all_keyable)
+    return menu, selected, all_keyable
+
+
 def _use_row_context_menu(editor: qt.QWidget) -> None:
     """入力部品の右クリックを属性行へ渡し、値編集は維持する。"""
     find_children = cast(
@@ -421,6 +454,16 @@ class AttributeRowWidget(qt.QWidget):
             self.animation_delete_selected_action
         )
         animation_delete_actions.addAction(self.animation_delete_all_action)
+        (
+            self.animation_layer_add_menu,
+            self.animation_layer_add_selected_action,
+            self.animation_layer_add_all_keyable_action,
+        ) = _create_animation_layer_menu(self.context_menu, "add")
+        (
+            self.animation_layer_remove_menu,
+            self.animation_layer_remove_selected_action,
+            self.animation_layer_remove_all_keyable_action,
+        ) = _create_animation_layer_menu(self.context_menu, "remove")
         self.copy_menu = qt.QMenu("コピー", self.context_menu)
         self.copy_all_values_action = qt.QAction("全属性", self)
         self.copy_all_values_action.setObjectName("copy_all_values")
@@ -502,6 +545,9 @@ class AttributeRowWidget(qt.QWidget):
         self.context_menu.addMenu(self.animation_paste_menu)
         self.context_menu.addMenu(self.animation_cut_menu)
         self.context_menu.addMenu(self.animation_delete_menu)
+        self.context_menu.addSeparator()
+        self.context_menu.addMenu(self.animation_layer_add_menu)
+        self.context_menu.addMenu(self.animation_layer_remove_menu)
         self.context_menu.addSeparator()
         self.context_menu.addMenu(self.copy_menu)
         self.context_menu.addMenu(self.paste_menu)
@@ -751,6 +797,16 @@ class AttributeStateRowWidget(qt.QWidget):
             qt.Qt.AlignmentFlag.AlignRight | qt.Qt.AlignmentFlag.AlignVCenter
         )
         self.context_menu = qt.QMenu(self)
+        (
+            self.animation_layer_add_menu,
+            self.animation_layer_add_selected_action,
+            self.animation_layer_add_all_keyable_action,
+        ) = _create_animation_layer_menu(self.context_menu, "add")
+        (
+            self.animation_layer_remove_menu,
+            self.animation_layer_remove_selected_action,
+            self.animation_layer_remove_all_keyable_action,
+        ) = _create_animation_layer_menu(self.context_menu, "remove")
         self.refresh_action = qt.QAction("表示を更新", self)
         self.refresh_action.triggered.connect(self.refresh_requested.emit)
         cast(_MenuActions, self.context_menu).addAction(self.refresh_action)
@@ -1608,6 +1664,14 @@ class ChannelBoxWidget(qt.QWidget):
             elif action == "animation_delete_selected":
                 self._clear_message()
                 self.controller.delete_animation_curves_selected(selected)
+            elif action in (
+                "animation_layer_add_selected",
+                "animation_layer_remove_selected",
+            ):
+                self._clear_message()
+                self.controller.edit_animation_layers_selected(
+                    selected, add=action == "animation_layer_add_selected"
+                )
             elif action == "copy_selected":
                 self.controller.copy_selected_values(selected)
             elif action == "paste_selected":
@@ -1629,6 +1693,16 @@ class ChannelBoxWidget(qt.QWidget):
         self._clear_message()
         try:
             self.controller.set_keyframes_all_keyable(breakdown=breakdown)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _edit_animation_layers_all_keyable(self, add: bool) -> None:
+        """選択ノードの全Keyable属性を選択レイヤへ追加・除去する。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.edit_animation_layers_all_keyable(add=add)
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
@@ -1851,10 +1925,28 @@ class ChannelBoxWidget(qt.QWidget):
         key = (widget.row.attribute.path, widget.row.attribute.kind)
         if key not in self.table_view.selected_keys():
             self.table_view.select_key(key)
+        has_nodes = bool(self.controller.node_names)
+        has_selection = bool(self.table_view.selected_keys())
+        has_layers = bool(self.controller.selected_animation_layers())
+        for menu, selected_action, all_action in (
+            (
+                widget.animation_layer_add_menu,
+                widget.animation_layer_add_selected_action,
+                widget.animation_layer_add_all_keyable_action,
+            ),
+            (
+                widget.animation_layer_remove_menu,
+                widget.animation_layer_remove_selected_action,
+                widget.animation_layer_remove_all_keyable_action,
+            ),
+        ):
+            menu.setEnabled(has_nodes and has_layers)
+            selected_action.setEnabled(
+                has_nodes and has_layers and has_selection
+            )
+            all_action.setEnabled(has_nodes and has_layers)
         if isinstance(widget, AttributeRowWidget):
             selected = set(self.table_view.selected_keys())
-            has_nodes = bool(self.controller.node_names)
-            has_selection = bool(selected)
             can_paste = has_nodes and self.controller.can_paste_values()
             can_paste_animation = (
                 has_nodes and self.controller.can_paste_animation_curves()
@@ -1939,6 +2031,10 @@ class ChannelBoxWidget(qt.QWidget):
                 )
                 cast(_MenuActions, group).addAction(item)
             menu.addMenu(group)
+        if isinstance(widget, AttributeStateRowWidget):
+            menu.addSeparator()
+            menu.addMenu(widget.animation_layer_add_menu)
+            menu.addMenu(widget.animation_layer_remove_menu)
         menu.aboutToShow.connect(partial(self._prepare_row_menu, widget))
 
     def _rebuild_rows(self) -> None:
@@ -2113,6 +2209,26 @@ class ChannelBoxWidget(qt.QWidget):
                     self._configure_value_input(widget, key)
                 widget.refresh_requested.connect(self.refresh)
                 self._add_selection_menu(widget)
+                widget.animation_layer_add_selected_action.triggered.connect(
+                    partial(
+                        self._run_selected_action,
+                        "animation_layer_add_selected",
+                        key,
+                    )
+                )
+                widget.animation_layer_add_all_keyable_action.triggered.connect(
+                    partial(self._edit_animation_layers_all_keyable, True)
+                )
+                widget.animation_layer_remove_selected_action.triggered.connect(
+                    partial(
+                        self._run_selected_action,
+                        "animation_layer_remove_selected",
+                        key,
+                    )
+                )
+                widget.animation_layer_remove_all_keyable_action.triggered.connect(
+                    partial(self._edit_animation_layers_all_keyable, False)
+                )
                 widgets.append(widget)
         except Exception:
             self.controller.dispose()

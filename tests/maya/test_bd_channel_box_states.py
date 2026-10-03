@@ -216,6 +216,8 @@ def test_state_input_opens_row_context_menu(
     assert [menu.title() for menu in selection_menus] == [
         "ロック",
         "表示",
+        "アニメーションレイヤ：追加",
+        "アニメーションレイヤ：除去",
     ]
     assert not any(
         action.text()
@@ -236,7 +238,7 @@ def test_state_input_opens_row_context_menu(
         action.objectName().startswith("selected_")
         for action in row.context_menu.actions()
     )
-    lock_menu, display_menu = selection_menus
+    lock_menu, display_menu, add_menu, remove_menu = selection_menus
     assert [action.text() for action in lock_menu.actions()] == [
         "ロック",
         "解除",
@@ -255,8 +257,46 @@ def test_state_input_opens_row_context_menu(
         "selected_channel_box",
         "selected_hidden",
     ]
+    assert [action.objectName() for action in add_menu.actions()] == [
+        "animation_layer_add_selected",
+        "animation_layer_add_all_keyable",
+    ]
+    assert [action.objectName() for action in remove_menu.actions()] == [
+        "animation_layer_remove_selected",
+        "animation_layer_remove_all_keyable",
+    ]
+    assert not add_menu.isEnabled()
+    assert not remove_menu.isEnabled()
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
     row.context_menu.close()
+
+
+def test_state_mode_can_add_selected_attributes_to_animation_layer(
+    state_editor: ChannelBoxWidget,
+) -> None:
+    """状態編集モードでも選択属性を選択レイヤへ追加してUndoできる。"""
+    _states(state_editor)
+    layer = cast(str, cmds.animLayer("stateMembershipLayer"))
+    cmds.animLayer(layer, edit=True, selected=True)
+    state_editor.refresh()
+    _events()
+    state_editor.table_view.select_keys(_state_keys(state_editor, "weight"))
+    cmds.flushUndo()
+
+    _state_row(
+        state_editor, "weight"
+    ).animation_layer_add_selected_action.trigger()
+    _events()
+    assert set(
+        cast(
+            list[str] | None, cmds.animLayer(layer, query=True, attribute=True)
+        )
+        or ()
+    ) == {"stateA.weight", "stateB.weight"}
+    cmds.undo()
+    _events()
+    assert not cmds.animLayer(layer, query=True, attribute=True)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_mode_switch_only_reads_and_preserves_value_step(
