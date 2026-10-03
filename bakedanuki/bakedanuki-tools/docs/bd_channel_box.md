@@ -90,7 +90,9 @@ MayaのuiScriptは `bd_tools.bd_channel_box.ui.restore()` を呼び、復元中�
   Attribute Filterが「全て」の場合だけ表示し、検索文字列はWindow内だけで保持します。
 - 対象objectを抽出した現在のMaya active selection listの末尾ノードが基準です。
   画面上部の名前欄では、複数選択中も基準ノードだけを改名します。
-  選択数と選択順の全path、末尾が基準であることをtooltipへまとめます。
+  属性編集の対象ノードが2個以上なら、名前欄の右に「2 ノード」などの件数を表示します。
+  未選択・1ノード選択では件数を表示しません。component・plugは数えません。
+  選択数と選択順の全path、末尾が基準であることを名前欄と件数表示のtooltipへまとめます。
   範囲選択やスクリプトによる選択も現在のリスト順に従います。クリック履歴を記録する
   Mayaの設定は変更せず、厳密なクリック履歴順を独自に追跡しません。
 - 名前欄はutilの`MayaNodeNameBinding`と`StringLineEdit`を使用します。

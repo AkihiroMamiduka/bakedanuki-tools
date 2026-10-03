@@ -275,6 +275,50 @@ def test_last_selected_node_drives_rows_and_alignment(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
+def test_selection_count_badge_tracks_edit_targets(
+    editor: ChannelBoxWidget,
+) -> None:
+    """件数表示は編集対象ノードだけを数え、名前欄と選択順に追従する。"""
+    badge = editor.selection_count_label
+    assert badge.isVisible()
+    assert badge.text() == "2 ノード"
+    assert badge.focusPolicy() == qt.Qt.FocusPolicy.NoFocus
+    assert editor.node_name_edit is not None
+    assert editor.header_layout.indexOf(editor.node_name_edit) < (
+        editor.header_layout.indexOf(badge)
+    )
+    assert badge.toolTip() == editor.node_name_edit.toolTip()
+    assert "|channelB\n|channelA" in badge.toolTip()
+
+    # 基準を保ったまま対象数を変えても、表示名と件数を更新する
+    cmds.createNode("transform", name="channelC")
+    cmds.select("channelB", "channelC", "channelA", replace=True)
+    _events()
+    assert editor.controller.representative_node_name == "|channelA"
+    assert editor.node_name_edit is not None
+    assert editor.node_name_edit.text() == "channelA"
+    assert badge.isVisible()
+    assert badge.text() == "3 ノード"
+    assert "|channelB\n|channelC\n|channelA" in badge.toolTip()
+
+    editor.mode_combo.setCurrentIndex(1)
+    _events()
+    assert badge.isVisible()
+    assert badge.text() == "3 ノード"
+
+    cmds.select("channelA", replace=True)
+    _events()
+    assert editor.node_name_edit is not None
+    assert editor.node_name_edit.text() == "channelA"
+    assert not badge.isVisible()
+
+    cmds.select(clear=True)
+    _events()
+    assert editor.node_name_edit is None
+    assert editor.header_label.text() == "ノードを選択してください"
+    assert not badge.isVisible()
+
+
 def test_last_object_ignores_trailing_component_and_plug(
     editor: ChannelBoxWidget,
 ) -> None:
@@ -295,6 +339,7 @@ def test_last_object_ignores_trailing_component_and_plug(
     _events()
     assert editor.controller.node_names == ("|channelB", "|channelA")
     assert editor.controller.representative_node_name == "|channelA"
+    assert editor.selection_count_label.text() == "2 ノード"
     assert editor.node_name_edit is not None
     assert editor.node_name_edit.text() == "channelA"
     row = _row(editor, "weight")

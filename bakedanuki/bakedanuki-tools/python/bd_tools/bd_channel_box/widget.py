@@ -1158,9 +1158,22 @@ class ChannelBoxWidget(qt.QWidget):
         self.header_label.setSizePolicy(
             qt.QSizePolicy.Policy.Ignored, qt.QSizePolicy.Policy.Preferred
         )
+        self.selection_count_label = qt.QLabel(self)
+        self.selection_count_label.setObjectName("nodeSelectionCountLabel")
+        self.selection_count_label.setAlignment(
+            qt.Qt.AlignmentFlag.AlignCenter
+        )
+        self.selection_count_label.setFrameShape(qt.QFrame.Shape.StyledPanel)
+        self.selection_count_label.setMargin(3)
+        self.selection_count_label.setSizePolicy(
+            qt.QSizePolicy.Policy.Fixed, qt.QSizePolicy.Policy.Preferred
+        )
+        self.selection_count_label.setFocusPolicy(qt.Qt.FocusPolicy.NoFocus)
+        self.selection_count_label.hide()
         self.header_layout = qt.QHBoxLayout()
         self.header_layout.setContentsMargins(0, 0, 0, 0)
         self.header_layout.addWidget(self.header_label)
+        self.header_layout.addWidget(self.selection_count_label)
         self.context_menu = qt.QMenu(self)
         self.step_settings_menu = qt.QMenu("Step設定", self)
         self.reset_all_steps_action = qt.QAction(
@@ -1457,6 +1470,7 @@ class ChannelBoxWidget(qt.QWidget):
             editor.hide()
             editor.deleteLater()
         self.header_label.show()
+        self.selection_count_label.hide()
 
     def _sync_node_name_editor(self) -> None:
         """基準ノードの実体が変わった場合だけ名前入力欄を接続し直す。"""
@@ -1490,18 +1504,29 @@ class ChannelBoxWidget(qt.QWidget):
                 editor.setAccessibleName("基準ノード名")
                 editor.edit_failed.connect(self._show_error)
                 editor.conflict_changed.connect(self._show_name_conflict)
-                self.header_layout.addWidget(editor)
+                self.header_layout.insertWidget(1, editor, 1)
                 self.node_name_edit = editor
                 self._node_name_binding = binding
                 self._node_name_id = node_id
                 self.header_label.hide()
         if representative is not None and self.node_name_edit is not None:
-            self.node_name_edit.setToolTip(
+            selection_tooltip = (
                 f"選択: {len(names)} ノード（末尾が基準）\n" + "\n".join(names)
             )
+            self.node_name_edit.setToolTip(selection_tooltip)
+            if len(names) > 1:
+                self.selection_count_label.setText(f"{len(names)} ノード")
+                self.selection_count_label.setAccessibleName(
+                    f"{len(names)} ノード選択中"
+                )
+                self.selection_count_label.setToolTip(selection_tooltip)
+                self.selection_count_label.show()
+            else:
+                self.selection_count_label.hide()
         else:
             self.header_label.setText("ノードを選択してください")
             self.header_label.setToolTip("")
+            self.selection_count_label.hide()
 
     def _cancel_transient_input(self) -> None:
         """Bindingを破棄する前に、古い選択への入力とメニューを終了する。"""
