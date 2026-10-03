@@ -271,7 +271,6 @@ class AttributeRowWidget(qt.QWidget):
     """右揃えの属性名と入力Viewを並べ、詳細と操作を必要時に表示する。"""
 
     step_changed = qt.Signal(float)
-    refresh_requested = qt.Signal()
 
     def __init__(
         self,
@@ -524,8 +523,6 @@ class AttributeRowWidget(qt.QWidget):
             self.freeze_all_action,
         ):
             freeze_actions.addAction(action)
-        self.refresh_action = qt.QAction("表示を更新", self)
-        self.refresh_action.triggered.connect(self.refresh_requested.emit)
         menu_actions = cast(_MenuActions, self.context_menu)
         menu_actions.addAction(self.align_action)
         self.context_menu.addSeparator()
@@ -546,8 +543,6 @@ class AttributeRowWidget(qt.QWidget):
         self.context_menu.addMenu(self.paste_menu)
         self.freeze_separator_action = self.context_menu.addSeparator()
         self.context_menu.addMenu(self.freeze_menu)
-        self.context_menu.addSeparator()
-        menu_actions.addAction(self.refresh_action)
         self.editor = self._create_editor(
             single_step,
             wheel_editing_without_focus,
@@ -740,8 +735,8 @@ class AttributeRowWidget(qt.QWidget):
             )
             if not binding.definition.items:
                 details.append("enumの選択肢がないため入力できません")
-            details.append("定義変更後の対象の再判定: 表示を更新")
-        details.append("属性名を右クリック: この値に揃える / 表示を更新")
+            details.append("定義変更後の対象の再判定: 選択を解除して選び直す")
+        details.append("属性行を右クリック: この値に揃える")
         tooltip = "\n".join(details)
         self.name_label.setToolTip(tooltip)
         self.input_indicator.setToolTip(tooltip)
@@ -1151,12 +1146,7 @@ class ChannelBoxWidget(qt.QWidget):
         step_actions = cast(_MenuActions, self.step_settings_menu)
         step_actions.addAction(self.reset_selected_steps_action)
         step_actions.addAction(self.reset_all_steps_action)
-        self.refresh_action = qt.QAction("表示を更新", self)
-        self.refresh_action.setToolTip("属性の構成と入力範囲を読み直す")
-        self.refresh_action.triggered.connect(self.refresh)
         self.context_menu.addMenu(self.step_settings_menu)
-        self.context_menu.addSeparator()
-        cast(_MenuActions, self.context_menu).addAction(self.refresh_action)
         self.message_label = qt.QLabel(self)
         self.message_label.setWordWrap(True)
         self.message_label.hide()
@@ -1376,7 +1366,7 @@ class ChannelBoxWidget(qt.QWidget):
                 return
 
     def contextMenuEvent(self, event: qt.QtGui.QContextMenuEvent) -> None:
-        """画面の余白から、値を書き込まない表示更新を開く。"""
+        """画面の余白からStep設定を開く。"""
         self.context_menu.popup(event.globalPos())
         event.accept()
 
@@ -2165,7 +2155,6 @@ class ChannelBoxWidget(qt.QWidget):
                     )
                     self._configure_value_input(widget, key)
                 if isinstance(widget, AttributeRowWidget):
-                    widget.refresh_requested.connect(self.refresh)
                     self._add_selection_menu(widget)
                     widget.animation_layer_add_selected_action.triggered.connect(
                         partial(

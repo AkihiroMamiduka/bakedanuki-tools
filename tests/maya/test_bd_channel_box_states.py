@@ -229,7 +229,9 @@ def test_state_row_right_click_has_no_menu_or_selection_effect(
     _events()
     assert not hasattr(row, "context_menu")
     assert not state_editor.context_menu.isVisible()
-    assert state_editor.refresh_action in state_editor.context_menu.actions()
+    assert [
+        action.text() for action in state_editor.context_menu.actions()
+    ] == ["Step設定"]
     assert state_editor.table_view.selected_keys() == selected
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 

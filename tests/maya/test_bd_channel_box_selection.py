@@ -1557,12 +1557,15 @@ def test_selected_menu_lock_hide_and_alignment(
     ]
     assert [
         (action.text(), action.isSeparator())
-        for action in row.context_menu.actions()[17:21]
+        for action in row.context_menu.actions()[17:]
     ] == [
         ("", True),
         ("フリーズ", False),
         ("", True),
-        ("表示を更新", False),
+        ("Step設定", False),
+        ("", True),
+        ("ロック", False),
+        ("表示", False),
     ]
     assert [
         (action.text(), action.objectName())

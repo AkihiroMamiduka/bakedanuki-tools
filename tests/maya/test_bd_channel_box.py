@@ -141,7 +141,9 @@ def test_attribute_input_opens_row_context_menu(
     cmds.flushUndo()
     _open_context_menu(cast(qt.QWidget, target))
     assert row.context_menu.isVisible()
-    assert row.refresh_action in row.context_menu.actions()
+    assert all(
+        action.text() != "表示を更新" for action in row.context_menu.actions()
+    )
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
     row.context_menu.close()
 
@@ -201,7 +203,7 @@ def test_selection_and_refresh_only_read_values(
     row.editor.spin_box.setFocus()
     row.editor.spin_box.editingFinished.emit()
     editor.header_label.setFocus()
-    editor.refresh_action.trigger()
+    editor.refresh()
     _events()
     assert cmds.getAttr("channelA.weight") == 0.25
     assert cmds.getAttr("channelB.weight") == 0.75
@@ -380,27 +382,27 @@ def test_bool_input_and_explicit_alignment(
 
 
 @pytest.mark.parametrize("surface", ["attribute", "background"])
-def test_context_menu_refresh_only_reads_values(
+def test_context_menus_omit_refresh_and_direct_refresh_only_reads_values(
     editor: ChannelBoxWidget, surface: str
 ) -> None:
-    """属性名と余白から更新でき、値・Undo・変更済みstepを維持する。"""
+    """行と余白のメニューに更新はなく、直接再読込は値とstepを保つ。"""
     _value_step(editor, "translateX").setSingleStep(0.01)
     row = _row(editor, "weight")
     if surface == "attribute":
         target = row.name_label
         menu = row.context_menu
-        action = row.refresh_action
     else:
         target = editor.table_view.viewport()
         assert target is not None
         menu = editor.context_menu
-        action = editor.refresh_action
     _open_context_menu(target)
     assert menu.isVisible()
-    assert action in menu.actions()
+    assert all(action.text() != "表示を更新" for action in menu.actions())
+    if surface == "background":
+        assert [action.text() for action in menu.actions()] == ["Step設定"]
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
     menu.close()
-    action.trigger()
+    editor.refresh()
     _events()
     assert _row(editor, "weight") is not row
     assert _value_step(editor, "translateX").singleStep() == 0.01
