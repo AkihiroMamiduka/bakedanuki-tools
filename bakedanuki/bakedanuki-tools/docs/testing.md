@@ -43,6 +43,8 @@ Maya 本体でも操作確認します。
 `bd > tools > bdChannelBox`の表示・クリック、メニューセット切替、同じ項目の
 再登録とreload後の再登録を確認します。専用profileにもユーザー側の
 `userSetup.py`を配置し、Module側のhookと両方が実行されたことを確認します。
+同じprofileでMayaを3回起動し、チェックOFF後の次回起動では`bd`がないこと、
+共通installerによる再有効化、その次の起動での再表示も確認します。
 正常終了後は、出力先profileの`menuSetPrefs.mel`にbdのメニュー項目が
 保存されていないことを手動で確認します。従来の
 `test_bd_channel_box_maya.py`は`userSetup.py`を読み込まないため、

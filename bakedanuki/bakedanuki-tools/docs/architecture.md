@@ -120,6 +120,8 @@ interactive起動時だけ`maya.utils.executeDeferred()`へメニュー登録を
 categoryは`tools`とし、将来のrig・physicsは別owner/categoryで同じ`bd`を共有します。
 メニューのMaya UI構築と他ownerを保つ解除処理はutilが所有します。
 toolsのreload前には所有項目を解除し、reload後に新しいcallbackで再登録します。
+起動時のdeferred処理だけがutilの共有設定を読み、OFFなら登録をスキップします。
+明示的な`install_menu()`と開発reload時の復元は設定の影響を受けません。
 
 各 module が保持する controller の `dispose()` を package の
 `register_reload_disposer()` へ登録し、古い UI と callback を残したまま code を

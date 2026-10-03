@@ -9,6 +9,10 @@
 
 ### Added
 
+- `bd`メニューの起動時表示設定に対応。OFFの次回起動では`bd_tools`の自動登録を
+  スキップする。現在のセッションのメニューと明示的な`install_menu()`は維持する。
+  共有設定は`bakedanuki-util`に保存され、既存設定がない環境ではONのまま動作する。
+  再有効化には共通`installer.py`の再D&DとMaya再起動を利用できる。
 - Maya Module内の`userSetup.py`からinteractive起動後に`bd > tools > bdChannelBox`
   を登録する。ユーザーの`userSetup.py`は変更せず、batchでは登録しない。
   メニュー未表示の場合は`bd_tools.install_menu()`で手動登録できる。

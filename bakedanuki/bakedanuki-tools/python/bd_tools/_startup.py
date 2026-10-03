@@ -7,8 +7,12 @@ import traceback
 
 
 def _install_menu_deferred() -> None:
-    """MayaのUI初期化後にtoolsメニューを登録する。"""
+    """起動時表示が有効ならUI初期化後にtoolsメニューを登録する。"""
     try:
+        from bd_util.maya.ui import is_menu_auto_install_enabled
+
+        if not is_menu_auto_install_enabled():
+            return
         from .menu import install_menu
 
         install_menu()

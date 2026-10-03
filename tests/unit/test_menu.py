@@ -133,6 +133,12 @@ def test_startup_skips_batch_and_defers_interactive_install(
     fake_maya = ModuleType("maya")
     fake_cmds = ModuleType("maya.cmds")
     fake_utils = ModuleType("maya.utils")
+    fake_util_ui = ModuleType("bd_util.maya.ui")
+    auto_install_enabled = [True]
+
+    def is_menu_auto_install_enabled() -> bool:
+        """共有設定で起動時表示が有効か返す。"""
+        return auto_install_enabled[0]
 
     def about_batch(*, batch: bool) -> bool:
         """batch起動を返す。"""
@@ -152,12 +158,19 @@ def test_startup_skips_batch_and_defers_interactive_install(
         return True
 
     monkeypatch.setitem(sys.modules, "maya", fake_maya)
+    monkeypatch.setitem(sys.modules, "bd_util.maya.ui", fake_util_ui)
     monkeypatch.setattr(fake_maya, "cmds", fake_cmds, raising=False)
     monkeypatch.setattr(fake_maya, "utils", fake_utils, raising=False)
     monkeypatch.setattr(
         fake_utils, "executeDeferred", execute_deferred, raising=False
     )
     monkeypatch.setattr(fake_cmds, "about", about_batch, raising=False)
+    monkeypatch.setattr(
+        fake_util_ui,
+        "is_menu_auto_install_enabled",
+        is_menu_auto_install_enabled,
+        raising=False,
+    )
     monkeypatch.setattr(menu, "install_menu", install_menu)
 
     _startup.schedule_menu_install()
@@ -168,4 +181,9 @@ def test_startup_skips_batch_and_defers_interactive_install(
     assert len(callbacks) == 1
     assert not installed
     callbacks[0]()
+    assert installed == [True]
+
+    auto_install_enabled[0] = False
+    _startup.schedule_menu_install()
+    callbacks[1]()
     assert installed == [True]

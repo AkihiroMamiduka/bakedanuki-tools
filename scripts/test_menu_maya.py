@@ -15,6 +15,9 @@ from pathlib import Path
 
 _OUTPUT_VARIABLE = "BAKEDANUKI_TOOLS_MENU_QA_OUTPUT"
 _USER_SETUP_MARKER = "BAKEDANUKI_TOOLS_MENU_QA_USER_SETUP_MARKER"
+_PHASE_VARIABLE = "BAKEDANUKI_TOOLS_MENU_QA_PHASE"
+_INSTALLER_VARIABLE = "BAKEDANUKI_TOOLS_MENU_QA_INSTALLER"
+_OPTION_LABEL = "Maya 起動時に bd メニューを表示"
 
 
 def _find_labeled_menu(parent: str, label: str) -> str:
@@ -53,17 +56,23 @@ def _menu_state() -> tuple[str, str]:
 
 
 def _run_in_maya() -> None:
-    """起動 hook、メニューセット、reload、クリック起動を確認する。"""
+    """起動・表示設定・再有効化を実際のMaya画面で確認する。"""
+    import runpy
+
     from maya import OpenMayaUI as omui
     from maya import cmds, mel
 
     from bd_util.ui import qt
 
     output = Path(os.environ[_OUTPUT_VARIABLE])
+    phase = os.environ[_PHASE_VARIABLE]
 
     def finish(success: bool, detail: str) -> None:
         """結果を保存し、検証専用 Maya を終了する。"""
-        (output / "result.json").write_text(
+        result_name = (
+            "result.json" if phase == "initial" else f"result-{phase}.json"
+        )
+        (output / result_name).write_text(
             json.dumps(
                 {"success": success, "detail": detail}, ensure_ascii=False
             ),
@@ -82,7 +91,30 @@ def _run_in_maya() -> None:
                 raise AssertionError(
                     "bdChannelBox の WorkspaceControl がありません"
                 )
-            finish(True, "startup, menu set, reload, click: passed")
+            root, _ = _menu_state()
+            option = _find_labeled_menu(root, _OPTION_LABEL)
+            pointer = omui.MQtUtil.findMenuItem(option)
+            if not pointer:
+                raise AssertionError("起動時表示の QAction がありません")
+            action = qt.wrapInstance(int(pointer), qt.QtGui.QAction)
+            action.trigger()
+            from bd_util.maya.ui import is_menu_auto_install_enabled
+
+            if is_menu_auto_install_enabled():
+                raise AssertionError("チェックOFFが保存されていません")
+            setting_path = (
+                Path(cmds.internalVar(userPrefDir=True))
+                / "bakedanuki"
+                / "menu.json"
+            )
+            if json.loads(setting_path.read_text(encoding="utf-8")) != {
+                "show_menu_on_startup": False
+            }:
+                raise AssertionError("専用設定ファイルのOFFが不正です")
+            _menu_state()
+            finish(
+                True, "startup, menu set, reload, click, toggle off: passed"
+            )
         except Exception:
             finish(False, traceback.format_exc())
 
@@ -153,8 +185,72 @@ def _run_in_maya() -> None:
         except Exception:
             finish(False, traceback.format_exc())
 
+    def check_disabled() -> None:
+        """再起動後はbdメニューが出ず、再D&Dで表示設定が戻ることを確認する。"""
+        try:
+            from bd_util.maya.ui import is_menu_auto_install_enabled
+
+            if is_menu_auto_install_enabled():
+                raise AssertionError("再起動後にOFF設定が読み込まれていません")
+            main_window = mel.eval("$bdMenuDisabledWindow=$gMainWindow")
+            menus = cmds.window(main_window, query=True, menuArray=True) or []
+            if any(
+                cmds.menu(menu, query=True, label=True) == "bd"
+                for menu in menus
+            ):
+                raise AssertionError("OFFでもbdメニューが自動登録されました")
+
+            # D&Dと同じinstaller入口を呼び、確認ダイアログだけ自動応答する
+            namespace = runpy.run_path(
+                os.environ[_INSTALLER_VARIABLE],
+                run_name="__menu_smoke_installer__",
+            )
+
+            def approve(*_args: object, **_kwargs: object) -> bool:
+                """再有効化の確認へOKで応答する。"""
+                return True
+
+            def ignore_message(*_args: object, **_kwargs: object) -> None:
+                """完了ダイアログを自動検証中に表示しない。"""
+                return None
+
+            install = namespace["install"]
+            install.__globals__["_confirm"] = approve
+            install.__globals__["_message"] = ignore_message
+            install()
+            if not is_menu_auto_install_enabled():
+                raise AssertionError("installerがOFF設定を解除しませんでした")
+            finish(True, "disabled startup and installer re-enable: passed")
+        except Exception:
+            finish(False, traceback.format_exc())
+
+    def check_reenabled() -> None:
+        """再D&D後の起動で共有メニューとチェック状態を確認する。"""
+        try:
+            root, _ = _menu_state()
+            option = _find_labeled_menu(root, _OPTION_LABEL)
+            if not cmds.menuItem(option, query=True, checkBox=True):
+                raise AssertionError("再有効化後のチェックがOFFです")
+            setting_path = (
+                Path(cmds.internalVar(userPrefDir=True))
+                / "bakedanuki"
+                / "menu.json"
+            )
+            if json.loads(setting_path.read_text(encoding="utf-8")) != {
+                "show_menu_on_startup": True
+            }:
+                raise AssertionError("専用設定ファイルのONが不正です")
+            finish(True, "re-enabled startup: passed")
+        except Exception:
+            finish(False, traceback.format_exc())
+
     # Maya の起動処理が完了してからメニューを検査する
-    qt.QTimer.singleShot(1500, check_startup)
+    checks = {
+        "initial": check_startup,
+        "disabled": check_disabled,
+        "reenabled": check_reenabled,
+    }
+    qt.QTimer.singleShot(5000, checks[phase])
 
 
 def _run_launcher(maya_version: str, util_root: Path, timeout: int) -> int:
@@ -194,6 +290,9 @@ def _run_launcher(maya_version: str, util_root: Path, timeout: int) -> int:
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     environment[_OUTPUT_VARIABLE] = str(output)
     environment[_USER_SETUP_MARKER] = str(output / "user-setup-ran.txt")
+    environment[_INSTALLER_VARIABLE] = str(
+        util_root / "bakedanuki" / "installer.py"
+    )
     environment["PYTHONPATH"] = os.pathsep.join(
         (
             str(repository / "bakedanuki" / "bakedanuki-tools" / "python"),
@@ -206,6 +305,13 @@ def _run_launcher(maya_version: str, util_root: Path, timeout: int) -> int:
             str(util_root / "bakedanuki" / "modules"),
         )
     )
+    maya_env_path = output / "prefs" / maya_version / "Maya.env"
+    development_module_paths = (
+        "MAYA_MODULE_PATH="
+        f"{(repository / 'bakedanuki' / 'modules').as_posix()};"
+        f"{(util_root / 'bakedanuki' / 'modules').as_posix()};\n"
+    )
+    maya_env_path.write_text(development_module_paths, encoding="utf-8")
 
     python_command = (
         "import runpy; runpy.run_path("
@@ -219,72 +325,90 @@ def _run_launcher(maya_version: str, util_root: Path, timeout: int) -> int:
     startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     startup_info.wShowWindow = subprocess.SW_HIDE
 
-    with (output / "process.log").open("wb") as process_log:
-        process = subprocess.Popen(
-            [
-                str(executable),
-                "-noAutoloadPlugins",
-                "-proj",
-                str(output / "project"),
-                "-log",
-                str(output / "maya.log"),
-                "-script",
-                str(startup_script),
-            ],
-            cwd=str(output),
-            env=environment,
-            startupinfo=startup_info,
-            stdin=subprocess.DEVNULL,
-            stdout=process_log,
-            stderr=subprocess.STDOUT,
+    for phase in ("initial", "disabled", "reenabled"):
+        environment[_PHASE_VARIABLE] = phase
+        result_name = (
+            "result.json" if phase == "initial" else f"result-{phase}.json"
         )
-        try:
-            deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                result_path = output / "result.json"
-                if result_path.is_file():
-                    result = json.loads(
-                        result_path.read_text(encoding="utf-8")
-                    )
-                    try:
-                        process.wait(timeout=30)
-                    except subprocess.TimeoutExpired:
-                        result = {
-                            "success": False,
-                            "detail": "検証後に Maya が終了しませんでした",
-                        }
-                    print(
-                        json.dumps(
-                            {
-                                "output": str(output),
-                                "maya_exit": process.poll(),
-                                **result,
-                            },
-                            ensure_ascii=False,
-                        )
-                    )
-                    return (
-                        0
-                        if result["success"] and process.returncode == 0
-                        else 1
-                    )
-                if process.poll() is not None:
-                    break
-                time.sleep(1)
-            print(
-                "Maya GUI smoke did not complete: "
-                f"{output} (exit={process.poll()})",
-                file=sys.stderr,
+        with (output / f"process-{phase}.log").open("wb") as process_log:
+            process = subprocess.Popen(
+                [
+                    str(executable),
+                    "-noAutoloadPlugins",
+                    "-proj",
+                    str(output / "project"),
+                    "-log",
+                    str(output / f"maya-{phase}.log"),
+                    "-script",
+                    str(startup_script),
+                ],
+                cwd=str(output),
+                env=environment,
+                startupinfo=startup_info,
+                stdin=subprocess.DEVNULL,
+                stdout=process_log,
+                stderr=subprocess.STDOUT,
             )
-            return 1
-        finally:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
+            try:
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    result_path = output / result_name
+                    if result_path.is_file():
+                        result = json.loads(
+                            result_path.read_text(encoding="utf-8")
+                        )
+                        try:
+                            process.wait(timeout=30)
+                        except subprocess.TimeoutExpired:
+                            result = {
+                                "success": False,
+                                "detail": "検証後に Maya が終了しませんでした",
+                            }
+                        print(
+                            json.dumps(
+                                {
+                                    "output": str(output),
+                                    "phase": phase,
+                                    "maya_exit": process.poll(),
+                                    **result,
+                                },
+                                ensure_ascii=False,
+                            )
+                        )
+                        if not result["success"] or process.returncode != 0:
+                            return 1
+                        if phase == "disabled":
+                            # sibling開発配置だけに必要なModule pathを次回起動前に戻す
+                            maya_env_path.write_text(
+                                development_module_paths, encoding="utf-8"
+                            )
+                        break
+                    if process.poll() is not None:
+                        break
+                    time.sleep(1)
+                else:
+                    print(
+                        "Maya GUI smoke timed out: "
+                        f"{output} ({phase}, exit={process.poll()})",
+                        file=sys.stderr,
+                    )
+                    return 1
+                if not (output / result_name).is_file():
+                    print(
+                        "Maya GUI smoke did not complete: "
+                        f"{output} ({phase}, exit={process.poll()})",
+                        file=sys.stderr,
+                    )
+                    return 1
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+    return 0
 
 
 def main() -> int:
