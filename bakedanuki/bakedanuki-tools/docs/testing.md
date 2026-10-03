@@ -114,6 +114,8 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 - `result.json`: 成否、操作履歴、実行Maya version、性能計測値、各段階のUndo状態。
 - `01-multiple-selection.png`、`02-single-selection.png`、`03-after-reload.png`:
   QtのWindow描画から保存した確認画像。
+- `02-node-name-focused.png`: 名前欄へフォーカスした入力外観の確認画像。
+  `--name-only`でも閲覧時の`01-multiple-selection.png`と対にして確認する。
 - `04-attribute-menu.png`: 初回実装時に属性名を右クリックして開いた操作メニュー。
 - `05-docked.png`、`06-floating-content.png`: Maya右側へのドッキングとfloatingの表示。
 - `08-enum-popup.png`、`09-enum-selected.png`: enumの選択肢と入力後の表示。
@@ -191,6 +193,9 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。この段�
   Undo／Redo・外部改名・選択切替・ロック状態・削除・Window終了後の監視終了を確認する。
   名前変更後の属性行と右クリック操作が最新名を使うこと。Maya本体では通常Enterと
   テンキーEnterで確定し、先にOutlinerを操作していても名前編集モードへ入らないこと。
+  閲覧中は枠なし、フォーカス中とEnter確定後は入力外観、競合した下書きはフォーカスを
+  外しても入力外観を保つこと。読み取り専用中はフォーカスしても閲覧外観でコピーでき、
+  狭いdock幅でもフォーカス移動によって名前欄の高さ・配置が変わらないこと。
 - 属性の複数選択: Ctrl／Shift・属性名ドラッグ・数値欄の縦ドラッグ、属性名だけの選択強調、
   属性名の右内側余白と入力Viewまでのspacing、値・Step・Slider・bool・enum・stringの入力palette維持、
   右クリック時の選択維持／切替、更新・Undo後の残存選択、対象ノード変更時の選択解除。

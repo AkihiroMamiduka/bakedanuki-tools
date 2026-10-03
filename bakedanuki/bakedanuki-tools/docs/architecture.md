@@ -87,6 +87,12 @@ Value先行の選択、単位の非表示、固定幅と右寄せはtoolsの表�
 stringにはutilの`StringLineEdit`を使い、bdChannelBoxでは確定したMaya値が編集中に
 変化した場合の追従を有効にします。入力保持を既定とする汎用Viewと、Maya値を優先する
 bdChannelBoxの表示方針を分けます。
+ノード名は属性stringとは異なる正本なので、utilの`MayaNodeNameBinding`と
+`StringLineEdit`を組み合わせます。Maya名の採番、外部改名の監視、Undo／Redoへの追従、
+編集可否はutilへ委譲し、toolsの`_NodeNameLineEdit`は閲覧・入力・競合時の外観だけを
+切り替えます。controllerは選択リスト末尾を基準とし、WidgetはそのnodeのUUIDで
+名前欄の寿命を判定します。同じ実体の改名や属性行の再構築では入力欄を維持し、
+選択実体が変わると旧入力を停止・破棄してから新しいBindingへ接続します。
 float値欄とStep欄ではutilの`select_all_on_mouse_focus`を有効にし、初回クリックで
 入力文字を置換できる状態にします。再クリックと横ドラッグは通常の文字編集へ渡します。
 属性行の優先順もtoolsの表示方針です。`bd_channel_box/config.py`の
