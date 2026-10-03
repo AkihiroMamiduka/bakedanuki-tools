@@ -720,7 +720,8 @@ def test_selection_reordering_closes_old_row_menu(
     cmds.select("multiB", "multiA", replace=True)
     _events()
     assert not qt.isValid(row.context_menu) or not row.context_menu.isVisible()
-    assert editor.header_label.text() == "multiA"
+    assert editor.node_name_edit is not None
+    assert editor.node_name_edit.text() == "multiA"
 
 
 def test_selection_reordering_discards_pending_numeric_input(
@@ -735,7 +736,8 @@ def test_selection_reordering_discards_pending_numeric_input(
     cmds.select("multiB", "multiA", replace=True)
     _events()
     assert editor.table_view.selected_keys() == ()
-    assert editor.header_label.text() == "multiA"
+    assert editor.node_name_edit is not None
+    assert editor.node_name_edit.text() == "multiA"
     assert cmds.getAttr("multiA.translateX") == 5.0
     assert cmds.getAttr("multiA.translateY") == 1.0
     assert cmds.getAttr("multiB.translateX") == 9.0

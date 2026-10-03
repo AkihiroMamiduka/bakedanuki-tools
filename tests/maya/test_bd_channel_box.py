@@ -93,6 +93,28 @@ def _row(widget: ChannelBoxWidget, name: str) -> AttributeRowWidget:
     return row
 
 
+def _edit_node_name(editor: ChannelBoxWidget, value: str) -> None:
+    """名前欄への入力とEnter確定を再現してQt通知を処理する。"""
+    line = editor.node_name_edit
+    assert line is not None
+    line.setText(value)
+    line.textEdited.emit(value)
+    for event_type in (
+        qt.QEvent.Type.ShortcutOverride,
+        qt.QEvent.Type.KeyPress,
+        qt.QEvent.Type.KeyRelease,
+    ):
+        event = qt.QtGui.QKeyEvent(
+            event_type,
+            qt.Qt.Key.Key_Return,
+            qt.Qt.KeyboardModifier.NoModifier,
+        )
+        event.setAccepted(False)
+        qt.QApplication.sendEvent(line, event)
+        assert event.isAccepted()
+    _events()
+
+
 def _open_context_menu(widget: qt.QWidget) -> None:
     """右クリック通知を送り、子Widgetからの伝播も含めてメニューを開く。"""
     position = widget.rect().center()
@@ -203,7 +225,7 @@ def test_selection_and_refresh_only_read_values(
     assert row.editor.spin_box.value() == 0.25
     row.editor.spin_box.setFocus()
     row.editor.spin_box.editingFinished.emit()
-    editor.header_label.setFocus()
+    editor.mode_combo.setFocus()
     editor.refresh()
     _events()
     assert cmds.getAttr("channelA.weight") == 0.25
@@ -217,7 +239,8 @@ def test_last_selected_node_drives_rows_and_alignment(
     """選択リスト末尾を表示基準にして、同じノード群の逆順も反映する。"""
     assert editor.controller.node_names == ("|channelB", "|channelA")
     assert editor.controller.representative_node_name == "|channelA"
-    assert editor.header_label.text() == "channelA"
+    assert editor.node_name_edit is not None
+    assert editor.node_name_edit.text() == "channelA"
     assert _row(editor, "lowerOnly")
 
     # 対象ノードを変えずに順序だけを入れ替え、末尾の値と行を読む
@@ -227,7 +250,8 @@ def test_last_selected_node_drives_rows_and_alignment(
     assert old_binding.is_disposed
     assert editor.controller.node_names == ("|channelA", "|channelB")
     assert editor.controller.representative_node_name == "|channelB"
-    assert editor.header_label.text() == "channelB"
+    assert editor.node_name_edit is not None
+    assert editor.node_name_edit.text() == "channelB"
     assert "lowerOnly" not in {
         row.row.attribute.name for row in editor.row_widgets
     }
@@ -271,7 +295,8 @@ def test_last_object_ignores_trailing_component_and_plug(
     _events()
     assert editor.controller.node_names == ("|channelB", "|channelA")
     assert editor.controller.representative_node_name == "|channelA"
-    assert editor.header_label.text() == "channelA"
+    assert editor.node_name_edit is not None
+    assert editor.node_name_edit.text() == "channelA"
     row = _row(editor, "weight")
     assert isinstance(row.editor, FloatSliderSpinBox)
     assert row.editor.spin_box.value() == 0.25
@@ -286,7 +311,109 @@ def test_empty_selection_clears_representative(
     assert editor.controller.node_names == ()
     assert editor.controller.representative_node_name is None
     assert editor.header_label.text() == "ノードを選択してください"
+    assert editor.node_name_edit is None
     assert not editor.row_widgets
+
+
+def test_node_name_edit_changes_only_last_selected_node_and_updates_actions(
+    editor: ChannelBoxWidget,
+) -> None:
+    """名前欄は末尾だけを改名し、再構築後の行操作も新しい名前を使う。"""
+    line = editor.node_name_edit
+    assert line is not None
+    cmds.flushUndo()
+
+    _edit_node_name(editor, "renamedChannel")
+
+    assert editor.node_name_edit is line
+    assert line.text() == "renamedChannel"
+    assert cmds.objExists("|renamedChannel")
+    assert cmds.objExists("|channelB")
+    assert editor.controller.node_names == ("|channelB", "|renamedChannel")
+    assert editor.controller.representative_node_name == "|renamedChannel"
+    _row(editor, "weight").align_action.trigger()
+    assert cmds.getAttr("channelB.weight") == 0.25
+    assert cmds.getAttr("renamedChannel.weight") == 0.25
+
+
+def test_node_name_edit_shows_maya_collision_name_and_tracks_undo(
+    editor: ChannelBoxWidget,
+) -> None:
+    """同名衝突・Undo／Redo・外部改名を同じ名前欄へ反映する。"""
+    line = editor.node_name_edit
+    assert line is not None
+    cmds.flushUndo()
+
+    _edit_node_name(editor, "channelB")
+    assert editor.node_name_edit is line
+    assert line.text() == "channelB1"
+    assert editor.controller.representative_node_name == "|channelB1"
+    cmds.undo()
+    _events()
+    assert editor.node_name_edit is line
+    assert line.text() == "channelA"
+    assert editor.controller.representative_node_name == "|channelA"
+    cmds.redo()
+    _events()
+    assert editor.node_name_edit is line
+    assert line.text() == "channelB1"
+
+    cmds.rename("channelB1", "externalChannel")
+    _events()
+    assert editor.node_name_edit is line
+    assert line.text() == "externalChannel"
+    assert "|externalChannel" in line.toolTip()
+
+
+def test_node_name_draft_is_discarded_when_selection_changes(
+    editor: ChannelBoxWidget,
+) -> None:
+    """選択切替のフォーカス移動で旧基準ノードに下書きを書き込まない。"""
+    line = editor.node_name_edit
+    assert line is not None
+    view_model = line.view_model
+    line.setText("uncommittedName")
+    line.textEdited.emit("uncommittedName")
+    cmds.flushUndo()
+
+    cmds.select("channelB", replace=True)
+    _events()
+
+    assert view_model.is_disposed
+    assert editor.node_name_edit is not line
+    assert editor.node_name_edit is not None
+    assert editor.node_name_edit.text() == "channelB"
+    assert cmds.objExists("|channelA")
+    assert not cmds.objExists("|uncommittedName")
+
+
+def test_node_name_external_edit_conflict_and_lock(
+    editor: ChannelBoxWidget,
+) -> None:
+    """外部改名中は入力を保持し、ロック中は名前を読み取り専用にする。"""
+    line = editor.node_name_edit
+    assert line is not None
+    line.setText("draftName")
+    line.textEdited.emit("draftName")
+
+    cmds.rename("channelA", "externalName")
+    _events()
+    assert editor.node_name_edit is line
+    assert line.text() == "draftName"
+    assert line.hasConflict()
+    assert editor.message_label.isVisible()
+    line.editingFinished.emit()
+    assert cmds.objExists("|externalName")
+    _edit_node_name(editor, "draftName")
+    assert cmds.objExists("|draftName")
+    assert not line.hasConflict()
+
+    cmds.lockNode("draftName", lock=False, lockName=True)
+    editor.refresh()
+    assert line.isReadOnly()
+    cmds.lockNode("draftName", lock=False, lockName=False)
+    editor.refresh()
+    assert not line.isReadOnly()
 
 
 def test_supported_types_flags_and_view_selection(

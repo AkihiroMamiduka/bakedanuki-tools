@@ -37,6 +37,7 @@ from bd_tools.bd_channel_box.table import ChannelTableView
 assert_type(bd_channel_box.show(), bd_channel_box.ChannelBoxWindow)
 assert_type(bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
 assert_type(bd_channel_box.show().widget, ChannelBoxWidget)
+assert_type(bd_channel_box.show().widget.node_name_edit, StringLineEdit | None)
 assert_type(bd_channel_box.show().ui_state, UiStateManager)
 assert_type(bd_channel_box.show().ui_state_tracker, MayaUiStateTracker)
 row = bd_channel_box.show().widget.row_widgets[0]

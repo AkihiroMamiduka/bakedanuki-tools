@@ -62,6 +62,9 @@ util側の`tests/maya/ui/test_plugs_value_edits.py`で、複数Bindingをまと�
     scripts/test_bd_channel_box_maya.py --maya-version 2025 --timeout 180
 ```
 
+名前欄の描画・Enter確定・フォーカスと終了処理だけを検証する場合は、
+同じコマンドへ`--name-only`を追加します。
+
 runnerは別の `maya.exe` を起動し、一時ディレクトリの `MAYA_APP_DIR`、Maya.env探索先、
 project、script pathを使用します。通常のMaya.envを書き換えず、起動済みMayaへ接続しません。
 PythonのuserSetupは読み込まず、検証用sceneで操作した後に専用processを終了します。
@@ -183,6 +186,10 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。この段�
   照会リストの順序だけで表示nodeを断定しない。network混在時の標準UIの対象も記録する。
   複数ノードのアニメーションカーブCopy/Pasteは、基準優先のBinding順ではなく
   元の選択順でコピー元と貼り付け先を対応させること。
+- ノード名: 複数選択では末尾だけを改名し、衝突時はMayaの確定名を示すこと。
+  Undo／Redo・外部改名・選択切替・ロック状態・削除・Window終了後の監視終了を確認する。
+  名前変更後の属性行と右クリック操作が最新名を使うこと。Maya本体では通常Enterと
+  テンキーEnterで確定し、先にOutlinerを操作していても名前編集モードへ入らないこと。
 - 属性の複数選択: Ctrl／Shift・属性名ドラッグ・数値欄の縦ドラッグ、属性名だけの選択強調、
   属性名の右内側余白と入力Viewまでのspacing、値・Step・Slider・bool・enum・stringの入力palette維持、
   右クリック時の選択維持／切替、更新・Undo後の残存選択、対象ノード変更時の選択解除。

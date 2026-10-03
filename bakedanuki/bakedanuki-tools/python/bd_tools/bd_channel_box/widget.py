@@ -7,12 +7,14 @@ from collections.abc import Callable
 from functools import partial
 from typing import Literal, Protocol, cast
 
+from bd_util import Nodes
 from bd_util.maya.ui import (
     ChannelDisplayState,
     MayaBoolPlugsBinding,
     MayaEnumPlugsBinding,
     MayaEditSession,
     MayaFloatPlugsBinding,
+    MayaNodeNameBinding,
     MayaPlugInputState,
     MayaStringPlugsBinding,
     get_channel_box_precision,
@@ -56,6 +58,10 @@ _NAME_FIELD_PREFERRED_WIDTH = 92
 _NAME_FIELD_RIGHT_MARGIN = 4
 _INPUT_STATE_WIDTH = 6
 _INPUT_STATE_VERTICAL_INSET = 1
+_NAME_CONFLICT_MESSAGE = (
+    "ノード名が外部で変更されました。"
+    "Enterで入力名を適用するか、Escapeで取り消してください。"
+)
 _IndicatorState = MayaPlugInputState | Literal["locked"]
 _INPUT_STATE_COLORS: dict[_IndicatorState, str] = {
     "nonkeyable": "#949494",
@@ -987,6 +993,9 @@ class ChannelBoxWidget(qt.QWidget):
         self.row_widgets: tuple[
             AttributeRowWidget | AttributeStateRowWidget, ...
         ] = ()
+        self.node_name_edit: StringLineEdit | None = None
+        self._node_name_binding: MayaNodeNameBinding | None = None
+        self._node_name_id: str | None = None
         self._scroll_anchor: tuple[str, int] | None = None
         self._table_node_ids: tuple[str, ...] = ()
         self._scroll_timer = qt.QTimer(self)
@@ -1149,6 +1158,9 @@ class ChannelBoxWidget(qt.QWidget):
         self.header_label.setSizePolicy(
             qt.QSizePolicy.Policy.Ignored, qt.QSizePolicy.Policy.Preferred
         )
+        self.header_layout = qt.QHBoxLayout()
+        self.header_layout.setContentsMargins(0, 0, 0, 0)
+        self.header_layout.addWidget(self.header_label)
         self.context_menu = qt.QMenu(self)
         self.step_settings_menu = qt.QMenu("Step設定", self)
         self.reset_all_steps_action = qt.QAction(
@@ -1185,7 +1197,7 @@ class ChannelBoxWidget(qt.QWidget):
         layout.setSpacing(6)
         layout.setMenuBar(self.menu_bar)
         layout.addLayout(controls_layout)
-        layout.addWidget(self.header_label)
+        layout.addLayout(self.header_layout)
         layout.addWidget(self.empty_label)
         layout.addWidget(self.scroll_area, 1)
         layout.addWidget(self.message_label)
@@ -1203,6 +1215,9 @@ class ChannelBoxWidget(qt.QWidget):
             sweep.finished.connect(self.controller.state_edit_session.finish)
             self.controller.state_edit_session.finished.connect(sweep.finish)
         self.controller.rows_changed.connect(self._rebuild_rows)
+        self.controller.selection_invalidated.connect(
+            self._dispose_node_name_editor
+        )
         self.controller.rows_about_to_change.connect(
             self._cancel_transient_input
         )
@@ -1419,6 +1434,74 @@ class ChannelBoxWidget(qt.QWidget):
         """以前の操作通知を消して、現在の操作結果と混同させない。"""
         self.message_label.clear()
         self.message_label.hide()
+
+    def _show_name_conflict(self, conflicted: bool) -> None:
+        """外部改名と未確定入力の競合を、既存の通知欄へ示す。"""
+        if conflicted:
+            self.message_label.setText(_NAME_CONFLICT_MESSAGE)
+            self.message_label.show()
+        elif self.message_label.text() == _NAME_CONFLICT_MESSAGE:
+            self._clear_message()
+
+    def _dispose_node_name_editor(self) -> None:
+        """旧ノードへフォーカス移動で書き込む前に名前入力を停止する。"""
+        editor, self.node_name_edit = self.node_name_edit, None
+        binding, self._node_name_binding = self._node_name_binding, None
+        self._node_name_id = None
+        if editor is not None and qt.isValid(editor):
+            editor.setInputEnabled(False)
+        if binding is not None:
+            binding.dispose()
+        if editor is not None and qt.isValid(editor):
+            self.header_layout.removeWidget(editor)
+            editor.hide()
+            editor.deleteLater()
+        self.header_label.show()
+
+    def _sync_node_name_editor(self) -> None:
+        """基準ノードの実体が変わった場合だけ名前入力欄を接続し直す。"""
+        names = self.controller.node_names
+        representative = self.controller.representative_node_name
+        node_id = self.controller.node_ids[-1] if names else None
+        binding = self._node_name_binding
+        editor = self.node_name_edit
+        if (
+            representative is not None
+            and node_id == self._node_name_id
+            and binding is not None
+            and not binding.is_disposed
+            and editor is not None
+            and qt.isValid(editor)
+        ):
+            binding.refresh()
+        else:
+            self._dispose_node_name_editor()
+            if representative is not None and node_id is not None:
+                # Mayaの一意なpathから取得し、選択末尾の実体だけを接続する
+                binding = MayaNodeNameBinding(
+                    Nodes().existing(representative), parent=self
+                )
+                try:
+                    editor = StringLineEdit(binding, self)
+                except Exception:
+                    binding.dispose()
+                    raise
+                editor.setObjectName("nodeNameEdit")
+                editor.setAccessibleName("基準ノード名")
+                editor.edit_failed.connect(self._show_error)
+                editor.conflict_changed.connect(self._show_name_conflict)
+                self.header_layout.addWidget(editor)
+                self.node_name_edit = editor
+                self._node_name_binding = binding
+                self._node_name_id = node_id
+                self.header_label.hide()
+        if representative is not None and self.node_name_edit is not None:
+            self.node_name_edit.setToolTip(
+                f"選択: {len(names)} ノード（末尾が基準）\n" + "\n".join(names)
+            )
+        else:
+            self.header_label.setText("ノードを選択してください")
+            self.header_label.setToolTip("")
 
     def _cancel_transient_input(self) -> None:
         """Bindingを破棄する前に、古い選択への入力とメニューを終了する。"""
@@ -2037,15 +2120,7 @@ class ChannelBoxWidget(qt.QWidget):
             widget.hide()
         self.row_widgets = ()
         names = self.controller.node_names
-        representative = self.controller.representative_node_name
-        if representative is not None:
-            self.header_label.setText(representative.rsplit("|", 1)[-1])
-            self.header_label.setToolTip(
-                f"選択: {len(names)} ノード（末尾が基準）\n" + "\n".join(names)
-            )
-        else:
-            self.header_label.setText("ノードを選択してください")
-            self.header_label.setToolTip("")
+        self._sync_node_name_editor()
         widgets: list[AttributeRowWidget | AttributeStateRowWidget] = []
         try:
             for row in self.controller.rows:
@@ -2340,6 +2415,7 @@ class ChannelBoxWidget(qt.QWidget):
 
     def dispose(self) -> None:
         """画面の入力と監視を即時に終了する。"""
+        self._dispose_node_name_editor()
         self.state_sweep.dispose()
         self.lock_sweep.dispose()
         self._scroll_timer.stop()

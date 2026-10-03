@@ -121,7 +121,8 @@ def test_three_node_selection_uses_last_enum_as_reference(
         "|enumC",
     )
     assert enum_editor.controller.representative_node_name == "|enumC"
-    assert enum_editor.header_label.text() == "enumC"
+    assert enum_editor.node_name_edit is not None
+    assert enum_editor.node_name_edit.text() == "enumC"
     assert _row(enum_editor).row.target_names == (
         "|enumC",
         "|enumA",

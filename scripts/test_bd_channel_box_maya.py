@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 _OUTPUT_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_OUTPUT"
 _PHASE_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PHASE"
 _PREPARE_RESTART_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PREPARE_RESTART"
+_NAME_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_NAME_ONLY"
 _PERSISTED_STEP = 0.5
 _STARTUP_IDLE_COMMAND = (
     "import __main__; "
@@ -81,6 +82,7 @@ class _MayaSmokeSession:
             self._setup_scene,
             self._show,
             self._inspect,
+            self._inspect_node_name_enter,
             self._inspect_last_selected_representative,
             self._inspect_native_reference_after_idle,
             self._inspect_native_reference_after_idle,
@@ -144,6 +146,14 @@ class _MayaSmokeSession:
                 self._inspect_restart,
                 self._setup_scene,
                 self._edit_after_restart,
+                self._finish,
+            )
+        elif os.environ.get(_NAME_ONLY_VARIABLE) == "1":
+            self._stages = (
+                self._setup_scene,
+                self._show,
+                self._inspect,
+                self._inspect_node_name_enter,
                 self._finish,
             )
 
@@ -351,6 +361,54 @@ class _MayaSmokeSession:
                     line_edit.setText(original_text)
         self.steps.append("inspect_rendered_views")
 
+    def _inspect_node_name_enter(self) -> None:
+        """実Mayaの名前欄でEnterが改名を確定し、入力欄に留まることを確認する。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+
+        widget = self._require_window().widget
+        editor = widget.node_name_edit
+        if editor is None:
+            raise AssertionError("基準ノードの名前入力欄がありません")
+        original = self.nodes[0]
+        requested = "bdChannelBoxNameEnterQA"
+        editor.setFocus()
+        editor.setText(requested)
+        editor.textEdited.emit(requested)
+        for event_type in (
+            qt.QEvent.Type.ShortcutOverride,
+            qt.QEvent.Type.KeyPress,
+            qt.QEvent.Type.KeyRelease,
+        ):
+            event = qt.QtGui.QKeyEvent(
+                event_type,
+                qt.Qt.Key.Key_Return,
+                qt.Qt.KeyboardModifier.NoModifier,
+            )
+            event.setAccepted(False)
+            qt.QApplication.sendEvent(editor, event)
+            if not event.isAccepted():
+                raise AssertionError("名前欄がEnterを受理しませんでした")
+        self._flush_gui()
+        try:
+            if (
+                not cmds.objExists(f"|{requested}")
+                or editor.text() != requested
+            ):
+                raise AssertionError(
+                    "名前欄でのEnter確定が実名へ反映されません"
+                )
+            if qt.QApplication.focusWidget() is not editor:
+                raise AssertionError(
+                    "Enter確定後に名前欄からフォーカスが移りました"
+                )
+        finally:
+            if cmds.objExists(f"|{requested}"):
+                cmds.rename(requested, original)
+                self._flush_gui()
+        self.steps.append("inspect_node_name_enter")
+
     def _assert_representative_selection(
         self, selected: tuple[str, ...], expected_weight: float
     ) -> None:
@@ -369,9 +427,11 @@ class _MayaSmokeSession:
             )
         if widget.controller.representative_node_name != expected_paths[-1]:
             raise AssertionError("末尾ノードが表示基準になっていません")
-        if widget.header_label.text() != selected[-1]:
+        name_edit = widget.node_name_edit
+        if name_edit is None or name_edit.text() != selected[-1]:
             raise AssertionError(
-                f"見出しが末尾ノードではありません: {widget.header_label.text()}"
+                "名前欄が末尾ノードではありません: "
+                f"{name_edit.text() if name_edit is not None else None}"
             )
         editor = self._row("weight").editor
         if not isinstance(editor, (FloatSliderSpinBox, FloatValueStepSpinBox)):
@@ -3268,6 +3328,7 @@ def _launch(
     *,
     prepare_restart: bool = False,
     restart_from: Path | None = None,
+    name_only: bool = False,
 ) -> int:
     """固有の設定と作業ディレクトリを使う検証Maya processを起動する。"""
     repository = Path(__file__).resolve().parents[1]
@@ -3313,6 +3374,7 @@ def _launch(
     environment[_OUTPUT_VARIABLE] = str(output)
     environment[_PHASE_VARIABLE] = phase
     environment[_PREPARE_RESTART_VARIABLE] = "1" if prepare_restart else "0"
+    environment[_NAME_ONLY_VARIABLE] = "1" if name_only else "0"
     environment["BAKEDANUKI_UTIL_ROOT"] = str(util_root)
     environment["PYTHONPATH"] = os.pathsep.join(
         (
@@ -3407,6 +3469,7 @@ def main() -> int:
     restart_group = parser.add_mutually_exclusive_group()
     restart_group.add_argument("--prepare-restart", action="store_true")
     restart_group.add_argument("--restart-from", type=Path)
+    restart_group.add_argument("--name-only", action="store_true")
     arguments = parser.parse_args()
     util_root = arguments.util_root or Path(
         os.environ.get(
@@ -3420,6 +3483,7 @@ def main() -> int:
         arguments.timeout,
         prepare_restart=arguments.prepare_restart,
         restart_from=arguments.restart_from,
+        name_only=arguments.name_only,
     )
 
 

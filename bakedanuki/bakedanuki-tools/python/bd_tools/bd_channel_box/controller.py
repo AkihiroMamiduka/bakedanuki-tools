@@ -139,6 +139,7 @@ class ChannelBoxController(qt.QObject):
 
     rows_changed = qt.Signal()
     rows_about_to_change = qt.Signal()
+    selection_invalidated = qt.Signal()
     error_occurred = qt.Signal(str)
     operation_reported = qt.Signal(str)
     mode_changed = qt.Signal()
@@ -179,7 +180,12 @@ class ChannelBoxController(qt.QObject):
 
         # 構成変更は次のQtイベントへまとめ、値の同期はBindingへ委譲する
         try:
-            for name in ("SelectionChanged", "Undo", "Redo"):
+            self._events.register(
+                om.MEventMessage.addEventCallback(
+                    "SelectionChanged", self._on_selection_changed
+                )
+            )
+            for name in ("Undo", "Redo"):
                 self._events.register(
                     om.MEventMessage.addEventCallback(
                         name, self._queue_rebuild
@@ -311,10 +317,18 @@ class ChannelBoxController(qt.QObject):
         self._dispose_rows()
         self._timer.start(0)
 
+    def _on_selection_changed(self, *_args: object) -> None:
+        """選択が切り替わった時点でノード名の未確定入力を止める。"""
+        if self._disposed:
+            return
+        self.selection_invalidated.emit()
+        self._queue_rebuild()
+
     def _before_scene(self, *_args: object) -> None:
         """scene切替前に古い対象と連続編集中のUndoを解放する。"""
         if self._disposed:
             return
+        self.selection_invalidated.emit()
         self._timer.stop()
         self._dispose_rows()
         self._nodes.dispose()

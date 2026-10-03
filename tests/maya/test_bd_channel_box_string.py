@@ -143,7 +143,8 @@ def test_string_copy_follows_last_selected_node(
         "|channelStringB",
     )
     assert editor.controller.representative_node_name == "|channelStringB"
-    assert editor.header_label.text() == "channelStringB"
+    assert editor.node_name_edit is not None
+    assert editor.node_name_edit.text() == "channelStringB"
     row = _row(editor, "caption")
     assert isinstance(row.editor, StringLineEdit)
     assert row.editor.text() == "後続"

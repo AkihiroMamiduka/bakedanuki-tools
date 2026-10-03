@@ -89,10 +89,19 @@ MayaのuiScriptは `bd_tools.bd_channel_box.ui.restore()` を呼び、復元中�
 - `Attribute Search:`はNice Name・属性名・正式pathを検索します。初期状態では
   Attribute Filterが「全て」の場合だけ表示し、検索文字列はWindow内だけで保持します。
 - 対象objectを抽出した現在のMaya active selection listの末尾ノードが基準です。
-  ノード名だけを画面上部へ表示し、選択数と選択順の全path、末尾が基準であることを
-  tooltipへまとめます。
+  画面上部の名前欄では、複数選択中も基準ノードだけを改名します。
+  選択数と選択順の全path、末尾が基準であることをtooltipへまとめます。
   範囲選択やスクリプトによる選択も現在のリスト順に従います。クリック履歴を記録する
   Mayaの設定は変更せず、厳密なクリック履歴順を独自に追跡しません。
+- 名前欄はutilの`MayaNodeNameBinding`と`StringLineEdit`を使用します。
+  Enter・テンキーEnter・通常のフォーカス移動で確定し、Escapeで未確定入力を破棄します。
+  名前の衝突はMayaに委ね、採番後の確定名を表示します。通常の改名とUndo／Redoにも追従します。
+  入力する名前は現在のnamespace内に限定し、transformに付くShape名の追従はMaya標準に従います。
+  外部改名が編集中に起きた場合は入力を保持して競合を通知し、通常のフォーカス移動では
+  上書きしません。Enterで明示的に確定できます。
+  選択が変わると旧ノードへの未確定入力を破棄します。未選択時は案内文を表示し、
+  参照ノードや名前ロック中はコピー可能な読み取り専用欄にします。
+  名前欄の右クリックは文字列編集メニューです。属性行の右クリック操作は改名後の名前へ追従します。
 - Maya nodeのobject選択が対象です。componentとplug選択は除外し、Shapeや履歴を
   自動で追加しません。DAG instanceの重複選択は同じnodeへまとめます。
   重複時は従来どおり最初のpathを残し、その抽出結果の末尾を基準にします。
@@ -845,11 +854,13 @@ bd_tools.reload_package(reload_util=True) # utilも変更した場合
 
 ## 実装の分担
 
-`bd_channel_box/ui.py` は公開Windowと配置・reload、`widget.py` は属性行・メニュー・検索条件、
+`bd_channel_box/ui.py` は公開Windowと配置・reload、`widget.py` は名前欄・属性行・メニュー・検索条件、
 `table.py` は属性選択・数値直接入力・検索行の表示切替、`controller.py` は基準node・対応属性・
 選択追従と操作対象の組み立てを所有します。
 controllerの`node_names`と`node_ids`はMayaの選択順を維持し、
 `representative_node_name`はその末尾（未選択時は`None`）を返します。
+名前欄のBindingは選択変更時に古い入力を終了します。改名・Undo／Redo・
+モード／フィルター変更で属性行を再構築する際は、末尾nodeのUUIDが同じなら名前欄を維持します。
 行の属性とフィルターは末尾の基準nodeで決め、Bindingと行の`target_names`だけを
 「基準node、そのほかの対象を元の選択順」に並べます。utilの先頭plugを代表とする契約を
 保ち、複数ノードのアニメーションカーブ対応には元の`node_names`順を使用します。
