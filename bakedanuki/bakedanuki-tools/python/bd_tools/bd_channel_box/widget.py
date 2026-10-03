@@ -557,7 +557,7 @@ class AttributeRowWidget(qt.QWidget):
         self.context_menu.addMenu(self.align_menu)
         self.context_menu.addMenu(self.copy_menu)
         self.context_menu.addMenu(self.paste_menu)
-        self.freeze_separator_action = self.context_menu.addSeparator()
+        self.context_menu.addSeparator()
         self.context_menu.addMenu(self.freeze_menu)
         self.editor = self._create_editor(
             single_step,
@@ -584,6 +584,16 @@ class AttributeRowWidget(qt.QWidget):
         layout.addWidget(self.input_indicator)
         layout.addWidget(self.editor)
         self._update_state()
+
+    @property
+    def freeze_separator_action(self) -> qt.QAction:
+        """配置リセットで再生成される区切りを、現在のメニューから取得する。"""
+        actions = self.context_menu.actions()
+        freeze_action = self.freeze_menu.menuAction()
+        for previous, action in zip(actions, actions[1:]):
+            if action == freeze_action and previous.isSeparator():
+                return previous
+        raise RuntimeError("フリーズメニュー直前の区切りがありません")
 
     def contextMenuEvent(self, event: qt.QtGui.QContextMenuEvent) -> None:
         """属性行のどこからでも共通の操作メニューを開く。"""
@@ -1098,7 +1108,7 @@ class ChannelBoxWidget(qt.QWidget):
             self.filter_combo.addItem(label, value)
         self.filter_combo.setAccessibleName("属性の表示フィルター")
         self.filter_combo.setToolTip(
-            "先頭の選択ノードの表示状態で絞り込みます。\n"
+            "末尾の基準ノードの表示状態で絞り込みます。\n"
             "channelboxは非keyableでChannel Boxに表示する属性です。"
         )
         self.mode_label = qt.QLabel("Mode:", self)
@@ -2027,10 +2037,11 @@ class ChannelBoxWidget(qt.QWidget):
             widget.hide()
         self.row_widgets = ()
         names = self.controller.node_names
-        if names:
-            self.header_label.setText(names[0].rsplit("|", 1)[-1])
+        representative = self.controller.representative_node_name
+        if representative is not None:
+            self.header_label.setText(representative.rsplit("|", 1)[-1])
             self.header_label.setToolTip(
-                f"選択: {len(names)} ノード（先頭が基準）\n" + "\n".join(names)
+                f"選択: {len(names)} ノード（末尾が基準）\n" + "\n".join(names)
             )
         else:
             self.header_label.setText("ノードを選択してください")

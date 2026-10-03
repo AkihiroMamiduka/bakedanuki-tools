@@ -49,13 +49,11 @@ util側の`tests/maya/ui/test_plugs_value_edits.py`で、複数Bindingをまと�
 
 ## bdChannelBoxのMaya本体検証
 
-この節の本体runnerは初回実装時の記録を含み、現行の右クリックメニューとは未同期です。
-`scripts/test_bd_channel_box_maya.py`には廃止済みの`row.refresh_action`を使う工程と、
-現在はサブメニュー内にある揃える・ロック操作を最上位から実行する工程が残っています。
-次に本体runnerを使う際は、これらの工程を現行メニューに合わせて更新し、結果を再検証してください。
+`scripts/test_bd_channel_box_maya.py`は、末尾ノードを基準にする選択追従と、
+現行の揃える・ロックのサブメニュー、Step設定順を検証します。
 現行メニューの自動回帰には`tests/maya/test_bd_channel_box*.py`を使用します。
 
-工程を更新した後、リポジトリ直下から専用runnerを実行します。
+リポジトリ直下から専用runnerを実行します。
 `--maya-version` は2025 / 2026 / 2027を
 指定でき、`--util-root` を省略すると環境変数またはsiblingのutilを使用します。
 
@@ -69,11 +67,12 @@ project、script pathを使用します。通常のMaya.envを書き換えず、
 PythonのuserSetupは読み込まず、検証用sceneで操作した後に専用processを終了します。
 時間切れの場合も、runner自身が起動したprocessだけを終了します。
 起動時のdeferred処理が完了した後に検証を開始し、専用sceneのUndoを有効にします。
+Qt signal経由の例外も工程名付きで記録し、操作工程を終えても例外が残れば失敗とします。
 
-初回実装時のrunnerは、boolのCheckBoxへのSpace入力、floatの文字入力、
+runnerは、boolのCheckBoxへのSpace入力、floatの文字入力、
 Sliderのマウスドラッグ、enumの選択肢表示・マウス選択・飛び番入力、
-当時の右クリックメニューからの表示更新と混在値の操作を検証していました。
-現行メニューに「表示を更新」はありません。
+右クリックのサブメニューからの整列と複数属性のロックを検証します。
+右クリックに「表示を更新」がないことと、直接更新が値・Undoを変更しないことも確認します。
 各操作の1回Undo、選択追従、close / reopen、utilとtoolsのreloadも検証対象です。
 ドッキングからfloatingへの切替、Mayaへのタブ再配置、Maya側のcloseによる破棄も確認します。
 step欄のキー入力が値とUndoを変更しないこと、変更後の刻み幅で値入力できること、
@@ -143,6 +142,9 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
   帯の中央画素と通常背景色、上下1pxの余白を照合する。
 - `40-special-input-colors.png`: Driven Key・Expression・Muted・Animation Layer・
   Nonkeyable・Animation Clip・Key Alteredを実接続で描画した画像。
+- `41-last-selected-reference.png`: 2ノードの元の選択順を保ち、末尾ノードの名前と値を表示した画像。
+- `42-native-reference-0.png`〜`42-native-reference-7.png`: 選択履歴設定のOFF／ONと
+  transform・jointの順序変更、再追加、network混在時のMaya標準Channel Boxの実表示。
 - `result-restart.json`、`clipboard-original.json`: 別Maya processでのOSクリップボード読取り結果と、
   検証後に復元する元のMIME data。
 - `progress.json`: 実行中の段階と完了済みの操作。
@@ -172,6 +174,15 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。この段�
 変更ごとの件数と確認範囲は[bdChannelBoxの検証記録](bd_channel_box.md#検証)を参照します。
 変更した仕様に応じて既存testと本体runnerを更新し、次を確認します。
 
+- 基準ノード: 対象objectを抽出した選択リストの末尾を表示し、順序を入れ替えると
+  見出し・属性行・値・enum定義・編集可否・接続色・表示状態が一緒に切り替わること。
+  component・plug・同一nodeの重複除去と選択履歴設定の維持、未選択・単一・3ノードも確認する。
+  選択順変更時は属性選択・古いメニュー・未確定入力を破棄し、sceneへ表示値を書き戻さないこと。
+  Maya本体ではtransform・jointの順序変更と再追加を標準Channel Boxの描画に照らし、
+  末尾の基準が一致すること。`mainObjectList`は同型の複数対象を返すため、
+  照会リストの順序だけで表示nodeを断定しない。network混在時の標準UIの対象も記録する。
+  複数ノードのアニメーションカーブCopy/Pasteは、基準優先のBinding順ではなく
+  元の選択順でコピー元と貼り付け先を対応させること。
 - 属性の複数選択: Ctrl／Shift・属性名ドラッグ・数値欄の縦ドラッグ、属性名だけの選択強調、
   属性名の右内側余白と入力Viewまでのspacing、値・Step・Slider・bool・enum・stringの入力palette維持、
   右クリック時の選択維持／切替、更新・Undo後の残存選択、対象ノード変更時の選択解除。
@@ -199,7 +210,7 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。この段�
   sceneとUndoを変更しないこと。Pasteが1個／複数nodeの同一正式pathへ、表示行と行順に依存せず
   非表示属性も適用すること。欠落・型違い・enum定義違い・readonly対象の内部除外、hard limitの
   全体拒否、一回Undo、同値時の無Undo、壊れたdataと未対応versionの無書込みを確認する。
-  表示状態で絞るPasteは先頭選択nodeでpathを決め、後続nodeへ同じpathを適用すること、
+  表示状態で絞るPasteは末尾の基準nodeでpathを決め、他のnodeへ同じpathを適用すること、
   成功・部分適用・対象0件で通知を表示せず、以前の通知を消すことも確認する。
   一属性値だけの場合は選択した複数の同型pathと全選択nodeへ展開し、複数値や型・単位・
   enum定義が異なる対象へ誤って適用しないことも確認する。

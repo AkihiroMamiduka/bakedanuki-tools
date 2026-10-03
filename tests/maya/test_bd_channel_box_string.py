@@ -9,7 +9,7 @@ from typing import cast
 import pytest
 from maya import cmds
 
-from bd_util.maya.ui import MayaScalarValueClipboard
+from bd_util.maya.ui import MayaScalarValueClipboard, MayaScalarValueTransfer
 from bd_util.ui import StringLineEdit, qt
 
 from bd_tools.bd_channel_box.widget import AttributeRowWidget, ChannelBoxWidget
@@ -73,7 +73,7 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
             cmds.addAttr(name, longName=path, dataType="string")
             cmds.setAttr(f"{name}.{path}", value, type="string")
             cmds.setAttr(f"{name}.{path}", channelBox=True)
-    cmds.select("channelStringA", "channelStringB", replace=True)
+    cmds.select("channelStringB", "channelStringA", replace=True)
     cmds.undoInfo(state=True)
     cmds.flushUndo()
     widget = ChannelBoxWidget()
@@ -120,6 +120,42 @@ def test_string_rows_show_mixed_and_edit_selected_paths_once(
     assert cmds.getAttr("channelStringA.alternate") == "左"
     assert cmds.getAttr("channelStringB.alternate") == "右"
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_string_copy_follows_last_selected_node(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """選択順だけを変えるとstring表示と属性値Copyの基準も変わる。"""
+    copied: list[MayaScalarValueTransfer] = []
+
+    def capture_copy(
+        _clipboard: MayaScalarValueClipboard, transfer: MayaScalarValueTransfer
+    ) -> None:
+        """OS clipboardを変更せず、コピーされる搬送値を記録する。"""
+        copied.append(transfer)
+
+    monkeypatch.setattr(MayaScalarValueClipboard, "write", capture_copy)
+    assert editor.controller.representative_node_name == "|channelStringA"
+    cmds.select("channelStringA", "channelStringB", replace=True)
+    _events()
+    assert editor.controller.node_names == (
+        "|channelStringA",
+        "|channelStringB",
+    )
+    assert editor.controller.representative_node_name == "|channelStringB"
+    assert editor.header_label.text() == "channelStringB"
+    row = _row(editor, "caption")
+    assert isinstance(row.editor, StringLineEdit)
+    assert row.editor.text() == "後続"
+    assert row.row.target_names == (
+        "|channelStringB",
+        "|channelStringA",
+    )
+    assert (
+        editor.controller.copy_selected_values((("caption", "string"),)) == 1
+    )
+    transfer = copied[0]
+    assert transfer.nodes[0].values[0].value == "後続"
 
 
 def test_string_field_opens_attribute_context_menu(

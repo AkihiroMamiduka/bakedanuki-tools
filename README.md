@@ -83,7 +83,7 @@ bd_channel_box.show()
 初回はMaya右側へドッキングし、タイトル部分のドラッグでfloatingやタブ配置へ変更できます。
 終了は `bd_channel_box.close()`、配置のリセットと再表示は `bd_channel_box.reset_layout()` です。
 
-選択リストの先頭ノードを基準に、Channel Box に表示する bool・float 系・enum属性の
+対象objectを抽出した選択リストの末尾ノードを基準に、Channel Box に表示する bool・float 系・enum属性の
 入力欄を表示します。同名・同種の属性を持つ選択ノードへ、編集時だけ値を一括反映します。
 選択や表示更新では値を揃えません。両側に hard min/max がある属性は Slider 付き、
 bool は属性名の右に置く CheckBox です。対応する既存アニメーション属性を編集すると、

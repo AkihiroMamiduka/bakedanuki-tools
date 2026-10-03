@@ -9,6 +9,18 @@
 
 ### Changed
 
+- bdChannelBoxの基準ノードを、対象objectを抽出した現在の選択リストの先頭から末尾へ変更。
+  ノード名・属性行・表示値・編集可否・接続色、値を揃える操作、値のコピー元、
+  表示条件付きペーストとフリーズメニューの判定を同じ末尾ノードへ統一する。
+  component・plugの除外と同一nodeの重複除去、Mayaの選択履歴設定は従来どおり。
+  選択リスト自体の順序を維持し、複数ノードのアニメーションカーブは元の選択順で対応させる。
+  `ChannelBoxController.representative_node_name`で基準名（未選択時は`None`）を取得できる。
+  行の`target_names`は基準優先の順となるため、選択順が必要な利用側はcontrollerの
+  `node_names`を使用する。
+  Maya本体で配置リセット後に再生成されたメニュー区切りを取得し直し、
+  フリーズメニューの準備時に削除済みQActionを参照する問題も修正。
+  旧仕様で先頭に選んでいた基準ノードは最後に選択する。scene・保存設定の移行は不要で、
+  `bd_tools.reload_package()`で反映できる。
 - bdChannelBoxの値編集行メニューで「この値に揃える」を
   「表示ノードの値に揃える > 選択属性／全て／Keyable + ChannelBox／Keyable／
   ChannelBox／Hide」へ変更し、アニメーションレイヤ操作と値のコピー・ペーストの間へ移動。
@@ -41,7 +53,7 @@
   両モードで利用できる。除去するとそのレイヤ上のキーも失われるが、1回のUndoで戻せる。
   sceneのレイヤ所属とキーに影響するが設定移行は不要。`bd_tools.reload_package()`で反映できる。
 - bdChannelBoxの値編集行メニューに「フリーズ > 移動／回転／スケール／全て」を追加。
-  先頭選択ノードがtransform系の場合だけ表示し、選択中のtransform系ノードへ
+  基準ノードがtransform系の場合だけ表示し、選択中のtransform系ノードへ
   Maya標準の`makeIdentity -apply true`を適用する。jointの移動は対象外。
   形状・子階層とsceneの値に影響するが保存設定の移行は不要。
   `bd_tools.reload_package()`で反映できる。

@@ -71,7 +71,7 @@ def enum_editor(
             keyable=True,
         )
         _set(name + ".mode", value)
-    cmds.select(*_NODES, replace=True)
+    cmds.select(*reversed(_NODES), replace=True)
     cmds.flushUndo()
     widget = ChannelBoxWidget()
     widget.show()
@@ -98,6 +98,40 @@ def test_enum_initial_refresh_and_same_index_only_read(
     assert "3/3" in combo.toolTip()
     combo.setCurrentIndex(combo.currentIndex())
     enum_editor.refresh()
+    _events()
+    assert _values() == [5, 0, -2]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_three_node_selection_uses_last_enum_as_reference(
+    enum_editor: ChannelBoxWidget,
+) -> None:
+    """三ノード選択の末尾を基準に表示し、その値へ明示的に揃える。"""
+    assert enum_editor.controller.node_names == (
+        "|enumC",
+        "|enumB",
+        "|enumA",
+    )
+    assert enum_editor.controller.representative_node_name == "|enumA"
+    cmds.select(*_NODES, replace=True)
+    _events()
+    assert enum_editor.controller.node_names == (
+        "|enumA",
+        "|enumB",
+        "|enumC",
+    )
+    assert enum_editor.controller.representative_node_name == "|enumC"
+    assert enum_editor.header_label.text() == "enumC"
+    assert _row(enum_editor).row.target_names == (
+        "|enumC",
+        "|enumA",
+        "|enumB",
+    )
+    assert _combo(enum_editor).currentText() == "Negative"
+    cmds.flushUndo()
+    _row(enum_editor).align_action.trigger()
+    assert _values() == [-2, -2, -2]
+    cmds.undo()
     _events()
     assert _values() == [5, 0, -2]
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)

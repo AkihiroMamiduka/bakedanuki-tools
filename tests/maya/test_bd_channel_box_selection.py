@@ -40,6 +40,28 @@ class _StaticValueClipboard:
         return self._transfer
 
 
+class _MemoryValueClipboard:
+    """OS clipboardを使わずCopyした搬送値を検査する。"""
+
+    def __init__(self) -> None:
+        """まだコピー値がない状態を作る。"""
+        self.transfer: MayaScalarValueTransfer | None = None
+
+    def contains(self) -> bool:
+        """値が記録済みか返す。"""
+        return self.transfer is not None
+
+    def read(self) -> MayaScalarValueTransfer:
+        """最後に記録した値を返す。"""
+        if self.transfer is None:
+            raise RuntimeError("コピー値がありません")
+        return self.transfer
+
+    def write(self, transfer: MayaScalarValueTransfer) -> None:
+        """Copy結果を保持する。"""
+        self.transfer = transfer
+
+
 def _events() -> None:
     """遅延同期と旧Widgetの破棄を完了する。"""
     for _ in range(3):
@@ -121,7 +143,7 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
             defaultValue=index == 1,
             keyable=True,
         )
-    cmds.select("multiA", "multiB", replace=True)
+    cmds.select("multiB", "multiA", replace=True)
     widget = ChannelBoxWidget()
     widget.resize(380, 650)
     widget.show()
@@ -462,7 +484,7 @@ def test_connection_indicators_match_maya_colors(
     cmds.connectAttr(blend + ".outRotate", "multiA.rotate")
     cmds.connectAttr(constraint + ".constraintScale", "multiA.scale")
     cmds.setAttr("multiA.visibility", lock=True)
-    cmds.select("multiA", "multiB", replace=True)
+    cmds.select("multiB", "multiA", replace=True)
     _events()
     expected = (
         ("translateX", "keyed", "#CD2729"),
@@ -683,6 +705,41 @@ def test_selection_refresh_and_unedited_focus_never_align(
     assert cmds.getAttr("multiB.translateX") == 9.0
     assert cmds.getAttr("multiA.translateY") == 1.0
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_selection_reordering_closes_old_row_menu(
+    editor: ChannelBoxWidget,
+) -> None:
+    """同じノードの順序変更でも旧基準の行メニューを破棄する。"""
+    cmds.select("multiA", "multiB", replace=True)
+    editor.refresh()
+    row = _row(editor, "translateX")
+    _open_row_menu(row)
+    assert row.context_menu.isVisible()
+
+    cmds.select("multiB", "multiA", replace=True)
+    _events()
+    assert not qt.isValid(row.context_menu) or not row.context_menu.isVisible()
+    assert editor.header_label.text() == "multiA"
+
+
+def test_selection_reordering_discards_pending_numeric_input(
+    editor: ChannelBoxWidget,
+) -> None:
+    """同じノードの順序変更では旧基準へ未確定数値を書き込まない。"""
+    cmds.select("multiA", "multiB", replace=True)
+    editor.refresh()
+    editor.table_view.select_keys(_keys(editor, "translateX", "translateY"))
+    _begin_input(editor, "7")
+
+    cmds.select("multiB", "multiA", replace=True)
+    _events()
+    assert editor.table_view.selected_keys() == ()
+    assert editor.header_label.text() == "multiA"
+    assert cmds.getAttr("multiA.translateX") == 5.0
+    assert cmds.getAttr("multiA.translateY") == 1.0
+    assert cmds.getAttr("multiB.translateX") == 9.0
+    assert cmds.getAttr("multiB.translateY") == 3.0
 
 
 @pytest.mark.parametrize("action", ["escape", "selection", "dispose"])
@@ -1349,6 +1406,58 @@ def test_animated_same_value_and_invalid_batch_create_no_keys(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
+def test_last_selected_node_filters_alignment_from_row_menu(
+    editor: ChannelBoxWidget,
+) -> None:
+    """行メニューの状態別整列は末尾ノードの状態と実値を使う。"""
+    _set_value("multiB.gain", 7.0)
+    _set_value("multiA.gain", 1.0)
+    cmds.setAttr("multiA.gain", keyable=False)
+    cmds.setAttr("multiA.gain", channelBox=False)
+    cmds.select("multiA", "multiB", replace=True)
+    editor.refresh()
+    cmds.flushUndo()
+
+    row = _row(editor, "translateX")
+    _open_row_menu(row)
+    row.align_filtered_actions["keyable"].trigger()
+    row.context_menu.close()
+    _events()
+    assert cmds.getAttr("multiA.gain") == 7.0
+    assert cmds.getAttr("multiB.gain") == 7.0
+    cmds.undo()
+    _events()
+    assert cmds.getAttr("multiA.gain") == 1.0
+
+
+def test_last_selected_node_is_value_copy_source(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """メニューの選択属性と全属性Copyは末尾ノードから値を取得する。"""
+    memory = _MemoryValueClipboard()
+    monkeypatch.setattr(editor.controller, "_value_clipboard", memory)
+    cmds.select("multiA", "multiB", replace=True)
+    editor.refresh()
+    editor.table_view.select_keys(_keys(editor, "translateX"))
+
+    row = _row(editor, "translateX")
+    _open_row_menu(row)
+    row.copy_selected_values_action.trigger()
+    row.context_menu.close()
+    transfer = memory.read()
+    assert len(transfer.nodes[0].values) == 1
+    assert transfer.nodes[0].values[0].value == 9.0
+
+    editor.edit_menu.aboutToShow.emit()
+    editor.copy_all_values_action.trigger()
+    values = {
+        snapshot.path: snapshot.value
+        for snapshot in memory.read().nodes[0].values
+    }
+    assert values["translate.translateX"] == 9.0
+    assert values["enabled"] is True
+
+
 @pytest.mark.parametrize(
     "operation", ["all", "keyable", "selected_single", "selected_multiple"]
 )
@@ -1993,6 +2102,18 @@ def test_freeze_menu_uses_base_transform_and_skips_other_node_types(
     )
     cmds.select("multiA", other, replace=True)
     editor.refresh()
+    row = _row(editor, "gain")
+    _open_row_menu(row)
+    assert not row.freeze_menu.menuAction().isVisible()
+    assert not row.freeze_separator_action.isVisible()
+    actions = row.context_menu.actions()
+    following = actions[actions.index(row.freeze_menu.menuAction()) + 1]
+    assert following.isSeparator()
+    assert following.isVisible()
+    row.context_menu.close()
+
+    cmds.select(other, "multiA", replace=True)
+    editor.refresh()
     row = _row(editor, "translateX")
     _open_row_menu(row)
     assert row.freeze_menu.menuAction().isVisible()
@@ -2009,15 +2130,41 @@ def test_freeze_menu_uses_base_transform_and_skips_other_node_types(
     assert cmds.getAttr("multiA.translateX") == 5.0
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
-    cmds.select(other, "multiA", replace=True)
-    editor.refresh()
-    row = _row(editor, "gain")
-    _open_row_menu(row)
-    assert not row.freeze_menu.menuAction().isVisible()
-    assert not row.freeze_separator_action.isVisible()
-    assert row.context_menu.actions()[19].isSeparator()
-    assert row.context_menu.actions()[19].isVisible()
-    row.context_menu.close()
+
+@pytest.mark.parametrize("transform_reference", (True, False))
+def test_freeze_separator_tracks_regenerated_qt_action(
+    editor: ChannelBoxWidget, transform_reference: bool
+) -> None:
+    """Qtが区切りを再生成しても現行メニューの表示状態を更新する。"""
+    if transform_reference:
+        row = _row(editor, "translateX")
+    else:
+        other = cmds.createNode("network", name="freezeMenuNetwork")
+        cmds.addAttr(
+            other, longName="gain", attributeType="double", keyable=True
+        )
+        cmds.select("multiA", other, replace=True)
+        editor.refresh()
+        row = _row(editor, "gain")
+
+    menu = row.context_menu
+    old_separator = row.freeze_separator_action
+    menu.removeAction(old_separator)
+    old_separator.deleteLater()
+    qt.QApplication.sendPostedEvents(None, qt.QEvent.Type.DeferredDelete)
+    assert not qt.isValid(old_separator)
+    with pytest.raises(RuntimeError):
+        _ = row.freeze_separator_action
+
+    replacement = menu.insertSeparator(row.freeze_menu.menuAction())
+    actions = menu.actions()
+    freeze_index = actions.index(row.freeze_menu.menuAction())
+    assert actions[freeze_index - 1] == replacement
+    assert row.freeze_separator_action == replacement
+    replacement.setVisible(not transform_reference)
+    _show_row_menu(row)
+    assert replacement.isVisible() is transform_reference
+    assert row.freeze_menu.menuAction().isVisible() is transform_reference
 
 
 def test_freeze_joint_keeps_translation_and_disables_move(
@@ -3074,10 +3221,24 @@ def test_animation_curve_paste_selected_multiple_curves_match_paths(
     )
 
 
+@pytest.mark.parametrize(
+    "source_order, destination_values",
+    (
+        (("multiA", "multiB"), ((1.0, 4.0), (2.0, 8.0))),
+        (("multiB", "multiA"), ((2.0, 8.0), (1.0, 4.0))),
+    ),
+)
 def test_animation_curve_copy_multiple_nodes_maps_by_selection_order(
     editor: ChannelBoxWidget,
+    source_order: tuple[str, str],
+    destination_values: tuple[tuple[float, float], tuple[float, float]],
 ) -> None:
     """複数コピー元を同数の貼付先へ選択順で対応させ、一度でUndoする。"""
+    cmds.select(*source_order, replace=True)
+    editor.refresh()
+    representative = editor.controller.representative_node_name
+    assert representative is not None
+    assert representative.rsplit("|", 1)[-1] == source_order[-1]
     for node, values in (
         ("multiA", (1.0, 4.0)),
         ("multiB", (2.0, 8.0)),
@@ -3094,9 +3255,37 @@ def test_animation_curve_copy_multiple_nodes_maps_by_selection_order(
 
     _row(editor, "translateX").animation_paste_same_action.trigger()
     _events()
-    for node, values in (
-        ("targetA", (1.0, 4.0)),
-        ("targetB", (2.0, 8.0)),
+    for node, values in zip(
+        ("targetA", "targetB"), destination_values, strict=True
+    ):
+        assert cmds.keyframe(
+            f"{node}.translateX", query=True, timeChange=True
+        ) == [20.0, 29.0]
+        assert cmds.keyframe(
+            f"{node}.translateX", query=True, valueChange=True
+        ) == list(values)
+    cmds.undo()
+    _events()
+    for node in ("targetA", "targetB"):
+        assert not cmds.keyframe(
+            f"{node}.translateX", query=True, keyframeCount=True
+        )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    # Maya標準のキー用clipboardでも選択順の対応を維持する
+    assert (
+        cmds.pasteKey(
+            "targetA.translateX",
+            "targetB.translateX",
+            clipboard="anim",
+            animation="objects",
+            time=(20, 20),
+            option="insert",
+        )
+        == 2
+    )
+    for node, values in zip(
+        ("targetA", "targetB"), destination_values, strict=True
     ):
         assert cmds.keyframe(
             f"{node}.translateX", query=True, timeChange=True
@@ -3497,6 +3686,51 @@ def test_selected_values_paste_to_copied_paths_across_nodes(
         assert cmds.undoInfo(query=True, undoQueueEmpty=True)
     finally:
         clipboard.setMimeData(saved)
+
+
+def test_filtered_paste_uses_last_selected_node_from_row_menu(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """右クリックの状態別Pasteは末尾ノードでpathを決め全選択へ適用する。"""
+    _set_value("multiA.gain", 4.5)
+    _set_value("multiA.enabled", False)
+    attributes = tuple(
+        _row(editor, name).row.attribute for name in ("gain", "enabled")
+    )
+    transfer = MayaScalarValueTransfer(
+        (capture_scalar_node_values("multiA", attributes),)
+    )
+    monkeypatch.setattr(
+        editor.controller, "_value_clipboard", _StaticValueClipboard(transfer)
+    )
+    for node in ("multiA", "multiB"):
+        _set_value(node + ".gain", 1.0)
+        _set_value(node + ".enabled", True)
+    cmds.setAttr("multiA.enabled", keyable=False)
+    cmds.setAttr("multiA.enabled", channelBox=False)
+    cmds.setAttr("multiB.enabled", keyable=False)
+    cmds.setAttr("multiB.enabled", channelBox=True)
+    cmds.setAttr("multiB.gain", keyable=False)
+    cmds.setAttr("multiB.gain", channelBox=False)
+    cmds.select("multiA", "multiB", replace=True)
+    editor.refresh()
+    cmds.flushUndo()
+
+    row = _row(editor, "translateX")
+    _open_row_menu(row)
+    action = row.paste_copied_values_actions["channel_box"]
+    assert action.isEnabled()
+    action.trigger()
+    row.context_menu.close()
+    _events()
+    for node in ("multiA", "multiB"):
+        assert cmds.getAttr(node + ".gain") == 1.0
+        assert cmds.getAttr(node + ".enabled") is False
+    cmds.undo()
+    _events()
+    for node in ("multiA", "multiB"):
+        assert cmds.getAttr(node + ".enabled") is True
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_copied_path_paste_filters_by_reference_node_display_state(

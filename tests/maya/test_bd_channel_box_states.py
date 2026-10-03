@@ -173,7 +173,7 @@ def state_editor(
             enumName="Off:Preview:Final",
             keyable=True,
         )
-    cmds.select(*_NODES, replace=True)
+    cmds.select(*reversed(_NODES), replace=True)
     cmds.flushUndo()
     widget = ChannelBoxWidget()
     widget.show()
@@ -370,6 +370,33 @@ def test_five_filters_in_both_modes_only_read_representative_state(
     assert _row_names(editor).intersection(attributes) == expected
     assert {path: _flags(path) for path in before} == before
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize("mode", ["values", "states"])
+def test_filter_uses_last_selected_node_after_order_change(
+    state_editor: ChannelBoxWidget, mode: ChannelBoxMode
+) -> None:
+    """同じノード群を逆順にすると両モードの絞り込み基準も切り替わる。"""
+    editor = state_editor
+    cmds.setAttr("stateA.mode", keyable=False)
+    cmds.setAttr("stateA.mode", channelBox=True)
+    cmds.setAttr("stateB.mode", keyable=False)
+    cmds.setAttr("stateB.mode", channelBox=False)
+    _events()
+    editor.controller.set_mode(mode)
+    _filter(editor, "channel_box")
+    assert "mode" in _row_names(editor)
+
+    # 基準を非表示状態のBへ切り替え、他ノードの状態を転送しない
+    cmds.select("stateA", "stateB", replace=True)
+    _events()
+    assert editor.controller.node_names == ("|stateA", "|stateB")
+    assert editor.controller.representative_node_name == "|stateB"
+    assert "mode" not in _row_names(editor)
+    _filter(editor, "hidden")
+    assert "mode" in _row_names(editor)
+    assert _flags("stateA.mode") == (False, True, False)
+    assert _flags("stateB.mode") == (False, False, False)
 
 
 def test_filters_remember_each_mode_through_refresh_and_selection(
@@ -591,7 +618,7 @@ def test_hidden_attribute_can_be_restored_and_hidden_row_stays_available(
     assert _checked_display(editor, "hiddenValue") == ("hidden",)
     cmds.select(clear=True)
     _events()
-    cmds.select(*_NODES, replace=True)
+    cmds.select(*reversed(_NODES), replace=True)
     _events()
     assert "hiddenValue" in _row_names(editor)
     _choose_display(editor, "keyable", "hiddenValue")

@@ -67,6 +67,12 @@ class _MayaSmokeSession:
         self.screenshots: list[str] = []
         self.measurements: dict[str, float | int] = {}
         self.diagnostics: list[dict[str, object]] = []
+        self._reference_saved_tracking: bool | None = None
+        self._reference_saved_selection: tuple[str, ...] = ()
+        self._reference_network = ""
+        self._reference_joint = ""
+        self._reference_native_box = ""
+        self._reference_case_index = 0
         self._value_layout: tuple[int, int, int, int] | None = None
         self._started_at = time.perf_counter()
         self._startup_idle_checks = 0
@@ -75,6 +81,15 @@ class _MayaSmokeSession:
             self._setup_scene,
             self._show,
             self._inspect,
+            self._inspect_last_selected_representative,
+            self._inspect_native_reference_after_idle,
+            self._inspect_native_reference_after_idle,
+            self._inspect_native_reference_after_idle,
+            self._inspect_native_reference_after_idle,
+            self._inspect_native_reference_after_idle,
+            self._inspect_native_reference_after_idle,
+            self._inspect_native_reference_after_idle,
+            self._inspect_native_reference_after_idle,
             self._inspect_wheel_setting,
             self._inspect_attribute_search,
             self._inspect_native_wheel_controls,
@@ -83,7 +98,7 @@ class _MayaSmokeSession:
             self._redock,
             self._inspect_redocked,
             self._reset_dock_layout,
-            self._refresh_from_context_menu,
+            self._inspect_refresh_without_menu_action,
             self._edit_step,
             self._undo_step_value,
             self._edit_bool,
@@ -142,6 +157,10 @@ class _MayaSmokeSession:
         with (self.output / "python-slot-errors.log").open(
             "a", encoding="utf-8"
         ) as stream:
+            if self._stage_index:
+                stream.write(
+                    f"stage: {self._stages[self._stage_index - 1].__name__}\n"
+                )
             stream.write(
                 "".join(traceback.format_exception(error_type, error, trace))
             )
@@ -263,7 +282,8 @@ class _MayaSmokeSession:
             )
             cmds.setAttr(f"{node}.hiddenWeight", 0.2 + index * 0.4)
             self.nodes.append(node)
-        cmds.select(self.nodes, replace=True)
+        # 既存工程がQA0を表示基準にするため、末尾にQA0を置く
+        cmds.select(list(reversed(self.nodes)), replace=True)
         self.steps.append("create_isolated_scene")
 
     def _show(self) -> None:
@@ -330,6 +350,225 @@ class _MayaSmokeSession:
                 finally:
                     line_edit.setText(original_text)
         self.steps.append("inspect_rendered_views")
+
+    def _assert_representative_selection(
+        self, selected: tuple[str, ...], expected_weight: float
+    ) -> None:
+        """選択順と末尾の見出し・値表示が一致することを確認する。"""
+        from maya import cmds
+
+        from bd_util.ui import FloatSliderSpinBox, FloatValueStepSpinBox
+
+        widget = self._require_window().widget
+        expected_paths = tuple(
+            cmds.ls(node, long=True)[0] for node in selected
+        )
+        if widget.controller.node_names != expected_paths:
+            raise AssertionError(
+                f"選択順が異なります: {widget.controller.node_names}"
+            )
+        if widget.controller.representative_node_name != expected_paths[-1]:
+            raise AssertionError("末尾ノードが表示基準になっていません")
+        if widget.header_label.text() != selected[-1]:
+            raise AssertionError(
+                f"見出しが末尾ノードではありません: {widget.header_label.text()}"
+            )
+        editor = self._row("weight").editor
+        if not isinstance(editor, (FloatSliderSpinBox, FloatValueStepSpinBox)):
+            raise AssertionError("weightの数値欄がありません")
+        if abs(editor.spin_box.value() - expected_weight) > 1e-6:
+            raise AssertionError(
+                f"weightの表示値が異なります: {editor.spin_box.value()}"
+            )
+
+    def _inspect_last_selected_representative(self) -> None:
+        """両選択順を検証し、標準Channel Boxとの比較を次のidleへ送る。"""
+        from maya import cmds, mel
+
+        native_box = mel.eval("$bdChannelBoxQANativeName = $gChannelBoxName")
+        if not native_box or not cmds.channelBox(native_box, exists=True):
+            raise AssertionError("Maya標準Channel Boxを取得できません")
+
+        self._reference_native_box = native_box
+        self._reference_saved_tracking = bool(
+            cmds.selectPref(query=True, trackSelectionOrder=True)
+        )
+        self._reference_saved_selection = tuple(
+            cmds.ls(selection=True, long=True) or ()
+        )
+        try:
+            network = cmds.createNode("network", name="bdChannelBoxMixedQA")
+            self._reference_network = network
+            cmds.addAttr(
+                network,
+                longName="weight",
+                attributeType="double",
+                keyable=True,
+            )
+            cmds.setAttr(f"{network}.weight", 0.9)
+            joint = cmds.createNode("joint", name="bdChannelBoxJointQA")
+            self._reference_joint = joint
+            cmds.addAttr(
+                joint,
+                longName="weight",
+                attributeType="double",
+                keyable=True,
+            )
+            cmds.setAttr(f"{joint}.weight", 0.9)
+            for tracking in (False, True):
+                cmds.selectPref(trackSelectionOrder=tracking)
+                for selected, expected_weight in (
+                    (tuple(self.nodes), 0.75),
+                    (tuple(reversed(self.nodes)), 0.25),
+                ):
+                    cmds.select(selected, replace=True)
+                    self._flush_gui()
+                    self._assert_representative_selection(
+                        selected, expected_weight
+                    )
+                    if not tracking and selected == tuple(self.nodes):
+                        self._capture("41-last-selected-reference.png")
+            self._select_reference_case(0)
+        except Exception:
+            self._cleanup_reference_probe()
+            raise
+
+    def _select_reference_case(self, index: int) -> None:
+        """追跡設定と異種ノードの順を指定して次のidle検証へ進める。"""
+        from maya import cmds
+
+        from bd_util.maya.node.inspection import selected_node_names
+
+        tracking = index >= 4
+        kind = index % 4
+        cmds.selectPref(trackSelectionOrder=tracking)
+        if kind == 0:
+            selected = (self.nodes[0], self._reference_network)
+        elif kind == 1:
+            selected = (self.nodes[0], self._reference_joint)
+        elif kind == 2:
+            selected = (self._reference_joint, self.nodes[0])
+        else:
+            selected = (self.nodes[0], self._reference_joint)
+        cmds.select(selected, replace=True)
+        if kind == 3:
+            # 選択済みtransformを再追加した後の実際の選択リストを読む
+            cmds.select(self.nodes[0], add=True)
+        self._flush_gui()
+        active = selected_node_names()
+        expected_paths = tuple(
+            cmds.ls(name, long=True)[0] for name in selected
+        )
+        if kind != 3 and active != expected_paths:
+            raise AssertionError(f"Mayaの選択順が異なります: {active}")
+        names = tuple(name.rsplit("|", 1)[-1] for name in active)
+        expected_weight = 0.25 if names[-1] == self.nodes[0] else 0.9
+        self._assert_representative_selection(names, expected_weight)
+        self._reference_case_index = index
+        native_items = (
+            cmds.channelBox(
+                self._reference_native_box, query=True, mainObjectList=True
+            )
+            or ()
+        )
+        native_paths = tuple(
+            cmds.ls(item, long=True)[0] for item in native_items
+        )
+        self.diagnostics.append(
+            {
+                "stage": "native_reference_selected",
+                "case": index,
+                "tracking": tracking,
+                "active_selection": active,
+                "native_objects": native_paths,
+                "native_show_transforms": bool(
+                    cmds.channelBox(
+                        self._reference_native_box,
+                        query=True,
+                        showTransforms=True,
+                    )
+                ),
+                "native_visible": bool(
+                    cmds.channelBox(
+                        self._reference_native_box, query=True, visible=True
+                    )
+                ),
+                "native_obscured": bool(
+                    cmds.channelBox(
+                        self._reference_native_box,
+                        query=True,
+                        isObscured=True,
+                    )
+                ),
+            }
+        )
+
+    def _inspect_native_reference_after_idle(self) -> None:
+        """idle後の標準表示を記録し、次の異種選択へ進める。"""
+        from maya import cmds
+
+        from bd_util.maya.node.inspection import selected_node_names
+
+        index = self._reference_case_index
+        try:
+            native_box = self._reference_native_box
+            items = (
+                cmds.channelBox(native_box, query=True, mainObjectList=True)
+                or ()
+            )
+            native_paths = tuple(cmds.ls(item, long=True)[0] for item in items)
+            active = selected_node_names()
+            self.diagnostics.append(
+                {
+                    "stage": "native_reference_after_idle",
+                    "case": index,
+                    "tracking": index >= 4,
+                    "active_selection": active,
+                    "native_objects": native_paths,
+                    "native_visible": bool(
+                        cmds.channelBox(native_box, query=True, visible=True)
+                    ),
+                    "native_obscured": bool(
+                        cmds.channelBox(
+                            native_box, query=True, isObscured=True
+                        )
+                    ),
+                }
+            )
+            # 照会順は公開仕様で保証されないため、表示名は保存画像で確認する
+            self._capture_maya(f"42-native-reference-{index}.png")
+            if index % 4 != 0 and active[-1] not in native_paths:
+                raise AssertionError(
+                    f"標準Channel Boxの対象に末尾がありません: {native_paths}"
+                )
+            if index == 7:
+                self.steps.append(
+                    "last_selected_reference_and_native_snapshots"
+                )
+                self._cleanup_reference_probe()
+            else:
+                self._select_reference_case(index + 1)
+        except Exception:
+            self._cleanup_reference_probe()
+            raise
+
+    def _cleanup_reference_probe(self) -> None:
+        """選択追跡設定と元の選択を復元し、一時ノードを削除する。"""
+        from maya import cmds
+
+        saved_tracking = self._reference_saved_tracking
+        if saved_tracking is None:
+            return
+        self._reference_saved_tracking = None
+        cmds.selectPref(trackSelectionOrder=saved_tracking)
+        if self._reference_saved_selection:
+            cmds.select(self._reference_saved_selection, replace=True)
+        else:
+            cmds.select(clear=True)
+        for node in (self._reference_network, self._reference_joint):
+            if node and cmds.objExists(node):
+                cmds.delete(node)
+        self._flush_gui()
 
     def _inspect_wheel_setting(self) -> None:
         """設定メニューを表示し、OFFでは未フォーカスのホイール入力を止める。"""
@@ -734,26 +973,29 @@ class _MayaSmokeSession:
         self._assert_values("weight", (0.25, 0.75))
         self.steps.append("reset_layout_recreates_right_dock")
 
-    def _refresh_from_context_menu(self) -> None:
-        """属性名の右クリックメニューから更新し、値とUndoを維持する。"""
+    def _inspect_refresh_without_menu_action(self) -> None:
+        """右クリックに更新操作がなく、直接更新も値とUndoを保つことを確認する。"""
         from maya import cmds
-
-        from bd_util.ui import qt
 
         row = self._row("weight")
         cmds.flushUndo()
         self._open_context_menu(row.name_label)
         if not row.context_menu.isVisible():
             raise AssertionError("属性名からメニューを開けません")
-        row.context_menu.setActiveAction(row.refresh_action)
-        self._key(row.context_menu, qt.Qt.Key.Key_Return)
+        if any(
+            action.text() == "表示を更新"
+            for action in row.context_menu.actions()
+        ):
+            raise AssertionError("属性行のメニューに更新操作が残っています")
+        row.context_menu.close()
+        self._require_window().widget.refresh()
         self._flush_gui()
         if self._row("weight") is row:
-            raise AssertionError("メニューから表示が更新されません")
+            raise AssertionError("直接更新で表示が再構築されません")
         self._assert_values("weight", (0.25, 0.75))
         if not cmds.undoInfo(query=True, undoQueueEmpty=True):
-            raise AssertionError("メニューの表示更新でUndo履歴が増えました")
-        self.steps.append("context_menu_refresh_only_reads_values")
+            raise AssertionError("直接更新でUndo履歴が増えました")
+        self.steps.append("no_context_refresh_and_direct_refresh_reads_values")
 
     def _edit_step(self) -> None:
         """右クリックのStep設定と、正本を変えない実入力・保存を確認する。"""
@@ -775,8 +1017,8 @@ class _MayaSmokeSession:
         if tuple(
             action.text() for action in widget.step_settings_menu.actions()
         ) != (
-            "初期値に戻す: 全ての属性",
             "初期値に戻す: 選択属性",
+            "初期値に戻す: 全ての属性",
         ):
             raise AssertionError("Step設定のリセット順または表記が不正です")
         row.context_menu.close()
@@ -901,8 +1143,12 @@ class _MayaSmokeSession:
 
         row = self._row("mode")
         self._open_context_menu(row.name_label)
-        row.context_menu.setActiveAction(row.align_action)
-        self._key(row.context_menu, qt.Qt.Key.Key_Return)
+        row.context_menu.setActiveAction(row.align_menu.menuAction())
+        self._key(row.context_menu, qt.Qt.Key.Key_Right)
+        if not row.align_menu.isVisible():
+            raise AssertionError("揃えるサブメニューを開けません")
+        row.align_menu.setActiveAction(row.align_action)
+        self._key(row.align_menu, qt.Qt.Key.Key_Return)
         self._flush_gui()
         self._assert_values("mode", (5, 5))
         self.steps.append("enum_context_alignment")
@@ -1012,8 +1258,12 @@ class _MayaSmokeSession:
         if not row.context_menu.grab().save(str(image_path)):
             raise RuntimeError("属性行のメニュー画像を保存できません")
         self.screenshots.append(str(image_path))
-        row.context_menu.setActiveAction(row.align_action)
-        self._key(row.context_menu, qt.Qt.Key.Key_Return)
+        row.context_menu.setActiveAction(row.align_menu.menuAction())
+        self._key(row.context_menu, qt.Qt.Key.Key_Right)
+        if not row.align_menu.isVisible():
+            raise AssertionError("揃えるサブメニューを開けません")
+        row.align_menu.setActiveAction(row.align_action)
+        self._key(row.align_menu, qt.Qt.Key.Key_Return)
         self._assert_values("enabled", (False, False))
         self.steps.append("align_representative_bool_value")
 
@@ -1371,8 +1621,8 @@ class _MayaSmokeSession:
             raise AssertionError("表示順の確認でUndo履歴が増えました")
         self.steps.append("joint_priority_order_in_both_modes")
 
-        # 検証用jointを除き、後続のclose・reload検証の選択と表示へ戻す
-        cmds.select(self.nodes, replace=True)
+        # 検証用jointを除き、QA0を基準とした後続工程の選択と表示へ戻す
+        cmds.select(list(reversed(self.nodes)), replace=True)
         self._flush_gui()
         cmds.delete(joint)
         self._select_combo_item(widget.mode_combo, 0)
@@ -1526,17 +1776,29 @@ class _MayaSmokeSession:
         # 選択内の右クリックから全属性をロックし、一回で復元する
         row = self._row("translate.translateX")
         self._open_context_menu(row.name_label)
-        lock_action = next(
+        lock_menu_action = next(
             action
             for action in row.context_menu.actions()
+            if action.text() == "ロック" and action.menu() is not None
+        )
+        lock_menu = lock_menu_action.menu()
+        if lock_menu is None:
+            raise AssertionError("ロックのサブメニューがありません")
+        lock_action = next(
+            action
+            for action in lock_menu.actions()
             if action.objectName() == "selected_lock"
         )
-        row.context_menu.setActiveAction(lock_action)
+        row.context_menu.setActiveAction(lock_menu_action)
+        self._key(row.context_menu, qt.Qt.Key.Key_Right)
+        if not lock_menu.isVisible():
+            raise AssertionError("ロックのサブメニューを開けません")
+        lock_menu.setActiveAction(lock_action)
         menu_path = self.output / "28-multi-attribute-menu.png"
-        if not row.context_menu.grab().save(str(menu_path)):
+        if not lock_menu.grab().save(str(menu_path)):
             raise RuntimeError("選択属性メニューの画像を保存できません")
         self.screenshots.append(str(menu_path))
-        self._key(row.context_menu, qt.Qt.Key.Key_Return)
+        self._key(lock_menu, qt.Qt.Key.Key_Return)
         for node in self.nodes:
             for name in attributes:
                 if not cmds.getAttr(f"{node}.{name}", lock=True):
@@ -1942,7 +2204,7 @@ class _MayaSmokeSession:
             if not cmds.undoInfo(query=True, undoQueueEmpty=True):
                 raise AssertionError("Pasteが一回のUndoになっていません")
 
-            # 基準nodeの表示状態でpathを決め、後続nodeにも同じpathを貼る
+            # 基準nodeの表示状態でpathを決め、他のnodeにも同じpathを貼る
             cmds.setAttr(f"{self.nodes[0]}.weight", keyable=True)
             cmds.setAttr(f"{self.nodes[0]}.enabled", keyable=False)
             cmds.setAttr(f"{self.nodes[0]}.enabled", channelBox=True)
@@ -1957,11 +2219,11 @@ class _MayaSmokeSession:
             target_row = self._row("translate.translateX")
             self._open_context_menu(target_row.name_label)
             expected_labels = (
-                "全て",
-                "keyable + channelbox",
-                "keyable",
-                "channelbox",
-                "hide",
+                "コピー元と同じ属性：全て",
+                "コピー元と同じ属性：Keyable + ChannelBox",
+                "コピー元と同じ属性：Keyable",
+                "コピー元と同じ属性：ChannelBox",
+                "コピー元と同じ属性：Hide",
             )
             actual_labels = tuple(
                 action.text()
@@ -1971,23 +2233,20 @@ class _MayaSmokeSession:
                 raise AssertionError(
                     f"表示状態Pasteメニューが不正です: {actual_labels}"
                 )
-            target_row.paste_copied_values_menu.popup(
+            target_row.paste_menu.popup(
                 target_row.name_label.mapToGlobal(
                     qt.QPoint(target_row.name_label.width(), 0)
                 )
             )
             self._flush_gui()
             filter_menu_path = self.output / "33-clipboard-filter-menu.png"
-            if not target_row.paste_copied_values_menu.grab().save(
-                str(filter_menu_path)
-            ):
+            if not target_row.paste_menu.grab().save(str(filter_menu_path)):
                 raise RuntimeError(
                     "表示状態でPaste対象を選ぶメニュー画像を保存できません"
                 )
             self.screenshots.append(str(filter_menu_path))
             cmds.flushUndo()
             target_row.paste_copied_values_actions["channel_box"].trigger()
-            target_row.paste_copied_values_menu.close()
             target_row.paste_menu.close()
             target_row.context_menu.close()
             self._flush_gui()
@@ -2362,9 +2621,13 @@ class _MayaSmokeSession:
                 cmds.select(targets, replace=True)
                 self._flush_gui()
                 elapsed = (time.perf_counter() - started) * 1000
-                if len(widget.controller.node_names) != count or (
-                    widget.controller.node_names[0].rsplit("|", 1)[-1]
-                    != targets[0]
+                names = widget.controller.node_names
+                representative = widget.controller.representative_node_name
+                if (
+                    len(names) != count
+                    or names[0].rsplit("|", 1)[-1] != targets[0]
+                    or representative is None
+                    or representative.rsplit("|", 1)[-1] != targets[-1]
                 ):
                     raise AssertionError("計測中に選択追従が完了していません")
                 if index >= 2:
@@ -2937,6 +3200,10 @@ class _MayaSmokeSession:
 
         faulthandler.cancel_dump_traceback_later()
         self._trace_file.close()
+        slot_errors = self.output / "python-slot-errors.log"
+        if success and slot_errors.is_file():
+            success = False
+            error = slot_errors.read_text(encoding="utf-8")
         _write_json(
             self.output
             / (

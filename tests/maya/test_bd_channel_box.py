@@ -9,6 +9,7 @@ from math import isclose
 from typing import cast
 import pytest
 from maya import cmds
+from maya.api import OpenMaya as om
 
 from bd_util.maya.ui import MayaBoolPlugsBinding, MayaFloatPlugsBinding
 from bd_util.ui import (
@@ -179,7 +180,7 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     cmds.addAttr(
         "channelA", longName="integer", attributeType="long", keyable=True
     )
-    cmds.select("channelA", "channelB", replace=True)
+    cmds.select("channelB", "channelA", replace=True)
     cmds.flushUndo()
     widget = ChannelBoxWidget()
     widget.show()
@@ -208,6 +209,84 @@ def test_selection_and_refresh_only_read_values(
     assert cmds.getAttr("channelA.weight") == 0.25
     assert cmds.getAttr("channelB.weight") == 0.75
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_last_selected_node_drives_rows_and_alignment(
+    editor: ChannelBoxWidget,
+) -> None:
+    """選択リスト末尾を表示基準にして、同じノード群の逆順も反映する。"""
+    assert editor.controller.node_names == ("|channelB", "|channelA")
+    assert editor.controller.representative_node_name == "|channelA"
+    assert editor.header_label.text() == "channelA"
+    assert _row(editor, "lowerOnly")
+
+    # 対象ノードを変えずに順序だけを入れ替え、末尾の値と行を読む
+    old_binding = _row(editor, "weight").row.binding
+    cmds.select("channelA", "channelB", replace=True)
+    _events()
+    assert old_binding.is_disposed
+    assert editor.controller.node_names == ("|channelA", "|channelB")
+    assert editor.controller.representative_node_name == "|channelB"
+    assert editor.header_label.text() == "channelB"
+    assert "lowerOnly" not in {
+        row.row.attribute.name for row in editor.row_widgets
+    }
+    row = _row(editor, "weight")
+    assert row.row.target_names == ("|channelB", "|channelA")
+    assert isinstance(row.editor, FloatSliderSpinBox)
+    assert row.editor.spin_box.value() == 0.75
+    visibility = _row(editor, "visibility").editor
+    assert isinstance(visibility, BoolCheckBox)
+    assert not visibility.isChecked()
+
+    # 明示的な揃える操作では末尾ノードの未丸め値を他対象へ適用する
+    cmds.flushUndo()
+    row.align_action.trigger()
+    assert cmds.getAttr("channelA.weight") == 0.75
+    assert cmds.getAttr("channelB.weight") == 0.75
+    cmds.undo()
+    _events()
+    assert cmds.getAttr("channelA.weight") == 0.25
+    assert cmds.getAttr("channelB.weight") == 0.75
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_last_object_ignores_trailing_component_and_plug(
+    editor: ChannelBoxWidget,
+) -> None:
+    """末尾のcomponentとplugを除き、最後のobjectを基準にする。"""
+    cmds.select("channelA", "channelB", replace=True)
+    _events()
+    assert editor.controller.representative_node_name == "|channelB"
+    mesh = cast(list[str], cmds.polyCube(name="selectionTailMesh"))[0]
+    selection = om.MSelectionList()
+    for item in (
+        "channelB",
+        "channelA",
+        mesh + ".vtx[0]",
+        "channelB.weight",
+    ):
+        selection.add(item)
+    om.MGlobal.setActiveSelectionList(selection)
+    _events()
+    assert editor.controller.node_names == ("|channelB", "|channelA")
+    assert editor.controller.representative_node_name == "|channelA"
+    assert editor.header_label.text() == "channelA"
+    row = _row(editor, "weight")
+    assert isinstance(row.editor, FloatSliderSpinBox)
+    assert row.editor.spin_box.value() == 0.25
+
+
+def test_empty_selection_clears_representative(
+    editor: ChannelBoxWidget,
+) -> None:
+    """object選択を解除したら基準ノードと表示行を消す。"""
+    cmds.select(clear=True)
+    _events()
+    assert editor.controller.node_names == ()
+    assert editor.controller.representative_node_name is None
+    assert editor.header_label.text() == "ノードを選択してください"
+    assert not editor.row_widgets
 
 
 def test_supported_types_flags_and_view_selection(

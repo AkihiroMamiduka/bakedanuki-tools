@@ -174,6 +174,7 @@ assert_type(table.select_keys(keys), None)
 assert_type(table.set_visible_keys(keys), int)
 assert_type(table.set_visible_keys(None), int)
 controller = bd_channel_box.show().widget.controller
+assert_type(controller.representative_node_name, str | None)
 assert_type(controller.apply_numeric_values(keys, 5.0), bool)
 assert_type(controller.offset_numeric_values(keys, 1.0), bool)
 assert_type(controller.apply_bool_values(keys, True), bool)

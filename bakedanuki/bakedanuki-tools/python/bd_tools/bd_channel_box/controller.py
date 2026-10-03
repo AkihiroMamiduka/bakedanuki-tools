@@ -217,6 +217,11 @@ class ChannelBoxController(qt.QObject):
         self._refresh_pending()
 
     @property
+    def representative_node_name(self) -> str | None:
+        """選択リストの末尾にある表示基準ノードを返す。"""
+        return self.node_names[-1] if self.node_names else None
+
+    @property
     def mode(self) -> ChannelBoxMode:
         """値入力または表示・ロック設定の表示モードを返す。"""
         return self._mode
@@ -402,6 +407,9 @@ class ChannelBoxController(qt.QObject):
             self.attribute_filter if display_filter is None else display_filter
         )
         lookup = tuple({a.path: a for a in items} for items in attributes)
+        # 基準を先頭にしてBindingへ渡し、選択リスト自体の順序は維持する
+        ordered_names = self.node_names[-1:] + self.node_names[:-1]
+        ordered_lookup = lookup[-1:] + lookup[:-1]
         rows: list[ChannelRow | ChannelStateRow] = []
         try:
             # 構築時に現在の設定を読み、重複は最初の指定だけを採用する
@@ -413,7 +421,7 @@ class ChannelBoxController(qt.QObject):
             }
             # 同じ優先度では元の属性順を保ち、行の構築時だけ並べ替える
             for attribute in sorted(
-                attributes[0],
+                attributes[-1],
                 key=partial(
                     _attribute_display_priority, priorities=priorities
                 ),
@@ -424,7 +432,7 @@ class ChannelBoxController(qt.QObject):
                     continue
                 targets: list[str] = []
                 excluded: list[str] = []
-                for name, info in zip(self.node_names, lookup):
+                for name, info in zip(ordered_names, ordered_lookup):
                     match = info.get(attribute.path)
                     if match is None:
                         excluded.append(f"{name}: 対応する属性なし")
@@ -948,15 +956,17 @@ class ChannelBoxController(qt.QObject):
         self, keys: Sequence[tuple[str, str]]
     ) -> int:
         """選択行と対応する各選択ノードの全時間の曲線をコピーする。"""
+        # Maya標準clipboardへも、Bindingの代表順ではなく元の選択順で渡す
         sources = tuple(
             _AnimationCurveSource(
-                self.node_names.index(node),
+                index,
                 row.attribute.path,
                 row.attribute.kind,
             )
             for row in self._selected_rows(keys)
             if isinstance(row, ChannelRow)
-            for node in row.target_names
+            for index, node in enumerate(self.node_names)
+            if node in row.target_names
         )
         return len(self._copy_animation_curves(sources))
 
@@ -1494,9 +1504,10 @@ class ChannelBoxController(qt.QObject):
 
     def copy_all_values(self) -> int:
         """基準nodeの全対応属性値を、型と正式path付きでOSへコピーする。"""
-        if not self.node_names:
+        representative = self.representative_node_name
+        if representative is None:
             raise RuntimeError("コピー元のノードが選択されていません")
-        snapshot = capture_all_scalar_node_values(self.node_names[0])
+        snapshot = capture_all_scalar_node_values(representative)
         self._value_clipboard.write(MayaScalarValueTransfer((snapshot,)))
         count = len(snapshot.values)
         self.operation_reported.emit(
@@ -1506,7 +1517,8 @@ class ChannelBoxController(qt.QObject):
 
     def copy_selected_values(self, keys: Sequence[tuple[str, str]]) -> int:
         """基準nodeで選択した対応属性値を、正式path付きでOSへコピーする。"""
-        if not self.node_names:
+        representative = self.representative_node_name
+        if representative is None:
             raise RuntimeError("コピー元のノードが選択されていません")
         attributes = tuple(
             row.attribute
@@ -1515,7 +1527,7 @@ class ChannelBoxController(qt.QObject):
         )
         if not attributes:
             raise ValueError("コピー元の値属性を選択してください")
-        snapshot = capture_scalar_node_values(self.node_names[0], attributes)
+        snapshot = capture_scalar_node_values(representative, attributes)
         self._value_clipboard.write(MayaScalarValueTransfer((snapshot,)))
         count = len(snapshot.values)
         self.operation_reported.emit(
@@ -1570,7 +1582,9 @@ class ChannelBoxController(qt.QObject):
         """基準nodeの表示状態からPaste対象pathと正常な除外件数を求める。"""
         if len(transfer.nodes) != 1:
             raise ValueError("現在は一つのコピー元nodeだけ貼り付けられます")
-        base_name = self.node_names[0]
+        base_name = self.representative_node_name
+        if base_name is None:
+            raise RuntimeError("貼り付け先のノードが選択されていません")
         attributes = inspect_scalar_attributes(base_name)
         by_path = {attribute.path: attribute for attribute in attributes}
         matched_paths = set(
@@ -1580,7 +1594,7 @@ class ChannelBoxController(qt.QObject):
         filtered_count = 0
         excluded: list[str] = []
 
-        # コピー項目順を維持し、基準nodeにないpathは後続nodeへ適用しない
+        # コピー項目順を維持し、基準nodeにないpathは他のnodeへ適用しない
         for snapshot in transfer.nodes[0].values:
             if snapshot.path not in by_path:
                 excluded.append(
@@ -1642,10 +1656,11 @@ class ChannelBoxController(qt.QObject):
 
     def has_transform_context(self) -> bool:
         """画面の基準ノードでフリーズメニューを表示できるか返す。"""
+        representative = self.representative_node_name
         return (
             not self._disposed
-            and bool(self.node_names)
-            and self._is_transform_node(self.node_names[0])
+            and representative is not None
+            and self._is_transform_node(representative)
         )
 
     def _freeze_targets(self, *, translate_only: bool) -> tuple[str, ...]:
