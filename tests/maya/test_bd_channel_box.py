@@ -381,6 +381,52 @@ def test_node_name_edit_changes_only_last_selected_node_and_updates_actions(
     assert cmds.getAttr("renamedChannel.weight") == 0.25
 
 
+def test_node_name_appearance_tracks_focus_conflict_and_read_only(
+    editor: ChannelBoxWidget,
+) -> None:
+    """名前欄だけ、閲覧・入力・競合・読み取り専用の外観を切り替える。"""
+    line = editor.node_name_edit
+    assert line is not None
+    native_height = line.minimumHeight()
+    assert "palette(window)" in line.styleSheet()
+    cmds.flushUndo()
+
+    line.setFocus()
+    _events()
+    assert line.hasFocus()
+    assert line.styleSheet() == ""
+    line.setText("draftName")
+    line.textEdited.emit("draftName")
+    cmds.rename("channelA", "externalName")
+    _events()
+    assert line.hasConflict()
+
+    editor.mode_combo.setFocus()
+    _events()
+    assert not line.hasFocus()
+    assert line.styleSheet() == ""
+    assert line.text() == "draftName"
+    assert cmds.objExists("|externalName")
+
+    line.setFocus()
+    line.setText("externalName")
+    line.textEdited.emit("externalName")
+    _events()
+    assert not line.hasConflict()
+    editor.mode_combo.setFocus()
+    _events()
+    assert "palette(window)" in line.styleSheet()
+    assert line.minimumHeight() == native_height
+
+    cmds.lockNode("externalName", lock=False, lockName=True)
+    editor.refresh()
+    _events()
+    assert line.isReadOnly()
+    line.setFocus()
+    _events()
+    assert "palette(window)" in line.styleSheet()
+
+
 def test_node_name_edit_shows_maya_collision_name_and_tracks_undo(
     editor: ChannelBoxWidget,
 ) -> None:

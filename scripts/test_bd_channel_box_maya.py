@@ -373,7 +373,18 @@ class _MayaSmokeSession:
             raise AssertionError("基準ノードの名前入力欄がありません")
         original = self.nodes[0]
         requested = "bdChannelBoxNameEnterQA"
+        if "palette(window)" not in editor.styleSheet():
+            raise AssertionError("閲覧中の名前欄が背景に溶け込んでいません")
+        idle_height = editor.height()
         editor.setFocus()
+        self._flush_gui()
+        if editor.styleSheet():
+            raise AssertionError(
+                "名前欄へフォーカスしても入力外観になりません"
+            )
+        if editor.height() != idle_height:
+            raise AssertionError("名前欄のフォーカスで高さが変わりました")
+        self._capture("02-node-name-focused.png")
         editor.setText(requested)
         editor.textEdited.emit(requested)
         for event_type in (
@@ -407,6 +418,14 @@ class _MayaSmokeSession:
             if cmds.objExists(f"|{requested}"):
                 cmds.rename(requested, original)
                 self._flush_gui()
+        widget.mode_combo.setFocus()
+        self._flush_gui()
+        if "palette(window)" not in editor.styleSheet():
+            raise AssertionError(
+                "フォーカスを外しても名前欄が閲覧外観に戻りません"
+            )
+        if editor.height() != idle_height:
+            raise AssertionError("名前欄のフォーカス移動で高さが変わりました")
         self.steps.append("inspect_node_name_enter")
 
     def _assert_representative_selection(

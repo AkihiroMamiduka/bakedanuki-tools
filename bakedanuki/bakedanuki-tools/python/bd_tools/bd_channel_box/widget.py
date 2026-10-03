@@ -62,6 +62,12 @@ _NAME_CONFLICT_MESSAGE = (
     "ノード名が外部で変更されました。"
     "Enterで入力名を適用するか、Escapeで取り消してください。"
 )
+_NAME_IDLE_STYLE = (
+    "background-color: palette(window); "
+    "color: palette(window-text); "
+    "border: none; "
+    "padding-left: 3px; padding-right: 3px;"
+)
 _IndicatorState = MayaPlugInputState | Literal["locked"]
 _INPUT_STATE_COLORS: dict[_IndicatorState, str] = {
     "nonkeyable": "#949494",
@@ -982,6 +988,47 @@ class AttributeStateRowWidget(qt.QWidget):
             self._update_state()
 
 
+class _NodeNameLineEdit(StringLineEdit):
+    """基準ノード名だけを、閲覧中はラベルに近い外観で表示する。"""
+
+    def __init__(
+        self, binding: MayaNodeNameBinding, parent: qt.QWidget
+    ) -> None:
+        """通常の入力外観の高さを保ち、状態変化に応じて背景を切り替える。"""
+        super().__init__(binding, parent)
+        self.setMinimumHeight(self.sizeHint().height())
+        self._appearance_ready = True
+        self.conflict_changed.connect(self._sync_appearance)
+        self._sync_appearance()
+
+    def focusInEvent(self, arg__1: qt.QtGui.QFocusEvent) -> None:
+        """フォーカス時の正本更新後に、既定の入力外観を復元する。"""
+        super().focusInEvent(arg__1)
+        if qt.isValid(self):
+            self._sync_appearance()
+
+    def focusOutEvent(self, arg__1: qt.QtGui.QFocusEvent) -> None:
+        """確定処理後に閲覧外観へ戻し、競合中の下書きは強調する。"""
+        super().focusOutEvent(arg__1)
+        if qt.isValid(self):
+            self._sync_appearance()
+
+    def setReadOnly(self, arg__1: bool) -> None:
+        """名前ロックや参照状態の変化を、閲覧外観へ反映する。"""
+        super().setReadOnly(arg__1)
+        if getattr(self, "_appearance_ready", False):
+            self._sync_appearance()
+
+    def _sync_appearance(self, *_args: object) -> None:
+        """編集可能なフォーカス中と競合中だけ既定の入力外観にする。"""
+        editing = not self.isReadOnly() and (
+            self.hasFocus() or self.hasConflict()
+        )
+        style = "" if editing else _NAME_IDLE_STYLE
+        if self.styleSheet() != style:
+            self.setStyleSheet(style)
+
+
 class ChannelBoxWidget(qt.QWidget):
     """基準ノードの情報と、スクロール可能な属性入力欄を表示する。"""
 
@@ -1496,7 +1543,7 @@ class ChannelBoxWidget(qt.QWidget):
                     Nodes().existing(representative), parent=self
                 )
                 try:
-                    editor = StringLineEdit(binding, self)
+                    editor = _NodeNameLineEdit(binding, self)
                 except Exception:
                     binding.dispose()
                     raise

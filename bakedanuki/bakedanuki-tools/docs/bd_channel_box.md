@@ -96,6 +96,10 @@ MayaのuiScriptは `bd_tools.bd_channel_box.ui.restore()` を呼び、復元中�
   範囲選択やスクリプトによる選択も現在のリスト順に従います。クリック履歴を記録する
   Mayaの設定は変更せず、厳密なクリック履歴順を独自に追跡しません。
 - 名前欄はutilの`MayaNodeNameBinding`と`StringLineEdit`を使用します。
+  bdChannelBox内では閲覧中に背景を周囲のpaletteへ合わせて枠を隠し、
+  編集可能なフォーカス中は従来の入力欄の外観へ戻します。Enter確定後もフォーカス中は
+  入力外観を保ちます。競合する下書きはフォーカスを失っても入力外観を保ち、
+  読み取り専用時はフォーカス中も閲覧外観でコピーできます。
   Enter・テンキーEnter・通常のフォーカス移動で確定し、Escapeで未確定入力を破棄します。
   名前の衝突はMayaに委ね、採番後の確定名を表示します。通常の改名とUndo／Redoにも追従します。
   入力する名前は現在のnamespace内に限定し、transformに付くShape名の追従はMaya標準に従います。
