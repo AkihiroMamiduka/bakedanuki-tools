@@ -43,6 +43,7 @@ row = bd_channel_box.show().widget.row_widgets[0]
 assert_type(row, AttributeRowWidget | AttributeStateRowWidget)
 if isinstance(row, AttributeRowWidget):
     assert_type(row.row, ChannelRow)
+    assert_type(row.context_menu, qt.QMenu)
     assert_type(
         row.editor,
         BoolCheckBox
@@ -165,7 +166,6 @@ assert_type(
     bd_channel_box.show().widget.controller.mode, Literal["values", "states"]
 )
 assert_type(bd_channel_box.show().widget.controller.set_mode("states"), None)
-assert_type(bd_channel_box.show().widget.row_widgets[0].context_menu, qt.QMenu)
 table = bd_channel_box.show().widget.table_view
 assert_type(table, ChannelTableView)
 assert_type(table.selected_keys(), tuple[tuple[str, str], ...])

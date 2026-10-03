@@ -33,6 +33,7 @@ class TableRow:
     value_field: qt.QDoubleSpinBox | None = None
     text_field: qt.QLineEdit | None = None
     input_indicator: qt.QWidget | None = None
+    select_on_right_click: bool = True
 
 
 class _RowDelegate(qt.QStyledItemDelegate):
@@ -608,6 +609,11 @@ class ChannelTableView(qt.QTableView):
                 qt.Qt.MouseButton.LeftButton,
                 qt.Qt.MouseButton.RightButton,
             ):
+                if (
+                    event.button() == qt.Qt.MouseButton.RightButton
+                    and not self.rows[index].select_on_right_click
+                ):
+                    return True
                 self._select_pressed(index, event, editable=editable)
                 if event.button() == qt.Qt.MouseButton.LeftButton:
                     self._begin_drag(index, event, editable=editable)

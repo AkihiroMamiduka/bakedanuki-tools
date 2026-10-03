@@ -763,8 +763,6 @@ class AttributeRowWidget(qt.QWidget):
 class AttributeStateRowWidget(qt.QWidget):
     """表示状態のラジオボタンとロックを余白なく横へ並べる。"""
 
-    refresh_requested = qt.Signal()
-
     def __init__(
         self,
         row: ChannelStateRow,
@@ -789,20 +787,6 @@ class AttributeStateRowWidget(qt.QWidget):
         self.name_label.setAlignment(
             qt.Qt.AlignmentFlag.AlignRight | qt.Qt.AlignmentFlag.AlignVCenter
         )
-        self.context_menu = qt.QMenu(self)
-        (
-            self.animation_layer_add_menu,
-            self.animation_layer_add_selected_action,
-            self.animation_layer_add_all_keyable_action,
-        ) = _create_animation_layer_menu(self.context_menu, "add")
-        (
-            self.animation_layer_remove_menu,
-            self.animation_layer_remove_selected_action,
-            self.animation_layer_remove_all_keyable_action,
-        ) = _create_animation_layer_menu(self.context_menu, "remove")
-        self.refresh_action = qt.QAction("表示を更新", self)
-        self.refresh_action.triggered.connect(self.refresh_requested.emit)
-        cast(_MenuActions, self.context_menu).addAction(self.refresh_action)
         self.editor = qt.QWidget(self)
         self.display_buttons: dict[ChannelDisplayState, qt.QRadioButton] = {}
         self._display_group = qt.QtWidgets.QButtonGroup(self.editor)
@@ -841,8 +825,7 @@ class AttributeStateRowWidget(qt.QWidget):
         self._update_state()
 
     def contextMenuEvent(self, event: qt.QtGui.QContextMenuEvent) -> None:
-        """属性名から状態を再取得するメニューを開く。"""
-        self.context_menu.popup(event.globalPos())
+        """状態行の右クリックを受け止め、親画面のメニューも開かない。"""
         event.accept()
 
     def _update_state(self) -> None:
@@ -1427,7 +1410,8 @@ class ChannelBoxWidget(qt.QWidget):
         self.table_view.finish_numeric_edit(commit=False)
         self.context_menu.close()
         for widget in self.row_widgets:
-            widget.context_menu.close()
+            if isinstance(widget, AttributeRowWidget):
+                widget.context_menu.close()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
 
@@ -1903,9 +1887,7 @@ class ChannelBoxWidget(qt.QWidget):
             self._changing_steps = False
         self._prepare_step_settings_menu()
 
-    def _prepare_row_menu(
-        self, widget: AttributeRowWidget | AttributeStateRowWidget
-    ) -> None:
+    def _prepare_row_menu(self, widget: AttributeRowWidget) -> None:
         """右クリックした行を選択対象に含め、全選択の状態でメニューを準備する。"""
         key = (widget.row.attribute.path, widget.row.attribute.kind)
         if key not in self.table_view.selected_keys():
@@ -1930,71 +1912,65 @@ class ChannelBoxWidget(qt.QWidget):
                 has_nodes and has_layers and has_selection
             )
             all_action.setEnabled(has_nodes and has_layers)
-        if isinstance(widget, AttributeRowWidget):
-            selected = set(self.table_view.selected_keys())
-            can_paste = has_nodes and self.controller.can_paste_values()
-            can_paste_animation = (
-                has_nodes and self.controller.can_paste_animation_curves()
-            )
-            widget.animation_copy_selected_action.setEnabled(
-                has_nodes and has_selection
-            )
-            widget.animation_copy_all_action.setEnabled(has_nodes)
-            widget.animation_paste_same_action.setEnabled(can_paste_animation)
-            widget.animation_paste_selected_action.setEnabled(
-                can_paste_animation and has_selection
-            )
-            widget.animation_cut_selected_action.setEnabled(
-                has_nodes and has_selection
-            )
-            widget.animation_cut_all_action.setEnabled(has_nodes)
-            widget.animation_delete_selected_action.setEnabled(
-                has_nodes and has_selection
-            )
-            widget.animation_delete_all_action.setEnabled(has_nodes)
-            widget.copy_all_values_action.setEnabled(has_nodes)
-            widget.copy_selected_values_action.setEnabled(
-                has_nodes and has_selection
-            )
-            for action in widget.paste_copied_values_actions.values():
-                action.setEnabled(can_paste)
-            widget.paste_selected_values_action.setEnabled(
-                can_paste and has_selection
-            )
-            self._set_paste_selected_tooltip(
-                widget.paste_selected_values_action
-            )
-            show_freeze = self.controller.has_transform_context()
-            widget.freeze_separator_action.setVisible(show_freeze)
-            widget.freeze_menu.menuAction().setVisible(show_freeze)
-            widget.freeze_translate_action.setEnabled(
-                self.controller.can_freeze_translation()
-            )
-            widget.align_action.setEnabled(
-                any(
-                    isinstance(row, ChannelRow)
-                    and (row.attribute.path, row.attribute.kind) in selected
-                    and row.binding.is_mixed
-                    and row.binding.view_model.set_value_command.can_execute
-                    and (
-                        not isinstance(row.binding, MayaEnumPlugsBinding)
-                        or row.binding.is_value_defined
-                    )
-                    for row in self.controller.rows
+        selected = set(self.table_view.selected_keys())
+        can_paste = has_nodes and self.controller.can_paste_values()
+        can_paste_animation = (
+            has_nodes and self.controller.can_paste_animation_curves()
+        )
+        widget.animation_copy_selected_action.setEnabled(
+            has_nodes and has_selection
+        )
+        widget.animation_copy_all_action.setEnabled(has_nodes)
+        widget.animation_paste_same_action.setEnabled(can_paste_animation)
+        widget.animation_paste_selected_action.setEnabled(
+            can_paste_animation and has_selection
+        )
+        widget.animation_cut_selected_action.setEnabled(
+            has_nodes and has_selection
+        )
+        widget.animation_cut_all_action.setEnabled(has_nodes)
+        widget.animation_delete_selected_action.setEnabled(
+            has_nodes and has_selection
+        )
+        widget.animation_delete_all_action.setEnabled(has_nodes)
+        widget.copy_all_values_action.setEnabled(has_nodes)
+        widget.copy_selected_values_action.setEnabled(
+            has_nodes and has_selection
+        )
+        for action in widget.paste_copied_values_actions.values():
+            action.setEnabled(can_paste)
+        widget.paste_selected_values_action.setEnabled(
+            can_paste and has_selection
+        )
+        self._set_paste_selected_tooltip(widget.paste_selected_values_action)
+        show_freeze = self.controller.has_transform_context()
+        widget.freeze_separator_action.setVisible(show_freeze)
+        widget.freeze_menu.menuAction().setVisible(show_freeze)
+        widget.freeze_translate_action.setEnabled(
+            self.controller.can_freeze_translation()
+        )
+        widget.align_action.setEnabled(
+            any(
+                isinstance(row, ChannelRow)
+                and (row.attribute.path, row.attribute.kind) in selected
+                and row.binding.is_mixed
+                and row.binding.view_model.set_value_command.can_execute
+                and (
+                    not isinstance(row.binding, MayaEnumPlugsBinding)
+                    or row.binding.is_value_defined
                 )
+                for row in self.controller.rows
             )
+        )
         self._prepare_step_settings_menu()
 
-    def _add_selection_menu(
-        self, widget: AttributeRowWidget | AttributeStateRowWidget
-    ) -> None:
-        """値編集と状態編集の両モードに、選択属性の状態操作を追加する。"""
+    def _add_selection_menu(self, widget: AttributeRowWidget) -> None:
+        """値編集の行メニューに、選択属性の状態操作を追加する。"""
         key = (widget.row.attribute.path, widget.row.attribute.kind)
         menu = widget.context_menu
         menu.addSeparator()
-        if isinstance(widget, AttributeRowWidget):
-            menu.addMenu(self.step_settings_menu)
-            menu.addSeparator()
+        menu.addMenu(self.step_settings_menu)
+        menu.addSeparator()
         for title, actions in (
             ("ロック", (("lock", "ロック"), ("unlock", "解除"))),
             (
@@ -2015,10 +1991,6 @@ class ChannelBoxWidget(qt.QWidget):
                 )
                 cast(_MenuActions, group).addAction(item)
             menu.addMenu(group)
-        if isinstance(widget, AttributeStateRowWidget):
-            menu.addSeparator()
-            menu.addMenu(widget.animation_layer_add_menu)
-            menu.addMenu(widget.animation_layer_remove_menu)
         menu.aboutToShow.connect(partial(self._prepare_row_menu, widget))
 
     def _rebuild_rows(self) -> None:
@@ -2026,7 +1998,8 @@ class ChannelBoxWidget(qt.QWidget):
         self.state_sweep.clear()
         self.lock_sweep.clear()
         for widget in self.row_widgets:
-            widget.context_menu.close()
+            if isinstance(widget, AttributeRowWidget):
+                widget.context_menu.close()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
             widget.hide()
@@ -2191,28 +2164,29 @@ class ChannelBoxWidget(qt.QWidget):
                         partial(self._freeze_transforms, "all")
                     )
                     self._configure_value_input(widget, key)
-                widget.refresh_requested.connect(self.refresh)
-                self._add_selection_menu(widget)
-                widget.animation_layer_add_selected_action.triggered.connect(
-                    partial(
-                        self._run_selected_action,
-                        "animation_layer_add_selected",
-                        key,
+                if isinstance(widget, AttributeRowWidget):
+                    widget.refresh_requested.connect(self.refresh)
+                    self._add_selection_menu(widget)
+                    widget.animation_layer_add_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action,
+                            "animation_layer_add_selected",
+                            key,
+                        )
                     )
-                )
-                widget.animation_layer_add_all_keyable_action.triggered.connect(
-                    partial(self._edit_animation_layers_all_keyable, True)
-                )
-                widget.animation_layer_remove_selected_action.triggered.connect(
-                    partial(
-                        self._run_selected_action,
-                        "animation_layer_remove_selected",
-                        key,
+                    widget.animation_layer_add_all_keyable_action.triggered.connect(
+                        partial(self._edit_animation_layers_all_keyable, True)
                     )
-                )
-                widget.animation_layer_remove_all_keyable_action.triggered.connect(
-                    partial(self._edit_animation_layers_all_keyable, False)
-                )
+                    widget.animation_layer_remove_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action,
+                            "animation_layer_remove_selected",
+                            key,
+                        )
+                    )
+                    widget.animation_layer_remove_all_keyable_action.triggered.connect(
+                        partial(self._edit_animation_layers_all_keyable, False)
+                    )
                 widgets.append(widget)
         except Exception:
             self.controller.dispose()
@@ -2242,6 +2216,9 @@ class ChannelBoxWidget(qt.QWidget):
                         widget.input_indicator
                         if isinstance(widget, AttributeRowWidget)
                         else None
+                    ),
+                    select_on_right_click=isinstance(
+                        widget, AttributeRowWidget
                     ),
                 )
                 for widget in widgets
@@ -2327,7 +2304,8 @@ class ChannelBoxWidget(qt.QWidget):
         self._search_timer.stop()
         self.context_menu.close()
         for widget in self.row_widgets:
-            widget.context_menu.close()
+            if isinstance(widget, AttributeRowWidget):
+                widget.context_menu.close()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
         self.controller.dispose()
