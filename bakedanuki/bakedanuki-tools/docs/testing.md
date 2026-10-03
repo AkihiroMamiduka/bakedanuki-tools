@@ -49,7 +49,14 @@ util側の`tests/maya/ui/test_plugs_value_edits.py`で、複数Bindingをまと�
 
 ## bdChannelBoxのMaya本体検証
 
-リポジトリ直下から専用runnerを実行します。`--maya-version` は2025 / 2026 / 2027を
+この節の本体runnerは初回実装時の記録を含み、現行の右クリックメニューとは未同期です。
+`scripts/test_bd_channel_box_maya.py`には廃止済みの`row.refresh_action`を使う工程と、
+現在はサブメニュー内にある揃える・ロック操作を最上位から実行する工程が残っています。
+次に本体runnerを使う際は、これらの工程を現行メニューに合わせて更新し、結果を再検証してください。
+現行メニューの自動回帰には`tests/maya/test_bd_channel_box*.py`を使用します。
+
+工程を更新した後、リポジトリ直下から専用runnerを実行します。
+`--maya-version` は2025 / 2026 / 2027を
 指定でき、`--util-root` を省略すると環境変数またはsiblingのutilを使用します。
 
 ```powershell
@@ -63,10 +70,11 @@ PythonのuserSetupは読み込まず、検証用sceneで操作した後に専用
 時間切れの場合も、runner自身が起動したprocessだけを終了します。
 起動時のdeferred処理が完了した後に検証を開始し、専用sceneのUndoを有効にします。
 
-boolのCheckBoxへのSpace入力、floatの文字入力、Sliderのマウスドラッグ、
-enumの選択肢表示・マウス選択・飛び番入力、右クリックメニューからの
-表示更新とbool・enumの混在値を揃える操作、
-各操作の1回Undo、選択追従、close / reopen、utilとtoolsのreloadを確認します。
+初回実装時のrunnerは、boolのCheckBoxへのSpace入力、floatの文字入力、
+Sliderのマウスドラッグ、enumの選択肢表示・マウス選択・飛び番入力、
+当時の右クリックメニューからの表示更新と混在値の操作を検証していました。
+現行メニューに「表示を更新」はありません。
+各操作の1回Undo、選択追従、close / reopen、utilとtoolsのreloadも検証対象です。
 ドッキングからfloatingへの切替、Mayaへのタブ再配置、Maya側のcloseによる破棄も確認します。
 step欄のキー入力が値とUndoを変更しないこと、変更後の刻み幅で値入力できること、
 値をUndoしてもstepが保持されることも確認します。
@@ -104,7 +112,7 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 - `result.json`: 成否、操作履歴、実行Maya version、性能計測値、各段階のUndo状態。
 - `01-multiple-selection.png`、`02-single-selection.png`、`03-after-reload.png`:
   QtのWindow描画から保存した確認画像。
-- `04-attribute-menu.png`: 属性名を右クリックして開いた操作メニュー。
+- `04-attribute-menu.png`: 初回実装時に属性名を右クリックして開いた操作メニュー。
 - `05-docked.png`、`06-floating-content.png`: Maya右側へのドッキングとfloatingの表示。
 - `08-enum-popup.png`、`09-enum-selected.png`: enumの選択肢と入力後の表示。
 - `10-values-before-mode-switch.png`、`14-values-after-mode-switch.png`:
@@ -174,6 +182,15 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。この段�
   上下・Slider・bool・互換enumの選択属性への適用と、未選択行だけの単独操作。
 - 選択メニュー: 各属性をそれぞれの基準値へ揃えること、ロック／解除と3種類の表示状態、
   状態操作ではenum定義の不一致を理由にノードを除外しないこと、親ロックを自動解除しないこと。
+- 現行の右クリックメニュー: 値編集行のラベル・入力部品から同じメニューを開き、
+  選択済みの行は複数選択を維持し、未選択行はその行だけを選ぶこと。
+  状態編集行はメニューも選択変更もなく、余白はStep設定だけを示すこと。
+  アニメーション、値の揃え・コピー・ペースト、フリーズ、Step設定、ロック・表示の
+  並びと2階層以内の子項目を[現行仕様](bd_channel_box.md#選択属性のメニュー)に照らすこと。
+- 値を揃える操作: 「選択属性」は各行の表示ノード値を使い、「全て」と各表示条件は
+  表示ノードの属性状態で同じpathを選ぶこと。検索・表示フィルター・行選択で隠れた属性、
+  型やenum定義の不一致、編集不可、未丸め値、1回Undo、同値時の無Undo、
+  OSクリップボードの維持を確認すること。
 - 表示・ロックの選択操作: 選択行のradio・CheckBoxのクリックとキー入力を
   選択属性全体へ適用し、選択外の行は単行操作となること。表示状態とlockの混在、
   一回Undo、行の除去の遅延、選択済みの離れた行へなぞり操作が波及しないことも確認する。

@@ -67,7 +67,8 @@ workspace配置の復元・resetはutil、入力と選択監視の終了はtools
 属性別の初期step、profileの識別子、操作対象の選別はbdChannelBoxが所有します。
 step設定はuser preferencesへ保存し、sceneの値・Undo履歴へ含めません。
 属性名の整列、混在の印、対象情報のtooltip、選択属性を操作する右クリックメニューも
-bdChannelBoxが所有し、値欄のQt標準編集メニューとは独立して提供します。
+bdChannelBoxが所有します。値編集モードでは値欄のQt標準編集メニューを表示せず、
+属性行のどこを右クリックしても同じツール用メニューを開きます。
 一覧は`QTableView`へ1属性1セルを置き、delegateが既存の属性行Widgetをpersistent editorとして
 常時表示します。modelは行と選択を管理し、値は既存Bindingから同期します。
 Maya本体がviewportを交換する場合に備え、行の親は構築時に`viewport()`から取得し、
@@ -159,7 +160,7 @@ JSONのversion・size検証、OS clipboard、全対象の事前検証と一括�
 enumも同じ責務分担です。実定義の取得と比較用の値型はutilの`read_enum_definition()`と
 `EnumDefinition`を使用します。controllerが代表と定義の一致する対象を選び、
 `MayaEnumPlugsBinding`へ渡します。混在・Undo・定義変更時の入力停止はutil、
-除外理由の表示と「表示を更新」による再選別はtoolsが担当します。
+除外理由の表示と、ノードの選択し直しによる対象の再選別はtoolsが担当します。
 
 表示・ロック状態はutilの`MayaChannelStateBinding`を使用します。状態の読取り、
 複数対象の混在と操作可否、外部変更の監視、表示・ロックごとの一括操作、
