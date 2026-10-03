@@ -17,7 +17,7 @@ _OUTPUT_VARIABLE = "BAKEDANUKI_TOOLS_MENU_QA_OUTPUT"
 _USER_SETUP_MARKER = "BAKEDANUKI_TOOLS_MENU_QA_USER_SETUP_MARKER"
 _PHASE_VARIABLE = "BAKEDANUKI_TOOLS_MENU_QA_PHASE"
 _INSTALLER_VARIABLE = "BAKEDANUKI_TOOLS_MENU_QA_INSTALLER"
-_OPTION_LABEL = "Maya 起動時に bd メニューを表示"
+_OPTION_LABEL = "Maya 起動時に bakedanuki メニューを表示"
 
 
 def _find_labeled_menu(parent: str, label: str) -> str:
@@ -45,10 +45,10 @@ def _menu_state() -> tuple[str, str]:
     roots = [
         menu
         for menu in menus
-        if cmds.menu(menu, query=True, label=True) == "bd"
+        if cmds.menu(menu, query=True, label=True) == "bakedanuki"
     ]
     if len(roots) != 1:
-        raise AssertionError(f"bd メニュー数が {len(roots)} 件です")
+        raise AssertionError(f"bakedanuki メニュー数が {len(roots)} 件です")
     root = roots[0]
     category = _find_labeled_menu(root, "tools")
     item = _find_labeled_menu(category, "bdChannelBox")
@@ -123,7 +123,9 @@ def _run_in_maya() -> None:
         try:
             root, item = _menu_state()
             if not cmds.menu(root, query=True, visible=True):
-                raise AssertionError("切替後に bd メニューが非表示です")
+                raise AssertionError(
+                    "切替後に bakedanuki メニューが非表示です"
+                )
 
             # 再登録と reload を経ても同じメニューを一つだけ保持する
             from bd_tools.menu import install_menu
@@ -144,6 +146,8 @@ def _run_in_maya() -> None:
             _find_labeled_menu(rig_category, "Rig smoke")
             import bd_tools
 
+            # 旧表示名の共有rootを保持したままreload時に表示名を更新する
+            cmds.menu(root, edit=True, label="bd")
             bd_tools.reload_package(reload_util=True)
             root, item = _menu_state()
             _find_labeled_menu(root, "rig")
@@ -195,7 +199,7 @@ def _run_in_maya() -> None:
             main_window = mel.eval("$bdMenuDisabledWindow=$gMainWindow")
             menus = cmds.window(main_window, query=True, menuArray=True) or []
             if any(
-                cmds.menu(menu, query=True, label=True) == "bd"
+                cmds.menu(menu, query=True, label=True) == "bakedanuki"
                 for menu in menus
             ):
                 raise AssertionError("OFFでもbdメニューが自動登録されました")

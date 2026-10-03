@@ -26,7 +26,7 @@ import しません。この制約により、tools は rig の導入有無に�
 - 値型、node 操作、undo を扱う共通基盤
 - Qt binding facade
 - Window、workspaceControl、callback、UI 状態保存の共通 lifecycle
-- Maya上部の`bd`メニュー、categoryとownerごとの項目登録・解除
+- Maya上部の`bakedanuki`メニュー、categoryとownerごとの項目登録・解除
 
 ### `bd_tools`
 
@@ -115,9 +115,9 @@ UI 基盤は `bd_util.ui` と `bd_util.maya.ui` を利用します。
 
 `bd_tools`のMaya Moduleは、専用の`scripts/userSetup.py`を持ちます。
 interactive起動時だけ`maya.utils.executeDeferred()`へメニュー登録を予約し、
-`bd_util.maya.ui.register_menu_item()`で`bd > tools > bdChannelBox`を追加します。
+`bd_util.maya.ui.register_menu_item()`で`bakedanuki > tools > bdChannelBox`を追加します。
 `bdChannelBox`本体はクリックされるまで読み込みません。登録のownerは`bd_tools`、
-categoryは`tools`とし、将来のrig・physicsは別owner/categoryで同じ`bd`を共有します。
+categoryは`tools`とし、将来のrig・physicsは別owner/categoryで同じ`bakedanuki`を共有します。
 メニューのMaya UI構築と他ownerを保つ解除処理はutilが所有します。
 toolsのreload前には所有項目を解除し、reload後に新しいcallbackで再登録します。
 起動時のdeferred処理だけがutilの共有設定を読み、OFFなら登録をスキップします。

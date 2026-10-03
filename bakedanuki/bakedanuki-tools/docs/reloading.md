@@ -37,7 +37,7 @@ Python module を `sys.modules` から外すだけでは、次の Maya 外部状
 - scriptJob
 - signal connection
 - timer やその他の process state
-- `bd > tools` のメニュー項目
+- `bakedanuki > tools` のメニュー項目
 
 外部状態を作成する module は、再読込前に必要な終了処理を登録します。
 

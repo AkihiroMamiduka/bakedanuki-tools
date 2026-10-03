@@ -9,11 +9,11 @@
 
 ### Added
 
-- `bd`メニューの起動時表示設定に対応。OFFの次回起動では`bd_tools`の自動登録を
+- `bakedanuki`メニューの起動時表示設定に対応。OFFの次回起動では`bd_tools`の自動登録を
   スキップする。現在のセッションのメニューと明示的な`install_menu()`は維持する。
   共有設定は`bakedanuki-util`に保存され、既存設定がない環境ではONのまま動作する。
   再有効化には共通`installer.py`の再D&DとMaya再起動を利用できる。
-- Maya Module内の`userSetup.py`からinteractive起動後に`bd > tools > bdChannelBox`
+- Maya Module内の`userSetup.py`からinteractive起動後に`bakedanuki > tools > bdChannelBox`
   を登録する。ユーザーの`userSetup.py`は変更せず、batchでは登録しない。
   メニュー未表示の場合は`bd_tools.install_menu()`で手動登録できる。
   `bd_tools.uninstall_menu()`はtools所有項目だけを解除する。
@@ -34,6 +34,9 @@
 
 ### Changed
 
+- Maya上部の共有メニュー表示名を`bd`から`bakedanuki`へ変更した。
+  `bdChannelBox`の起動経路は`bakedanuki > tools > bdChannelBox`となる。
+  内部UI識別子と保存設定は維持する。
 - bdChannelBoxのstring入力は、編集中に基準または後続ノードの値が外部変更された場合、
   未確定入力を破棄して基準ノードの最新値へ同期する。入力可能なままの状態通知では入力を
   維持し、同期だけでsceneやUndo履歴は変更しない。設定とsceneの移行は不要。

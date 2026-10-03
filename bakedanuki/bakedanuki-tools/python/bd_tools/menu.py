@@ -22,7 +22,7 @@ def _show_channel_box() -> None:
 
 
 def install_menu() -> bool:
-    """Maya上部の``bd > tools``へbdChannelBoxを登録する。
+    """Maya上部の``bakedanuki > tools``へbdChannelBoxを登録する。
 
     MayaのUIがまだ利用できない場合は``False``を返す。
     """

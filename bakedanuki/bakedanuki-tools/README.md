@@ -34,10 +34,10 @@ bakedanuki/
 共通の `installer.py` を Maya の viewport へドラッグ&ドロップするか、
 `bakedanuki/modules` を `MAYA_MODULE_PATH` へ追加してください。
 
-interactive Mayaの起動後、上部メニューバーの`bd > tools > bdChannelBox`から
+interactive Mayaの起動後、上部メニューバーの`bakedanuki > tools > bdChannelBox`から
 ツールを開けます。各Module内の`userSetup.py`がメニュー登録を予約します。
 この起動処理はユーザー自身の`userSetup.py`やsceneを書き換えません。
-`bd`内の「Maya 起動時に bd メニューを表示」をOFFにすると、次回起動からメニューの
+`bakedanuki`内の「Maya 起動時に bakedanuki メニューを表示」をOFFにすると、次回起動からメニューの
 自動登録をスキップします。現在のメニューはそのセッション中に残ります。
 再び表示するには共通の`installer.py`をviewportへドロップしてONへ戻し、Mayaを
 再起動してください。設定は使用中のMayaバージョンごとに保存されます。
