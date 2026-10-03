@@ -1474,6 +1474,64 @@ class ChannelBoxController(qt.QObject):
             )
         return result.changed
 
+    @staticmethod
+    def _is_transform_node(name: str) -> bool:
+        """通常transformとjointなどの派生ノードを判定する。"""
+        try:
+            return cast(bool, cmds.objectType(name, isAType="transform"))
+        except (RuntimeError, TypeError):
+            return False
+
+    def has_transform_context(self) -> bool:
+        """画面の基準ノードでフリーズメニューを表示できるか返す。"""
+        return (
+            not self._disposed
+            and bool(self.node_names)
+            and self._is_transform_node(self.node_names[0])
+        )
+
+    def _freeze_targets(self, *, translate_only: bool) -> tuple[str, ...]:
+        """選択順を保ち、移動指定ではjointを除いた対象を返す。"""
+        return tuple(
+            name
+            for name in self.node_names
+            if self._is_transform_node(name)
+            and (not translate_only or cmds.nodeType(name) != "joint")
+        )
+
+    def can_freeze_translation(self) -> bool:
+        """基準ノードがtransform系で、移動をフリーズできる対象があるか返す。"""
+        return self.has_transform_context() and bool(
+            self._freeze_targets(translate_only=True)
+        )
+
+    def freeze_transforms(
+        self, component: Literal["translate", "rotate", "scale", "all"]
+    ) -> int:
+        """選択中のtransform系ノードへMaya標準のフリーズを適用する。"""
+        if component not in ("translate", "rotate", "scale", "all"):
+            raise ValueError("未対応のフリーズ対象です")
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        if not self.has_transform_context():
+            return 0
+        targets = self._freeze_targets(translate_only=component == "translate")
+        if not targets:
+            return 0
+
+        # Maya標準と同じ設定で形状・子階層を補正し、一操作のUndoへまとめる
+        cmds.makeIdentity(
+            *targets,
+            apply=True,
+            translate=component in ("translate", "all"),
+            rotate=component in ("rotate", "all"),
+            scale=component in ("scale", "all"),
+            normal=0,
+        )
+        return len(targets)
+
     def _selected_state_plugs(
         self, keys: Sequence[tuple[str, str]], *, display: bool
     ) -> tuple[list[MayaChannelStatePlug], list[str]]:

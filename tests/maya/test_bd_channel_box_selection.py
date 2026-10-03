@@ -145,6 +145,18 @@ def _row(editor: ChannelBoxWidget, name: str) -> AttributeRowWidget:
     return row
 
 
+def _open_row_menu(row: AttributeRowWidget) -> None:
+    """属性名の右クリックで値編集行メニューを表示する。"""
+    position = row.name_label.rect().center()
+    event = qt.QtGui.QContextMenuEvent(
+        qt.QtGui.QContextMenuEvent.Reason.Mouse,
+        position,
+        row.name_label.mapToGlobal(position),
+    )
+    qt.QApplication.sendEvent(row.name_label, event)
+    _events()
+
+
 def _keys(
     editor: ChannelBoxWidget, *names: str
 ) -> tuple[tuple[str, str], ...]:
@@ -1500,6 +1512,7 @@ def test_selected_menu_lock_hide_and_alignment(
         "アニメーションカーブ：削除",
         "コピー",
         "ペースト",
+        "フリーズ",
         "Step設定",
         "ロック",
         "表示",
@@ -1526,6 +1539,15 @@ def test_selected_menu_lock_hide_and_alignment(
         ("", True),
         ("コピー", False),
         ("ペースト", False),
+    ]
+    assert [
+        (action.text(), action.isSeparator())
+        for action in row.context_menu.actions()[14:18]
+    ] == [
+        ("", True),
+        ("フリーズ", False),
+        ("", True),
+        ("表示を更新", False),
     ]
     assert [
         (action.text(), action.objectName())
@@ -1578,6 +1600,15 @@ def test_selected_menu_lock_hide_and_alignment(
     ]
     assert [
         (action.text(), action.objectName())
+        for action in row.freeze_menu.actions()
+    ] == [
+        ("移動", "freeze_translate"),
+        ("回転", "freeze_rotate"),
+        ("スケール", "freeze_scale"),
+        ("全て", "freeze_all"),
+    ]
+    assert [
+        (action.text(), action.objectName())
         for action in row.animation_delete_menu.actions()
     ] == [
         ("選択属性", "animation_delete_selected"),
@@ -1625,6 +1656,149 @@ def test_selected_menu_lock_hide_and_alignment(
     cmds.undo()
     _events()
     assert _row(editor, "translateY")
+
+
+@pytest.mark.parametrize(
+    ("component", "expected"),
+    (
+        ("translate", (0.0, 45.0, 2.0)),
+        ("rotate", (3.0, 0.0, 2.0)),
+        ("scale", (3.0, 45.0, 1.0)),
+        ("all", (0.0, 0.0, 1.0)),
+    ),
+)
+def test_freeze_transforms_preserves_shape_and_undoes_once(
+    editor: ChannelBoxWidget,
+    component: Literal["translate", "rotate", "scale", "all"],
+    expected: tuple[float, float, float],
+) -> None:
+    """指定成分だけフリーズし、形状の配置を保って一度のUndoで戻す。"""
+    cube = cast(list[str], cmds.polyCube(name="freezeCube"))[0]
+    _set_value(f"{cube}.translateX", 3.0)
+    _set_value(f"{cube}.rotateY", 45.0)
+    _set_value(f"{cube}.scaleX", 2.0)
+    before = tuple(
+        float(value)
+        for value in cmds.pointPosition(f"{cube}.vtx[0]", world=True)
+    )
+    cmds.select(cube, replace=True)
+    editor.refresh()
+    row = _row(editor, "translateX")
+    actions = {
+        "translate": row.freeze_translate_action,
+        "rotate": row.freeze_rotate_action,
+        "scale": row.freeze_scale_action,
+        "all": row.freeze_all_action,
+    }
+    cmds.flushUndo()
+
+    actions[component].trigger()
+    _events()
+    for attribute, value in zip(("translateX", "rotateY", "scaleX"), expected):
+        assert isclose(cmds.getAttr(f"{cube}.{attribute}"), value)
+    after = tuple(
+        float(value)
+        for value in cmds.pointPosition(f"{cube}.vtx[0]", world=True)
+    )
+    assert all(isclose(a, b, abs_tol=1e-5) for a, b in zip(after, before))
+    assert not editor.message_label.isVisible()
+
+    cmds.undo()
+    _events()
+    for attribute, value in (
+        ("translateX", 3.0),
+        ("rotateY", 45.0),
+        ("scaleX", 2.0),
+    ):
+        assert isclose(cmds.getAttr(f"{cube}.{attribute}"), value)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_freeze_menu_uses_base_transform_and_skips_other_node_types(
+    editor: ChannelBoxWidget,
+) -> None:
+    """基準がtransform系の時だけ表示し、混合選択の非transformを除く。"""
+    other = cmds.createNode("network", name="freezeNetwork")
+    cmds.addAttr(
+        other,
+        longName="gain",
+        attributeType="double",
+        defaultValue=7.0,
+        keyable=True,
+    )
+    cmds.select("multiA", other, replace=True)
+    editor.refresh()
+    row = _row(editor, "translateX")
+    _open_row_menu(row)
+    assert row.freeze_menu.menuAction().isVisible()
+    assert row.freeze_separator_action.isVisible()
+    assert row.freeze_translate_action.isEnabled()
+    row.context_menu.close()
+    cmds.flushUndo()
+    row.freeze_translate_action.trigger()
+    _events()
+    assert cmds.getAttr("multiA.translateX") == 0.0
+    assert cmds.getAttr(f"{other}.gain") == 7.0
+    cmds.undo()
+    _events()
+    assert cmds.getAttr("multiA.translateX") == 5.0
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    cmds.select(other, "multiA", replace=True)
+    editor.refresh()
+    row = _row(editor, "gain")
+    _open_row_menu(row)
+    assert not row.freeze_menu.menuAction().isVisible()
+    assert not row.freeze_separator_action.isVisible()
+    assert row.context_menu.actions()[16].isSeparator()
+    assert row.context_menu.actions()[16].isVisible()
+    row.context_menu.close()
+
+
+def test_freeze_joint_keeps_translation_and_disables_move(
+    editor: ChannelBoxWidget,
+) -> None:
+    """jointのみでは移動を無効にし、全ては回転・スケールへ適用する。"""
+    cmds.select(clear=True)
+    joint = cast(str, cmds.joint(name="freezeJoint", position=(1, 0, 0)))
+    _set_value(f"{joint}.rotateY", 45.0)
+    _set_value(f"{joint}.scaleX", 2.0)
+    cmds.select(joint, replace=True)
+    editor.refresh()
+    row = _row(editor, "translateX")
+    _open_row_menu(row)
+    assert row.freeze_menu.menuAction().isVisible()
+    assert not row.freeze_translate_action.isEnabled()
+    row.context_menu.close()
+    cmds.flushUndo()
+
+    row.freeze_all_action.trigger()
+    _events()
+    assert isclose(cmds.getAttr(f"{joint}.translateX"), 1.0)
+    assert isclose(cmds.getAttr(f"{joint}.rotateY"), 0.0)
+    assert isclose(cmds.getAttr(f"{joint}.scaleX"), 1.0)
+    assert isclose(cmds.getAttr(f"{joint}.jointOrientY"), 45.0)
+    cmds.undo()
+    _events()
+    assert isclose(cmds.getAttr(f"{joint}.rotateY"), 45.0)
+    assert isclose(cmds.getAttr(f"{joint}.scaleX"), 2.0)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_freeze_reports_maya_error_without_removing_animation(
+    editor: ChannelBoxWidget,
+) -> None:
+    """キー付き成分はMayaの拒否を表示し、入力カーブを保持する。"""
+    cmds.setKeyframe("multiA.translateX", time=1, value=5)
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    cmds.flushUndo()
+
+    _row(editor, "translateX").freeze_translate_action.trigger()
+    _events()
+    assert cmds.keyframe("multiA.translateX", query=True, keyframeCount=True)
+    assert editor.message_label.isVisible()
+    assert "Freeze Transform" in editor.message_label.text()
 
 
 @pytest.mark.parametrize("breakdown", (False, True))

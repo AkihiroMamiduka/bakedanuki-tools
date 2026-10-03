@@ -17,6 +17,11 @@
 
 ### Added
 
+- bdChannelBoxの値編集行メニューに「フリーズ > 移動／回転／スケール／全て」を追加。
+  先頭選択ノードがtransform系の場合だけ表示し、選択中のtransform系ノードへ
+  Maya標準の`makeIdentity -apply true`を適用する。jointの移動は対象外。
+  形状・子階層とsceneの値に影響するが保存設定の移行は不要。
+  `bd_tools.reload_package()`で反映できる。
 - bdChannelBoxの値編集行メニューに「アニメーションカーブ：カット >
   選択属性／全アニメーション属性」を追加。全時間の曲線をMaya標準のキー用clipboardと
   画面内の貼り付け情報へコピーしてから削除する。型の異なる同名属性も対象にし、

@@ -471,6 +471,23 @@ class AttributeRowWidget(qt.QWidget):
         self.paste_menu.addSeparator()
         paste_actions = cast(_MenuActions, self.paste_menu)
         paste_actions.addAction(self.paste_selected_values_action)
+        self.freeze_menu = qt.QMenu("フリーズ", self.context_menu)
+        self.freeze_translate_action = qt.QAction("移動", self)
+        self.freeze_translate_action.setObjectName("freeze_translate")
+        self.freeze_rotate_action = qt.QAction("回転", self)
+        self.freeze_rotate_action.setObjectName("freeze_rotate")
+        self.freeze_scale_action = qt.QAction("スケール", self)
+        self.freeze_scale_action.setObjectName("freeze_scale")
+        self.freeze_all_action = qt.QAction("全て", self)
+        self.freeze_all_action.setObjectName("freeze_all")
+        freeze_actions = cast(_MenuActions, self.freeze_menu)
+        for action in (
+            self.freeze_translate_action,
+            self.freeze_rotate_action,
+            self.freeze_scale_action,
+            self.freeze_all_action,
+        ):
+            freeze_actions.addAction(action)
         self.refresh_action = qt.QAction("表示を更新", self)
         self.refresh_action.triggered.connect(self.refresh_requested.emit)
         menu_actions = cast(_MenuActions, self.context_menu)
@@ -488,6 +505,8 @@ class AttributeRowWidget(qt.QWidget):
         self.context_menu.addSeparator()
         self.context_menu.addMenu(self.copy_menu)
         self.context_menu.addMenu(self.paste_menu)
+        self.freeze_separator_action = self.context_menu.addSeparator()
+        self.context_menu.addMenu(self.freeze_menu)
         self.context_menu.addSeparator()
         menu_actions.addAction(self.refresh_action)
         self.editor = self._create_editor(
@@ -1707,6 +1726,18 @@ class ChannelBoxWidget(qt.QWidget):
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
+    def _freeze_transforms(
+        self, component: Literal["translate", "rotate", "scale", "all"]
+    ) -> None:
+        """選択中のtransform系ノードへ指定成分のフリーズを適用する。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.freeze_transforms(component)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
     def _prepare_edit_menu(self) -> None:
         """現在のnode・行選択・clipboardに合わせて編集メニューを準備する。"""
         has_nodes = bool(self.controller.node_names)
@@ -1856,6 +1887,12 @@ class ChannelBoxWidget(qt.QWidget):
             )
             self._set_paste_selected_tooltip(
                 widget.paste_selected_values_action
+            )
+            show_freeze = self.controller.has_transform_context()
+            widget.freeze_separator_action.setVisible(show_freeze)
+            widget.freeze_menu.menuAction().setVisible(show_freeze)
+            widget.freeze_translate_action.setEnabled(
+                self.controller.can_freeze_translation()
             )
             widget.align_action.setEnabled(
                 any(
@@ -2060,6 +2097,18 @@ class ChannelBoxWidget(qt.QWidget):
                             "paste_selected",
                             key,
                         )
+                    )
+                    widget.freeze_translate_action.triggered.connect(
+                        partial(self._freeze_transforms, "translate")
+                    )
+                    widget.freeze_rotate_action.triggered.connect(
+                        partial(self._freeze_transforms, "rotate")
+                    )
+                    widget.freeze_scale_action.triggered.connect(
+                        partial(self._freeze_transforms, "scale")
+                    )
+                    widget.freeze_all_action.triggered.connect(
+                        partial(self._freeze_transforms, "all")
                     )
                     self._configure_value_input(widget, key)
                 widget.refresh_requested.connect(self.refresh)
