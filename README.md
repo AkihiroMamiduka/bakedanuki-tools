@@ -72,7 +72,13 @@ Black 用環境と、pytest / Pyright 用の開発ツールを準備します。
 bool・float系・enum・stringの値入力、step操作、表示・ロック状態の変更、Mayaへのドッキングに対応しています。
 今後の任意の拡張候補は[Roadmap](bakedanuki/bakedanuki-tools/docs/roadmap.md#bdchannelboxの拡張候補)にまとめています。
 
-Maya の Script Editor で実行します。
+interactive Mayaでは、上部の`bakedanuki > tools > bdChannelBox`から開けます。
+起動時表示のチェックをOFFにすると、次回起動からメニューを自動登録しません。
+設定と再有効化の手順は[パッケージのREADME](bakedanuki/bakedanuki-tools/README.md)を参照してください。
+そのセッションだけメニューを手動登録する場合は、Script Editorで
+`bd_tools.install_menu()`を実行できます。
+
+メニューを使わずに直接開く場合は、MayaのScript Editorで次を実行します。
 
 ```python
 from bd_tools import bd_channel_box

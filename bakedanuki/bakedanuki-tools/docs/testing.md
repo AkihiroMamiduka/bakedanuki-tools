@@ -45,10 +45,14 @@ Maya 本体でも操作確認します。
 `userSetup.py`を配置し、Module側のhookと両方が実行されたことを確認します。
 同じprofileでMayaを3回起動し、チェックOFF後の次回起動では`bakedanuki`がないこと、
 共通installerによる再有効化、その次の起動での再表示も確認します。
-正常終了後は、出力先profileの`menuSetPrefs.mel`にbdのメニュー項目が
+正常終了後は、出力先profileの`menuSetPrefs.mel`にbakedanukiのメニュー項目が
 保存されていないことを手動で確認します。従来の
 `test_bd_channel_box_maya.py`は`userSetup.py`を読み込まないため、
 この起動経路の代用にはなりません。
+
+新しいpackageが同じ共有メニューへ参加するときは、共通の検証profileへ双方のModuleを
+配置し、categoryの共有、owner別の項目解除、reload後の重複防止、表示設定OFF時の
+起動スキップと明示登録を確認します。
 
 `test_bd_channel_box_order.py`はtransform・jointの優先順、drawOverrideのRGB子、
 残りの属性の相対順、両モードと5フィルターの組合せを検証します。

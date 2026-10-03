@@ -99,3 +99,8 @@ MayaはModuleの`scripts`を探索し、起動時にそのファイルを実行�
 ユーザー自身の`userSetup.py`やsceneには書き込みません。
 共通installerは、確認を得てMaya.envの`MAYA_MODULE_PATH`を設定します。
 複数のbakedanuki packageを重ねる場合も、それぞれが自分の項目だけを登録します。
+将来のrig・physicsなどが共有メニューへ参加する場合は、package固有の`owner`で
+`bd_util.maya.ui.register_menu_item()`を呼び、reload前に
+`unregister_menu_owner(owner)`で自分の項目を解除します。起動時の遅延登録、
+表示設定、設定ファイルの扱いは、util側の
+`bakedanuki/bakedanuki-util/docs/ui/README.md`の「共有Mayaメインメニュー」を参照してください。
