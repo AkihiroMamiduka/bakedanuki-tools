@@ -1603,8 +1603,8 @@ def test_selected_menu_lock_hide_and_alignment(
         (action.text(), action.objectName())
         for action in row.animation_paste_menu.actions()
     ] == [
-        ("コピー元と同じ属性", "animation_paste_same"),
         ("選択属性", "animation_paste_selected"),
+        ("コピー元と同じ属性", "animation_paste_same"),
     ]
     assert [
         (action.text(), action.objectName())
@@ -3250,16 +3250,16 @@ def test_copy_all_values_uses_reference_node_and_does_not_write(
         assert row.copy_all_values_action.isEnabled()
         assert row.copy_selected_values_action.isEnabled()
         assert row.paste_menu.title() == "ペースト"
-        assert row.paste_copied_values_menu.title() == "コピー元と同じ属性"
-        assert tuple(
-            action.text()
-            for action in row.paste_copied_values_actions.values()
-        ) == (
-            "全て",
-            "keyable + channelbox",
-            "keyable",
-            "channelbox",
-            "hide",
+        assert [action.text() for action in row.paste_menu.actions()] == [
+            "選択属性",
+            "コピー元と同じ属性：全て",
+            "コピー元と同じ属性：Keyable + ChannelBox",
+            "コピー元と同じ属性：Keyable",
+            "コピー元と同じ属性：ChannelBox",
+            "コピー元と同じ属性：Hide",
+        ]
+        assert all(
+            action.menu() is None for action in row.paste_menu.actions()
         )
         assert editor.edit_menu.title() == "編集"
         assert editor.copy_menu.title() == "コピー"
@@ -3268,6 +3268,12 @@ def test_copy_all_values_uses_reference_node_and_does_not_write(
             "全属性",
         ]
         assert editor.paste_menu.title() == "ペースト"
+        assert [action.text() for action in editor.paste_menu.actions()] == [
+            action.text() for action in row.paste_menu.actions()
+        ]
+        assert all(
+            action.menu() is None for action in editor.paste_menu.actions()
+        )
         editor.edit_menu.aboutToShow.emit()
         assert editor.copy_all_values_action.isEnabled()
         assert editor.copy_selected_values_action.isEnabled()
@@ -3435,7 +3441,6 @@ def test_copied_path_paste_filters_by_reference_node_display_state(
         _set_value(node + ".limited", 1.0)
     _events()
     editor.edit_menu.aboutToShow.emit()
-    assert editor.paste_copied_values_menu.isEnabled()
     assert all(
         action.isEnabled()
         for action in editor.paste_copied_values_actions.values()

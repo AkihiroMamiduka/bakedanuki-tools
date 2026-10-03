@@ -74,7 +74,6 @@ if isinstance(row, AttributeRowWidget):
     assert_type(row.copy_all_values_action, qt.QAction)
     assert_type(row.copy_selected_values_action, qt.QAction)
     assert_type(row.paste_menu, qt.QMenu)
-    assert_type(row.paste_copied_values_menu, qt.QMenu)
     assert_type(
         row.paste_copied_values_actions,
         dict[ChannelAttributeFilter, qt.QAction],
@@ -111,7 +110,6 @@ assert_type(
     bd_channel_box.show().widget.copy_selected_values_action, qt.QAction
 )
 assert_type(bd_channel_box.show().widget.paste_menu, qt.QMenu)
-assert_type(bd_channel_box.show().widget.paste_copied_values_menu, qt.QMenu)
 assert_type(
     bd_channel_box.show().widget.paste_copied_values_actions,
     dict[ChannelAttributeFilter, qt.QAction],

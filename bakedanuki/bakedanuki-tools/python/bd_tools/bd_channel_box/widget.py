@@ -91,18 +91,18 @@ _PASTE_FILTER_OPTIONS: tuple[tuple[ChannelAttributeFilter, str, str], ...] = (
     ("all", "全て", "コピーした全項目を"),
     (
         "visible",
-        "keyable + channelbox",
+        "Keyable + ChannelBox",
         "基準ノードでkeyableまたはchannelboxのコピー項目を",
     ),
-    ("keyable", "keyable", "基準ノードでkeyableのコピー項目を"),
+    ("keyable", "Keyable", "基準ノードでkeyableのコピー項目を"),
     (
         "channel_box",
-        "channelbox",
+        "ChannelBox",
         "基準ノードで非keyableかつchannelboxのコピー項目を",
     ),
     (
         "hidden",
-        "hide",
+        "Hide",
         "基準ノードでkeyableでもchannelboxでもないコピー項目を",
     ),
 )
@@ -408,8 +408,8 @@ class AttributeRowWidget(qt.QWidget):
             "一曲線は型を問わず選択属性へ、複数曲線は同じ正式pathへ挿入"
         )
         animation_paste_actions = cast(_MenuActions, self.animation_paste_menu)
-        animation_paste_actions.addAction(self.animation_paste_same_action)
         animation_paste_actions.addAction(self.animation_paste_selected_action)
+        animation_paste_actions.addAction(self.animation_paste_same_action)
         self.animation_cut_menu = qt.QMenu(
             "アニメーションカーブ：カット", self.context_menu
         )
@@ -479,17 +479,11 @@ class AttributeRowWidget(qt.QWidget):
         copy_actions.addAction(self.copy_selected_values_action)
         copy_actions.addAction(self.copy_all_values_action)
         self.paste_menu = qt.QMenu("ペースト", self.context_menu)
-        self.paste_copied_values_menu = qt.QMenu(
-            "コピー元と同じ属性", self.paste_menu
-        )
         self.paste_copied_values_actions: dict[
             ChannelAttributeFilter, qt.QAction
         ] = {}
-        copied_paste_actions = cast(
-            _MenuActions, self.paste_copied_values_menu
-        )
         for display_filter, label, description in _PASTE_FILTER_OPTIONS:
-            action = qt.QAction(label, self)
+            action = qt.QAction(f"コピー元と同じ属性：{label}", self)
             action.setObjectName(
                 "paste_copied_values"
                 if display_filter == "all"
@@ -498,7 +492,6 @@ class AttributeRowWidget(qt.QWidget):
             action.setToolTip(
                 f"{description}選択ノードの同じ正式pathへ貼り付け"
             )
-            copied_paste_actions.addAction(action)
             self.paste_copied_values_actions[display_filter] = action
         self.paste_copied_values_action = self.paste_copied_values_actions[
             "all"
@@ -510,10 +503,10 @@ class AttributeRowWidget(qt.QWidget):
         self.paste_selected_values_action.setToolTip(
             "コピーした値を選択属性へ貼り付け"
         )
-        self.paste_menu.addMenu(self.paste_copied_values_menu)
-        self.paste_menu.addSeparator()
         paste_actions = cast(_MenuActions, self.paste_menu)
         paste_actions.addAction(self.paste_selected_values_action)
+        for action in self.paste_copied_values_actions.values():
+            paste_actions.addAction(action)
         self.freeze_menu = qt.QMenu("フリーズ", self.context_menu)
         self.freeze_translate_action = qt.QAction("移動", self)
         self.freeze_translate_action.setObjectName("freeze_translate")
@@ -1022,17 +1015,11 @@ class ChannelBoxWidget(qt.QWidget):
         copy_actions.addAction(self.copy_all_values_action)
         self.edit_menu.addMenu(self.copy_menu)
         self.paste_menu = qt.QMenu("ペースト", self.edit_menu)
-        self.paste_copied_values_menu = qt.QMenu(
-            "コピー元と同じ属性", self.paste_menu
-        )
         self.paste_copied_values_actions: dict[
             ChannelAttributeFilter, qt.QAction
         ] = {}
-        copied_paste_actions = cast(
-            _MenuActions, self.paste_copied_values_menu
-        )
         for display_filter, label, description in _PASTE_FILTER_OPTIONS:
-            action = qt.QAction(label, self)
+            action = qt.QAction(f"コピー元と同じ属性：{label}", self)
             object_name = (
                 "pasteCopiedValuesAction"
                 if display_filter == "all"
@@ -1045,7 +1032,6 @@ class ChannelBoxWidget(qt.QWidget):
                 f"{description}選択ノードの同じ正式pathへ貼り付け"
             )
             action.setEnabled(False)
-            copied_paste_actions.addAction(action)
             self.paste_copied_values_actions[display_filter] = action
         self.paste_copied_values_action = self.paste_copied_values_actions[
             "all"
@@ -1058,10 +1044,10 @@ class ChannelBoxWidget(qt.QWidget):
             "コピーした値を選択属性へ貼り付け"
         )
         self.paste_selected_values_action.setEnabled(False)
-        self.paste_menu.addMenu(self.paste_copied_values_menu)
-        self.paste_menu.addSeparator()
         paste_actions = cast(_MenuActions, self.paste_menu)
         paste_actions.addAction(self.paste_selected_values_action)
+        for action in self.paste_copied_values_actions.values():
+            paste_actions.addAction(action)
         self.edit_menu.addMenu(self.paste_menu)
         self.settings_menu = qt.QMenu("設定", self.menu_bar)
         self.menu_bar.addMenu(self.settings_menu)
@@ -1823,7 +1809,6 @@ class ChannelBoxWidget(qt.QWidget):
         self.copy_selected_values_action.setEnabled(
             has_nodes and has_value_selection
         )
-        self.paste_copied_values_menu.setEnabled(can_paste)
         for action in self.paste_copied_values_actions.values():
             action.setEnabled(can_paste)
         self.paste_selected_values_action.setEnabled(
@@ -1971,7 +1956,6 @@ class ChannelBoxWidget(qt.QWidget):
             widget.copy_selected_values_action.setEnabled(
                 has_nodes and has_selection
             )
-            widget.paste_copied_values_menu.setEnabled(can_paste)
             for action in widget.paste_copied_values_actions.values():
                 action.setEnabled(can_paste)
             widget.paste_selected_values_action.setEnabled(
