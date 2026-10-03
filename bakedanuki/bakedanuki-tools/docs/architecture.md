@@ -136,7 +136,8 @@ utilを直接利用します。画面寸法の定数はtools内部の調整箇�
 `MayaFloatValueEdit` / `MayaFloatOffsetEdit` / `MayaBoolValueEdit` /
 `MayaEnumValueEdit` / `MayaStringValueEdit`へまとめます。
 `apply_plugs_values()`が全件の事前検証、書込み失敗時の復旧、1回のUndoを所有します。
-数値直接入力は各行の表示単位で換算し、「この値に揃える」は各行自身の基準ノード値を使います。
+数値直接入力は各行の表示単位で換算し、「表示ノードの値に揃える」は各属性の
+表示ノードの未丸め値を使います。
 上下操作は操作元Stepによる表示増減量を各数値の現在値へ加え、Slider・bool・enum・stringは互換属性を
 操作後の値へ揃えます。Sliderの連続入力は`MayaEditSession`で1回のUndoへまとめます。
 Step欄の入力はtoolsが選択を解釈し、同欄を持つ各Viewへ同じ表示stepを設定します。

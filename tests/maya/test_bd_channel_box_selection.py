@@ -1522,6 +1522,7 @@ def test_selected_menu_lock_hide_and_alignment(
         "アニメーションカーブ：削除",
         "アニメーションレイヤ：追加",
         "アニメーションレイヤ：除去",
+        "表示ノードの値に揃える",
         "コピー",
         "ペースト",
         "フリーズ",
@@ -1535,10 +1536,8 @@ def test_selected_menu_lock_hide_and_alignment(
     )
     assert [
         (action.text(), action.isSeparator())
-        for action in row.context_menu.actions()[:17]
+        for action in row.context_menu.actions()[:16]
     ] == [
-        ("この値に揃える", False),
-        ("", True),
         ("キーフレーム", False),
         ("ブレイクダウンフレーム", False),
         ("ミュート", False),
@@ -1552,12 +1551,13 @@ def test_selected_menu_lock_hide_and_alignment(
         ("アニメーションレイヤ：追加", False),
         ("アニメーションレイヤ：除去", False),
         ("", True),
+        ("表示ノードの値に揃える", False),
         ("コピー", False),
         ("ペースト", False),
     ]
     assert [
         (action.text(), action.isSeparator())
-        for action in row.context_menu.actions()[17:]
+        for action in row.context_menu.actions()[16:]
     ] == [
         ("", True),
         ("フリーズ", False),
@@ -1566,6 +1566,14 @@ def test_selected_menu_lock_hide_and_alignment(
         ("", True),
         ("ロック", False),
         ("表示", False),
+    ]
+    assert [action.text() for action in row.align_menu.actions()] == [
+        "選択属性",
+        "全て",
+        "Keyable + ChannelBox",
+        "Keyable",
+        "ChannelBox",
+        "Hide",
     ]
     assert [
         (action.text(), action.objectName())
@@ -1690,6 +1698,90 @@ def test_selected_menu_lock_hide_and_alignment(
     cmds.undo()
     _events()
     assert _row(editor, "translateY")
+
+
+@pytest.mark.parametrize(
+    "display_filter, expected",
+    (
+        ("all", (4.5, False, 3.5, 2)),
+        ("visible", (4.5, False, 1.0, 2)),
+        ("keyable", (4.5, True, 1.0, 2)),
+        ("channel_box", (1.0, False, 1.0, 0)),
+        ("hidden", (1.0, True, 3.5, 0)),
+    ),
+)
+def test_align_filtered_values_uses_display_node_and_one_undo(
+    editor: ChannelBoxWidget,
+    display_filter: ChannelAttributeFilter,
+    expected: tuple[float, bool, float, int],
+) -> None:
+    """非表示行も表示ノードの状態で選び、値とUndoを一括処理する。"""
+    _set_value("multiA.gain", 4.5)
+    _set_value("multiB.gain", 1.0)
+    _set_value("multiA.limited", 3.5)
+    _set_value("multiA.mode", 2)
+    cmds.setAttr("multiA.enabled", keyable=False)
+    cmds.setAttr("multiA.enabled", channelBox=True)
+    cmds.setAttr("multiA.limited", keyable=False)
+    cmds.setAttr("multiA.limited", channelBox=False)
+    cmds.setAttr("multiB.gain", keyable=False)
+    cmds.setAttr("multiB.gain", channelBox=False)
+    cmds.setAttr("multiB.enabled", keyable=True)
+    cmds.setAttr("multiB.limited", keyable=True)
+    _events()
+    editor.controller.set_attribute_filter("keyable")
+    _events()
+    assert all(
+        row.row.attribute.name not in ("enabled", "limited")
+        for row in editor.row_widgets
+    )
+    row = _row(editor, "translateX")
+    _open_row_menu(row)
+    assert editor.table_view.selected_keys() == _keys(editor, "translateX")
+    assert row.align_filtered_actions[display_filter].isEnabled()
+    row.context_menu.close()
+
+    clipboard = qt.QApplication.clipboard()
+    saved = _saved_clipboard()
+    try:
+        clipboard.setText("align clipboard sentinel")
+        cmds.flushUndo()
+        row.align_filtered_actions[display_filter].trigger()
+        _events()
+        assert clipboard.text() == "align clipboard sentinel"
+        assert (
+            cmds.getAttr("multiB.gain"),
+            cmds.getAttr("multiB.enabled"),
+            cmds.getAttr("multiB.limited"),
+            cmds.getAttr("multiB.mode"),
+        ) == expected
+        assert editor.table_view.selected_keys() == _keys(editor, "translateX")
+        cmds.undo()
+        _events()
+        assert (
+            cmds.getAttr("multiB.gain"),
+            cmds.getAttr("multiB.enabled"),
+            cmds.getAttr("multiB.limited"),
+            cmds.getAttr("multiB.mode"),
+        ) == (1.0, True, 1.0, 0)
+        assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    finally:
+        clipboard.setMimeData(saved)
+
+
+def test_align_menu_is_disabled_for_one_node(
+    editor: ChannelBoxWidget,
+) -> None:
+    """揃える先がない場合はメニューとUndoを増やさない。"""
+    cmds.select("multiA", replace=True)
+    _events()
+    row = _row(editor, "translateX")
+    _open_row_menu(row)
+    assert not row.align_menu.isEnabled()
+    row.context_menu.close()
+    cmds.flushUndo()
+    assert not editor.controller.align_filtered_values("all")
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_animation_layer_selected_adds_to_all_selected_layers_and_undoes(

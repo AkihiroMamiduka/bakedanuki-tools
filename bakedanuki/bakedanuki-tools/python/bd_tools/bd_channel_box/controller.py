@@ -390,11 +390,17 @@ class ChannelBoxController(qt.QObject):
         self.rows_changed.emit()
 
     def _create_rows(
-        self, attributes: tuple[tuple[ScalarAttributeInfo, ...], ...]
+        self,
+        attributes: tuple[tuple[ScalarAttributeInfo, ...], ...],
+        *,
+        display_filter: ChannelAttributeFilter | None = None,
     ) -> tuple[ChannelRow | ChannelStateRow, ...]:
-        """基準属性を表示順に絞り込み、同名・同種属性を対応付ける。"""
+        """指定した表示条件で基準属性を絞り、同名・同種属性を対応付ける。"""
         if not attributes:
             return ()
+        effective_filter = (
+            self.attribute_filter if display_filter is None else display_filter
+        )
         lookup = tuple({a.path: a for a in items} for items in attributes)
         rows: list[ChannelRow | ChannelStateRow] = []
         try:
@@ -412,7 +418,9 @@ class ChannelBoxController(qt.QObject):
                     _attribute_display_priority, priorities=priorities
                 ),
             ):
-                if not self._matches_filter(attribute):
+                if not matches_scalar_attribute_display_filter(
+                    attribute, effective_filter
+                ):
                     continue
                 targets: list[str] = []
                 excluded: list[str] = []
@@ -487,12 +495,6 @@ class ChannelBoxController(qt.QObject):
                 self._dispose_row(row)
             raise
         return tuple(rows)
-
-    def _matches_filter(self, attribute: ScalarAttributeInfo) -> bool:
-        """Keyableを優先する三状態分類で、基準属性の表示可否を返す。"""
-        return matches_scalar_attribute_display_filter(
-            attribute, self.attribute_filter
-        )
 
     @staticmethod
     def _resolve_state_plug(
@@ -1397,12 +1399,61 @@ class ChannelBoxController(qt.QObject):
         return changed
 
     def align_selected_values(self, keys: Sequence[tuple[str, str]]) -> bool:
-        """各選択行をそれぞれの基準ノードの未丸め値へ、一操作で揃える。"""
+        """各選択行を表示ノードの未丸め値へ、一操作で揃える。"""
+        rows = tuple(
+            row
+            for row in self._selected_rows(keys)
+            if isinstance(row, ChannelRow)
+        )
+        return self._align_rows(rows)
+
+    def align_filtered_values(
+        self, display_filter: ChannelAttributeFilter
+    ) -> bool:
+        """表示ノードの指定状態に合う全属性を、行表示と独立して揃える。"""
+        if display_filter not in (
+            "all",
+            "visible",
+            "keyable",
+            "channel_box",
+            "hidden",
+        ):
+            raise ValueError("未対応の属性表示フィルターです")
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        if self._active_state_binding is not None:
+            raise RuntimeError(
+                "選択属性の状態変更中には別の操作を開始できません"
+            )
+        if self._mode != "values":
+            raise RuntimeError("値編集モードで操作してください")
+        if not self.node_names:
+            raise RuntimeError("表示ノードが選択されていません")
+        if len(self.node_names) < 2:
+            return False
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        attributes = tuple(
+            inspect_scalar_attributes(name) for name in self.node_names
+        )
+        rows = self._create_rows(attributes, display_filter=display_filter)
+        try:
+            return self._align_rows(
+                tuple(
+                    row
+                    for row in rows
+                    if isinstance(row, ChannelRow) and row.binding.is_mixed
+                )
+            )
+        finally:
+            for row in rows:
+                self._dispose_row(row)
+
+    def _align_rows(self, rows: Sequence[ChannelRow]) -> bool:
+        """各属性の表示ノードの未丸め値を検証し、差分を一操作で適用する。"""
         edits: list[MayaPlugsValueEdit] = []
         excluded: list[str] = []
-        for row in self._selected_rows(keys):
-            if not isinstance(row, ChannelRow):
-                continue
+        for row in rows:
             binding = row.binding
             binding.refresh()
             if not binding.view_model.set_value_command.can_execute:

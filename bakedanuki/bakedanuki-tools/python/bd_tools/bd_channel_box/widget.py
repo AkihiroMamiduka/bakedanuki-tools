@@ -298,9 +298,27 @@ class AttributeRowWidget(qt.QWidget):
         )
         self.input_indicator = _InputStateIndicator(self)
         self.context_menu = qt.QMenu(self)
-        self.align_action = qt.QAction("この値に揃える", self)
-        self.align_action.setToolTip("編集可能な対象を基準ノードの値に揃える")
+        self.align_menu = qt.QMenu("表示ノードの値に揃える", self.context_menu)
+        self.align_action = qt.QAction("選択属性", self)
+        self.align_action.setObjectName("align_selected")
+        self.align_action.setToolTip(
+            "選択した各属性を表示ノードの同じ属性の値へ揃える"
+        )
         self.align_action.triggered.connect(self._align_values)
+        align_actions = cast(_MenuActions, self.align_menu)
+        align_actions.addAction(self.align_action)
+        self.align_filtered_actions: dict[
+            ChannelAttributeFilter, qt.QAction
+        ] = {}
+        for display_filter, label, _description in _PASTE_FILTER_OPTIONS:
+            action = qt.QAction(label, self)
+            action.setObjectName(f"align_{display_filter}")
+            action.setToolTip(
+                f"表示ノードの{label}に該当する各属性値へ、"
+                "他の選択ノードの同じ属性を揃える"
+            )
+            self.align_filtered_actions[display_filter] = action
+            align_actions.addAction(action)
         self.keyframe_menu = qt.QMenu("キーフレーム", self.context_menu)
         self.set_key_all_keyable_action = qt.QAction("全 Keyable", self)
         self.set_key_all_keyable_action.setObjectName("set_key_all_keyable")
@@ -523,9 +541,6 @@ class AttributeRowWidget(qt.QWidget):
             self.freeze_all_action,
         ):
             freeze_actions.addAction(action)
-        menu_actions = cast(_MenuActions, self.context_menu)
-        menu_actions.addAction(self.align_action)
-        self.context_menu.addSeparator()
         self.context_menu.addMenu(self.keyframe_menu)
         self.context_menu.addMenu(self.breakdown_menu)
         self.context_menu.addMenu(self.mute_menu)
@@ -539,6 +554,7 @@ class AttributeRowWidget(qt.QWidget):
         self.context_menu.addMenu(self.animation_layer_add_menu)
         self.context_menu.addMenu(self.animation_layer_remove_menu)
         self.context_menu.addSeparator()
+        self.context_menu.addMenu(self.align_menu)
         self.context_menu.addMenu(self.copy_menu)
         self.context_menu.addMenu(self.paste_menu)
         self.freeze_separator_action = self.context_menu.addSeparator()
@@ -736,7 +752,7 @@ class AttributeRowWidget(qt.QWidget):
             if not binding.definition.items:
                 details.append("enumの選択肢がないため入力できません")
             details.append("定義変更後の対象の再判定: 選択を解除して選び直す")
-        details.append("属性行を右クリック: この値に揃える")
+        details.append("属性行を右クリック: 表示ノードの値に揃える")
         tooltip = "\n".join(details)
         self.name_label.setToolTip(tooltip)
         self.input_indicator.setToolTip(tooltip)
@@ -744,7 +760,7 @@ class AttributeRowWidget(qt.QWidget):
         self.align_action.setEnabled(editable and binding.is_mixed and defined)
 
     def _align_values(self) -> None:
-        """メニューから明示した場合だけ、対象を基準ノードの値へ揃える。"""
+        """選択属性を明示した場合だけ、表示ノードの値へ揃える。"""
         if self._align_callback is not None:
             self._align_callback()
             return
@@ -1601,6 +1617,7 @@ class ChannelBoxWidget(qt.QWidget):
         selected = self._action_keys(key)
         try:
             if action == "align":
+                self._clear_message()
                 self.controller.align_selected_values(selected)
             elif action in ("key_selected", "breakdown_selected"):
                 self._clear_message()
@@ -1745,6 +1762,18 @@ class ChannelBoxWidget(qt.QWidget):
         self._clear_message()
         try:
             self.controller.paste_copied_values(display_filter)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _align_filtered_values(
+        self, display_filter: ChannelAttributeFilter
+    ) -> None:
+        """表示ノードの属性状態に合う全属性を同ノードの値へ揃える。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.align_filtered_values(display_filter)
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
@@ -1952,6 +1981,9 @@ class ChannelBoxWidget(qt.QWidget):
                 for row in self.controller.rows
             )
         )
+        widget.align_menu.setEnabled(len(self.controller.node_names) > 1)
+        for action in widget.align_filtered_actions.values():
+            action.setEnabled(len(self.controller.node_names) > 1)
         self._prepare_step_settings_menu()
 
     def _add_selection_menu(self, widget: AttributeRowWidget) -> None:
@@ -2039,6 +2071,16 @@ class ChannelBoxWidget(qt.QWidget):
                             self.wheel_editing_action.isChecked()
                         ),
                     )
+                    for (
+                        display_filter,
+                        action,
+                    ) in widget.align_filtered_actions.items():
+                        action.triggered.connect(
+                            partial(
+                                self._align_filtered_values,
+                                display_filter,
+                            )
+                        )
                     widget.step_changed.connect(
                         partial(self._apply_step_value, key)
                     )
