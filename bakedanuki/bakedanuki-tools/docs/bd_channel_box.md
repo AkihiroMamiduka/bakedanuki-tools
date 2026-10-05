@@ -8,7 +8,7 @@
 利用者による動作確認を終え、今回の開発を完了しました。変更ごとの自動テストと
 Maya 2025本体での操作結果は[検証](#検証)へ記録しています。
 既存アニメーション属性の値編集もutilの基盤を利用して実装しました。
-直接接続された対応カーブの現在キーを追加・更新し、詳細な対象範囲は
+通常時間カーブ、Driven Key、Animation Layerへの入力を扱い、詳細な対象範囲は
 [アニメーション属性の値編集](#アニメーション属性の値編集)に記載しています。
 単一typed string属性と編集中のMaya値追従も2026-09-29に利用者がMaya本体で確認し、
 pushを完了しました。確認したMaya versionは未申告です。
@@ -46,7 +46,8 @@ bd_channel_box.close()
 `FloatSliderSpinBox.layout_order`、`MayaChannelStateBinding`、`MayaEditSession`、
 `RadioButtonSweep` / `CheckBoxSweep`、`apply_plugs_values()`と
 `MayaFloatValueEdit` / `MayaBoolValueEdit` / `MayaEnumValueEdit` /
-`MayaStringValueEdit`、アニメーション編集の`key_animated`引数、
+`MayaStringValueEdit`、接続属性編集の`edit_connected`引数と
+`MayaPlugTargetState.edit_description`、`connected_plug_edit_reason()`、
 時刻変更による操作終了の`FloatSlider.finish_edit()`、
 ドッキングとreloadの基盤が必要です。
 toolsとutilを配布するときは、組み合わせて動作確認した版を使用してください。
@@ -603,7 +604,8 @@ number・distance・angle・bool・stringは同じ型区分同士に限定し、
 enumは整数値と項目名の対応が一致する場合だけ対象にし、表示順だけの違いは許容します。
 属性なし、型・単位違い、enum定義違い、lock・未対応の入力接続などの編集不可属性は対象外として
 内部結果へ理由を保持します。残った全対象の型・hard limitを先に検証し、一回のUndoで変更します。
-対応する既存アニメーション属性には現在時刻のキーを追加・更新します。
+対応する接続属性には通常の値入力と同じ規則を使います。通常時間カーブとAnimation Layerは
+MayaのAuto Keyに従い、Driven Keyは一時的な値だけを変更します。
 途中失敗は操作前の値・キーへ復旧し、全対象が同値ならキーもUndo項目も作りません。
 
 Pasteの成功・部分適用・対象0件では画面へ操作通知を表示せず、以前の通知も消去します。
@@ -682,7 +684,7 @@ Windowの終了・reload・Maya再起動後も復元します。sceneとUndo履�
 View構成を読み直せます。
 
 自身またはcompound祖先にlockがある属性や、未対応の入力接続がある属性は編集不可です。
-対応するアニメーション接続では、以下の規則で現在時刻のキーを追加・更新します。
+対応するアニメーション接続では、以下の規則で一時値またはキーを変更します。
 基準が編集不可なら行全体の値入力を止めます。基準以外の編集不可属性は除外し、
 残る編集可能な対応属性へ適用します。tooltipの編集対象数はその適用対象数です。
 
@@ -735,32 +737,38 @@ toolsの`widget.py`で色・tooltipを追加します。Mayaの実接続を作�
 
 ### アニメーション属性の値編集
 
-一つの時間駆動アニメーションカーブが直接接続されたnumber・distance・angle・bool・enum属性を
-編集できます。属性の型に対応する`animCurveTU`・`animCurveTL`・`animCurveTA`を扱い、
-少なくとも一つ既存キーがあるカーブに限定します。keyable／channelBoxの表示状態は変更しません。
+number・distance・angle・bool・enum属性について、通常時間カーブ、Driven Key（SDK）、
+Animation Layerへの値入力を許可します。keyable／channelBoxの表示状態は変更しません。
 
 値欄の確定入力、上下・ホイール、Slider、bool・enum、「表示ノードの値に揃える」、各Paste経路に
 同じ規則を適用します。未接続の対象は通常の値設定とし、新しくアニメーションを開始しません。
-MayaのAuto Key設定にかかわらず、既存アニメーションの値が変わる対象だけに現在時刻のキーを
-追加・更新します。再表示・時刻移動・同値入力だけではキーもUndo項目も作りません。
+通常時間カーブとAnimation Layerは、MayaのAuto KeyがOFFなら一時的な値だけを変更し、
+ONならMayaの対象選択に従って既存アニメーションへキーを追加・更新します。
+SDKはAuto Keyによらず一時的な値だけを変更し、Driven Keyの設定は別操作です。
+一時値は時刻変更やドライバー変更・再評価で接続元の評価値へ戻ります。
+まだ時間キーを持たないLayerなど、時間に依存しない構成では、時刻移動だけで再評価が
+発生せず一時値が残る場合があります。
+再表示・時刻移動・同値入力だけではキーもUndo項目も作りません。
 各対象の評価値と入力値を比較するため、基準が同値でも値が異なる他の対象だけは更新します。
 
-既存キーの更新では接線・接線ロック・breakdownを維持します。新規キーはMaya既定の接線を
-使い、bool・enumでは段階的に切り替わるstep接線を使用します。
+キー設定先と合成値の解決はMayaの標準動作へ委譲します。Animation Layerの選択、ロック、
+ミュート、ウェイトによって、別レイヤへのキー設定や、入力と最終出力の不一致が起こり得ます。
+対象ごとの入力方針と現在のレイヤ設定先はtooltipで確認できます。
 上下操作は各対象の評価済み現在値へ同じ表示増減量を加え、値の差を維持します。
-Sliderは操作中もMaya側の現在キーを更新し、一ドラッグを一回のUndoへまとめます。
+Sliderも操作中のAuto Key設定に従い、一ドラッグを一回のUndoへまとめます。
 ドラッグ中に現在時刻が変わったら操作を確定終了し、古いマウス移動を次の時刻へ適用しません。
 値欄の未確定数値入力も時刻変更で破棄します。同時刻の再評価だけでは入力を終了しません。
 
-表示の正本は引き続き評価済みMaya plug値です。キーの書込み後にMayaを再評価してplugを読み直し、
+表示の正本は引き続き評価済みMaya plug値です。値の書込み後にplugを読み直し、
 ViewModelへ同期します。複数行・複数ノードに通常値とキー編集が混在しても全件を事前検証し、
 一回のUndoで復元します。途中失敗では新設キーを除去し、更新前のキーと通常値へ復旧します。
 
-Animation Layer、pairBlend、SDK、constraint、expression、unitConversion経由、compound祖先への
-入力接続、他属性と共有されたカーブ、time warp、空カーブは今回の対象外です。
-カーブ自身のlock・reference、独立軸でないrotation interpolation、カーブ設定への入力接続も
-編集不可としてtooltipへ理由を表示します。接続を解除・置換したり、ロックを自動解除したりしません。
-対象範囲の追加は、既存のキー操作基盤へ対応を追加してからツールへ反映します。
+constraintはMaya標準では値入力できる構成でも禁止します。Animation Layerなどの上流に
+constraintが含まれる対象も除外します。一般のpairBlend、Mute、Animation Clip、expression、
+unitConversion経由、その他の未対応接続は入力不可のままです。
+SDKとLayerの合成、複数属性で共有するカーブ、独自の時間入力や未対応の回転補間も対象外です。
+接続を解除・置換したり、ロックを自動解除したりしません。
+キー設定メニューもLayer内部の未対応接続を除外し、SDKのキー設定は扱いません。
 
 一回の数値確定・上下操作・bool変更・enum項目変更・string確定は、選択した全属性・全ノードを含めて
 一回のUndoで戻ります。Sliderドラッグも全対象を含めて一回のUndoへまとめます。
@@ -885,8 +893,8 @@ Maya再起動時の接続・画面外補正・配置resetはutilへ委譲しま�
 stepの初期値選択と保存対象の判定はtools、属性path・単位種別ごとのprofileと状態保存、
 値とstepの連動はutilが所有します。
 値の単位変換・型付き属性列挙・一括書込み・混在状態・Undoはutilを使用します。
-アニメーションの編集可否・現在キーの書込みと復旧もutilが所有し、toolsは数値・bool・enumの
-BindingとPaste APIで`key_animated=True`を指定して有効化します。
+接続属性の編集可否・Auto Key処理・値とキーの復旧もutilが所有し、toolsは数値・bool・enumの
+BindingとPaste APIで`edit_connected=True`を指定して有効化します。
 util側ではアニメーション付き属性を既定で表示専用に保ちます。
 複数行の値操作はutilの`apply_plugs_values()`へ型付きの絶対値または相対値の編集要求を渡し、
 全件の事前検証・復旧・1回のUndoを委譲します。Sliderは`MayaEditSession`も渡して連続入力をまとめます。
@@ -1833,3 +1841,26 @@ Maya 2027の数値欄幅testは、名前欄を元の`StringLineEdit`に一時的
 条件で失敗しました。名前欄の描画変更とは別の回帰課題として扱います。
 本体検証では操作結果の保存後に既知の終了待ちタイムアウトが発生し、runnerの終了codeは1でした。
 利用者による動作確認とpushも完了しています。確認したMaya versionは未申告です。
+
+### 接続属性へのMaya標準入力（2026-10-04）
+
+通常時間キーをAuto Keyへ連動させ、SDKの一時値と正規Animation Layerへの入力を追加しました。
+constraintや未対応経路は入力不可のままです。対応するutilとの同時更新が必要です。
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsの`check.cmd -IncludeMaya` | Black・Pyright・unit 8件・Maya 2025 runtime 318件が成功 |
+| Maya 2026 / 2027のtools runtime test | 各318件成功 |
+| utilの`verify.cmd` | Black、3 versionのPyright、Maya 2025 full pytest、3 versionのUI互換性testに成功 |
+| 入力・Paste・Undo | Auto Key ON／OFF、SDK、Layer、通常値と禁止接続の混在、数値・bool・enum、一括入力、途中失敗の復旧を確認 |
+| レイヤー回転 | X・Y・Zが経路を共有する一括入力と失敗復旧、キー・接線の復旧を確認 |
+| ロック通知 | 対象・接続元nodeのlock切替と解除後の入力復帰、SDK一時値の保持、dispose後の監視停止を確認 |
+| Maya 2025本体 | Auto Key OFF／ONで時間キー・SDK・Layerの数値欄を操作し、Undo／Redoとconstraintの入力禁止を確認。時刻移動でSlider操作が終了することも確認 |
+
+本体検証は`--connections-only`で実行し、`result.json`は`success: true`です。
+結果とAuto Key OFF／ONの2枚の画像は
+`%TEMP%/bd-channel-box-maya2025-6zfj9pc5`に保存しました。
+操作とdisposeは成功しましたが、結果保存後に既知のMaya終了待ちタイムアウトが再発したため、
+runnerの終了codeは1です。runnerが起動した検証用processだけを終了しました。
+Maya 2026 / 2027本体の画面操作は実施していません。
+反映には`bd_tools.reload_package(reload_util=True)`を使用します。scene・設定の移行は不要です。

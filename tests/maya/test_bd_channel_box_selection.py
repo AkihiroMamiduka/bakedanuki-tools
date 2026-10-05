@@ -90,6 +90,8 @@ def _set_value(path: str, value: float) -> None:
 def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     """複数行と複数ノードの元値が異なる検証sceneを作る。"""
     del qt_application
+    auto_key = bool(cmds.autoKeyframe(query=True, state=True))
+    cmds.autoKeyframe(state=False)
     cast(Callable[..., str], cmds.file)(new=True, force=True)
     cmds.currentUnit(linear="cm", angle="deg")
     for index, (node, tx, ty) in enumerate(
@@ -156,6 +158,7 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     _events()
     cmds.currentUnit(linear="cm", angle="deg")
     cast(Callable[..., str], cmds.file)(new=True, force=True)
+    cmds.autoKeyframe(state=auto_key)
 
 
 def _row(editor: ChannelBoxWidget, name: str) -> AttributeRowWidget:
@@ -1169,14 +1172,16 @@ def test_slider_aligns_selected_numeric_rows_in_one_continuous_undo(
 
 
 @pytest.mark.parametrize("operation", ["direct", "step", "align"])
+@pytest.mark.parametrize("auto_key", [False, True])
 def test_animated_numeric_rows_mix_keyed_and_static_targets(
-    editor: ChannelBoxWidget, operation: str
+    editor: ChannelBoxWidget, operation: str, auto_key: bool
 ) -> None:
-    """選択数値の入力経路を揃え、キー追加と通常値の変更を一Undoにする。"""
+    """全入力経路でAuto Keyを尊重し、一時値と通常値も一Undoにする。"""
     animated = ("multiA.translateX", "multiB.translateY")
     for path, value in zip(animated, (5.0, 3.0)):
         cmds.setKeyframe(path, time=1, value=value)
     cmds.currentTime(5)
+    cmds.autoKeyframe(state=auto_key)
     _events()
     selected = _keys(editor, "translateX", "translateY")
     editor.table_view.select_keys(selected)
@@ -1204,11 +1209,10 @@ def test_animated_numeric_rows_mix_keyed_and_static_targets(
     assert tuple(cmds.getAttr(path) for path in paths) == expected
     assert cmds.keyframe(
         animated[0], query=True, time=(5, 5), keyframeCount=True
-    ) == (0 if operation == "align" else 1)
-    assert (
-        cmds.keyframe(animated[1], query=True, time=(5, 5), keyframeCount=True)
-        == 1
-    )
+    ) == (1 if auto_key and operation != "align" else 0)
+    assert cmds.keyframe(
+        animated[1], query=True, time=(5, 5), keyframeCount=True
+    ) == int(auto_key)
     for path in ("multiA.translateY", "multiB.translateX"):
         assert not cmds.listConnections(path, source=True)
 
@@ -1224,12 +1228,14 @@ def test_animated_numeric_rows_mix_keyed_and_static_targets(
     assert tuple(cmds.getAttr(path) for path in paths) == expected
 
 
-def test_animated_slider_reuses_current_key_and_groups_drag_undo(
-    editor: ChannelBoxWidget,
+@pytest.mark.parametrize("auto_key", [False, True])
+def test_animated_slider_follows_auto_key_and_groups_drag_undo(
+    editor: ChannelBoxWidget, auto_key: bool
 ) -> None:
-    """Sliderの各通知でMayaを評価し、同一時刻の一キーを一Undoで編集する。"""
+    """Slider通知のAuto Key有無を切り替え、一ドラッグを一Undoにする。"""
     cmds.setKeyframe("multiA.gain", time=1, value=2.0)
     cmds.currentTime(5)
+    cmds.autoKeyframe(state=auto_key)
     _events()
     editor.table_view.select_keys(_keys(editor, "gain", "translateX"))
     view = _row(editor, "gain").editor
@@ -1240,12 +1246,9 @@ def test_animated_slider_reuses_current_key_and_groups_drag_undo(
         view.slider.setValue(view.slider.maximum() * numerator // 10)
         assert cmds.getAttr("multiA.gain") == float(numerator)
         assert _row(editor, "gain").row.binding.value == float(numerator)
-        assert (
-            cmds.keyframe(
-                "multiA.gain", query=True, time=(5, 5), keyframeCount=True
-            )
-            == 1
-        )
+        assert cmds.keyframe(
+            "multiA.gain", query=True, time=(5, 5), keyframeCount=True
+        ) == int(auto_key)
     view.slider.sliderReleased.emit()
     cmds.undo()
     _events()
@@ -1257,13 +1260,15 @@ def test_animated_slider_reuses_current_key_and_groups_drag_undo(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
-def test_animated_bool_input_keys_only_changed_animated_targets(
-    editor: ChannelBoxWidget,
+@pytest.mark.parametrize("auto_key", [False, True])
+def test_animated_bool_input_follows_auto_key_for_changed_targets(
+    editor: ChannelBoxWidget, auto_key: bool
 ) -> None:
-    """boolの選択入力は値が変わるキー付き対象だけに現在キーを追加する。"""
+    """boolの選択入力もAuto Keyに従い、同値のキー付き対象は変更しない。"""
     cmds.setKeyframe("multiA.visibility", time=1, value=1)
     cmds.setKeyframe("multiA.enabled", time=1, value=0)
     cmds.currentTime(5)
+    cmds.autoKeyframe(state=auto_key)
     _events()
     editor.table_view.select_keys(_keys(editor, "visibility", "enabled"))
     view = _row(editor, "visibility").editor
@@ -1274,12 +1279,9 @@ def test_animated_bool_input_keys_only_changed_animated_targets(
     for node in ("multiA", "multiB"):
         assert cmds.getAttr(node + ".visibility") is False
         assert cmds.getAttr(node + ".enabled") is False
-    assert (
-        cmds.keyframe(
-            "multiA.visibility", query=True, time=(5, 5), keyframeCount=True
-        )
-        == 1
-    )
+    assert cmds.keyframe(
+        "multiA.visibility", query=True, time=(5, 5), keyframeCount=True
+    ) == int(auto_key)
     assert (
         cmds.keyframe(
             "multiA.enabled", query=True, time=(5, 5), keyframeCount=True
@@ -1303,6 +1305,7 @@ def test_time_change_stops_animated_drag_before_a_new_frame(
     """時刻変更でSliderを確定終了し、押下中の古い移動からキーを打たない。"""
     cmds.setKeyframe("multiA.gain", time=1, value=0.0)
     cmds.currentTime(5)
+    cmds.autoKeyframe(state=True)
     _events()
     view = _row(editor, "gain").editor
     assert isinstance(view, FloatSliderSpinBox)
@@ -1346,12 +1349,14 @@ def test_time_change_stops_animated_drag_before_a_new_frame(
 
 
 @pytest.mark.parametrize("multiple", [False, True])
+@pytest.mark.parametrize("auto_key", [False, True])
 def test_time_change_discards_pending_animated_numeric_input(
-    editor: ChannelBoxWidget, multiple: bool
+    editor: ChannelBoxWidget, multiple: bool, auto_key: bool
 ) -> None:
     """時刻をまたいだ未確定数値を破棄し、どちらの時刻にも打鍵しない。"""
     cmds.setKeyframe("multiA.gain", time=1, value=0.0)
     cmds.currentTime(5)
+    cmds.autoKeyframe(state=auto_key)
     _events()
     names = ("gain", "limited") if multiple else ("gain",)
     editor.table_view.select_keys(_keys(editor, *names))
@@ -1386,12 +1391,14 @@ def test_time_change_discards_pending_animated_numeric_input(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
+@pytest.mark.parametrize("auto_key", [False, True])
 def test_animated_same_value_and_invalid_batch_create_no_keys(
-    editor: ChannelBoxWidget,
+    editor: ChannelBoxWidget, auto_key: bool
 ) -> None:
     """同値入力と全件検証で拒否した入力はキーもUndo項目も作らない。"""
     cmds.setKeyframe("multiA.gain", time=1, value=0.0)
     cmds.currentTime(5)
+    cmds.autoKeyframe(state=auto_key)
     _events()
     cmds.flushUndo()
     assert not editor.controller.apply_numeric_values(
@@ -1406,6 +1413,129 @@ def test_animated_same_value_and_invalid_batch_create_no_keys(
     assert cmds.getAttr("multiA.limited") == 1.0
     assert cmds.keyframe("multiA.gain", query=True, keyframeCount=True) == 1
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize("auto_key", [False, True])
+def test_driven_key_input_changes_only_temporary_value(
+    editor: ChannelBoxWidget, auto_key: bool
+) -> None:
+    """SDKは入力を許可し、Auto Keyによらず既存のドライバーキーを維持する。"""
+    driver = cmds.createNode("transform", name="sdkDriver")
+    cmds.setDrivenKeyframe(
+        "multiA.gain", currentDriver=driver + ".translateX", value=1
+    )
+    _set_value(driver + ".translateX", 10)
+    cmds.setDrivenKeyframe(
+        "multiA.gain", currentDriver=driver + ".translateX", value=5
+    )
+    _set_value(driver + ".translateX", 0)
+    cmds.select("multiB", "multiA", replace=True)
+    cmds.autoKeyframe(state=auto_key)
+    _events()
+    row = _row(editor, "gain")
+    assert row.row.binding.writable_count == 2
+    assert row.row.binding.target_states[0].edit_description
+    before = cmds.keyframe("multiA.gain", query=True, valueChange=True)
+    cmds.flushUndo()
+
+    # 通常値の後続ノードも一緒に編集し、SDKカーブには書き込まない
+    editor.controller.apply_numeric_values(_keys(editor, "gain"), 4)
+    assert cmds.getAttr("multiA.gain") == 4
+    assert cmds.getAttr("multiB.gain") == 4
+    assert cmds.keyframe("multiA.gain", query=True, valueChange=True) == before
+    cmds.undo()
+    _events()
+    assert cmds.getAttr("multiA.gain") == 1
+    assert cmds.getAttr("multiB.gain") == 0
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    # 再入力後もドライバーを動かせばSDKの評価値へ戻る
+    editor.controller.apply_numeric_values(_keys(editor, "gain"), 4)
+    _set_value(driver + ".translateX", 10)
+    assert cmds.getAttr("multiA.gain") == 5
+    assert cmds.keyframe("multiA.gain", query=True, valueChange=True) == before
+
+
+@pytest.mark.parametrize("auto_key", [False, True])
+def test_layer_input_uses_native_key_target_and_one_undo(
+    editor: ChannelBoxWidget, auto_key: bool
+) -> None:
+    """Layerの値入力と通常値を同時に編集し、選択レイヤへの保存だけを切り替える。"""
+    cmds.setKeyframe("multiA.gain", time=1, value=1)
+    layer = cast(
+        str, cmds.animLayer("valueEditLayer", attribute="multiA.gain")
+    )
+    cmds.setKeyframe("multiA.gain", time=1, value=3, animLayer=layer)
+    root = cast(str, cmds.animLayer(query=True, root=True))
+    cmds.animLayer(root, edit=True, selected=False)
+    cmds.animLayer(layer, edit=True, selected=True, preferred=True)
+    cmds.currentTime(5)
+    cmds.autoKeyframe(state=auto_key)
+    _events()
+    row = _row(editor, "gain")
+    assert row.row.binding.writable_count == 2
+    assert layer in row.name_label.toolTip()
+    curves = (
+        cast(
+            list[str] | None,
+            cmds.animLayer(layer, query=True, animCurves=True),
+        )
+        or []
+    )
+    assert len(curves) == 1
+    original = cmds.getAttr("multiA.gain")
+    cmds.flushUndo()
+
+    # Mayaが解決する現在レイヤへキーを保存し、合成された入力値を表示する
+    editor.controller.apply_numeric_values(_keys(editor, "gain"), 4)
+    assert cmds.getAttr("multiA.gain") == 4
+    assert cmds.getAttr("multiB.gain") == 4
+    assert cmds.keyframe(
+        curves[0], query=True, time=(5, 5), keyframeCount=True
+    ) == int(auto_key)
+    cmds.undo()
+    _events()
+    assert cmds.getAttr("multiA.gain") == original
+    assert cmds.getAttr("multiB.gain") == 0
+    assert cmds.keyframe(curves[0], query=True, keyframeCount=True) == 1
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize("layered", [False, True])
+def test_constraint_driven_targets_stay_excluded_from_value_and_key_edits(
+    editor: ChannelBoxWidget, layered: bool
+) -> None:
+    """Layer内に隠れたconstraintも通常接続も対象外とし、基準だけを編集する。"""
+    driver = cmds.createNode("transform", name="constraintDriver")
+    cmds.pointConstraint(driver, "multiB", maintainOffset=True)
+    if layered:
+        layer = cast(
+            str,
+            cmds.animLayer("constrainedLayer", attribute="multiB.translateX"),
+        )
+        cmds.animLayer(layer, edit=True, selected=True, preferred=True)
+    cmds.select("multiB", "multiA", replace=True)
+    _events()
+    row = _row(editor, "translateX")
+    assert row.row.binding.writable_count == 1
+    assert row.row.binding.target_states[1].reason
+    before = cmds.getAttr("multiB.translateX")
+    cmds.autoKeyframe(state=True)
+    cmds.flushUndo()
+    editor.controller.apply_numeric_values(_keys(editor, "translateX"), 12)
+    assert cmds.getAttr("multiB.translateX") == before
+    assert cmds.getAttr("multiA.translateX") == 12
+    cmds.undo()
+    _events()
+    assert cmds.getAttr("multiA.translateX") == 5
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    assert (
+        editor.controller.set_keyframes_selected(_keys(editor, "translateX"))
+        == 1
+    )
+    assert not cmds.keyframe(
+        "multiB.translateX", query=True, keyframeCount=True
+    )
 
 
 def test_last_selected_node_filters_alignment_from_row_menu(
@@ -1463,12 +1593,14 @@ def test_last_selected_node_is_value_copy_source(
 @pytest.mark.parametrize(
     "operation", ["all", "keyable", "selected_single", "selected_multiple"]
 )
-def test_animated_paste_applies_keys_and_static_values_in_one_undo(
+@pytest.mark.parametrize("auto_key", [False, True])
+def test_animated_paste_follows_auto_key_in_one_undo(
     editor: ChannelBoxWidget,
     monkeypatch: pytest.MonkeyPatch,
     operation: str,
+    auto_key: bool,
 ) -> None:
-    """各Paste経路で既存アニメーションの現在キーと通常値を同時に変更する。"""
+    """各Paste経路もAuto Keyに従い、接続値と通常値を一Undoにまとめる。"""
     copied = (
         ("gain", "limited") if operation == "selected_multiple" else ("gain",)
     )
@@ -1489,6 +1621,7 @@ def test_animated_paste_applies_keys_and_static_values_in_one_undo(
     _set_value("multiA.limited", 1.0)
     cmds.setKeyframe("multiA.gain", time=1, value=0.0)
     cmds.currentTime(5)
+    cmds.autoKeyframe(state=auto_key)
     _events()
     selected = _keys(editor, "gain", "limited")
     editor.table_view.select_keys(selected)
@@ -1508,9 +1641,10 @@ def test_animated_paste_applies_keys_and_static_values_in_one_undo(
         assert cmds.getAttr(node + ".limited") == (
             4.0 if operation.startswith("selected_") else 1.0
         )
-    assert cmds.keyframe(
+    values = cmds.keyframe(
         "multiA.gain", query=True, time=(5, 5), valueChange=True
-    ) == [4.0]
+    )
+    assert (values or []) == ([4.0] if auto_key else [])
     assert not cmds.listConnections("multiB.gain", source=True)
     assert not editor.message_label.isVisible()
     cmds.undo()

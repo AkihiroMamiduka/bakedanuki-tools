@@ -64,6 +64,10 @@ util側の`tests/maya/ui/test_plugs_value_edits.py`で、複数Bindingをまと�
 
 名前欄の描画・Enter確定・フォーカスと終了処理だけを検証する場合は、
 同じコマンドへ`--name-only`を追加します。
+接続属性の入力だけを検証する場合は`--connections-only`を追加します。
+通常時間キー・SDK・Animation Layerの実画面入力とAuto Key ON／OFF、
+tooltip、constraintの入力禁止、Undo／Redo、時刻変更でのSlider終了を確認します。
+同じ検証は通常の全工程にも含みます。
 
 runnerは別の `maya.exe` を起動し、一時ディレクトリの `MAYA_APP_DIR`、Maya.env探索先、
 project、script pathを使用します。通常のMaya.envを書き換えず、起動済みMayaへ接続しません。

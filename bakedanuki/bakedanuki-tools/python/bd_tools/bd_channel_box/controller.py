@@ -45,6 +45,7 @@ from bd_util.maya.ui import (
     apply_plugs_values,
     capture_all_scalar_node_values,
     capture_scalar_node_values,
+    connected_plug_edit_reason,
     inspect_plug_input_state,
     read_enum_definition,
     resolve_bool_plug,
@@ -480,7 +481,7 @@ class ChannelBoxController(qt.QObject):
                             for n in targets
                         ],
                         parent=self,
-                        key_animated=True,
+                        edit_connected=True,
                         track_input_state=True,
                     )
                 elif attribute.kind == "enum":
@@ -503,7 +504,7 @@ class ChannelBoxController(qt.QObject):
                             for n in targets
                         ],
                         parent=self,
-                        key_animated=True,
+                        edit_connected=True,
                         track_input_state=True,
                     )
                 binding.edit_failed.connect(self.error_occurred.emit)
@@ -547,7 +548,7 @@ class ChannelBoxController(qt.QObject):
         return MayaEnumPlugsBinding(
             plugs,
             parent=self,
-            key_animated=True,
+            edit_connected=True,
             track_input_state=True,
         )
 
@@ -629,6 +630,8 @@ class ChannelBoxController(qt.QObject):
             "key_altered",
             "animation_layer",
         ):
+            return None
+        if plug.isDestination and connected_plug_edit_reason(plug) is not None:
             return None
         return plug.name()
 
@@ -1574,7 +1577,7 @@ class ChannelBoxController(qt.QObject):
         transfer = self._value_clipboard.read()
         if display_filter == "all":
             return apply_scalar_value_transfer(
-                self.node_names, transfer, key_animated=True
+                self.node_names, transfer, edit_connected=True
             ).changed
         paths, _filtered_count, _base_excluded = (
             self._paste_paths_for_display_filter(transfer, display_filter)
@@ -1585,7 +1588,7 @@ class ChannelBoxController(qt.QObject):
             self.node_names,
             paths,
             transfer,
-            key_animated=True,
+            edit_connected=True,
         ).changed
 
     def _paste_paths_for_display_filter(
@@ -1649,14 +1652,14 @@ class ChannelBoxController(qt.QObject):
                 self.node_names,
                 paths,
                 transfer,
-                key_animated=True,
+                edit_connected=True,
             )
         else:
             result = apply_scalar_value_transfer_to_paths(
                 self.node_names,
                 paths,
                 transfer,
-                key_animated=True,
+                edit_connected=True,
             )
         return result.changed
 

@@ -9,6 +9,15 @@
 
 ### Changed
 
+- bdChannelBoxの通常時間キーへの値入力をMayaのAuto Keyへ連動させ、SDKとAnimation Layerの
+  値入力を許可。Auto Key OFFでは一時値だけを変更し、ONではMayaのレイヤ選択に従って
+  既存アニメーションへキーを設定する。SDKはAuto Keyによらず一時値の変更のみ。
+  数値、上下、Slider、bool、enum、整列、各Paste経路へ同じ方針を適用する。
+  constraintはLayerなどの上流にある場合も除外し、一般のpairBlend、Mute、Clip、
+  unitConversion、expression等は入力不可を維持する。tooltipに入力方針とレイヤ設定先を表示。
+  以前の「常に現在キーを更新」に相当する操作にはMayaのAuto KeyをONにする。
+  scene・保存設定の変換は不要。対応するutilと同時更新し、
+  `bd_tools.reload_package(reload_util=True)`で反映する。
 - bdChannelBoxの基準ノード名欄を、閲覧中は周囲の背景になじむ枠なし表示に変更。
   編集可能なフォーカス中と外部改名との競合中は従来の入力外観を使用する。
   読み取り専用時も文字の選択・コピーは可能。scene・保存設定の移行は不要。

@@ -31,6 +31,7 @@ _OUTPUT_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_OUTPUT"
 _PHASE_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PHASE"
 _PREPARE_RESTART_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PREPARE_RESTART"
 _NAME_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_NAME_ONLY"
+_CONNECTIONS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CONNECTIONS_ONLY"
 _PERSISTED_STEP = 0.5
 _STARTUP_IDLE_COMMAND = (
     "import __main__; "
@@ -139,6 +140,8 @@ class _MayaSmokeSession:
             self._capture_after_reload,
             self._benchmark,
             self._inspect_input_colors,
+            self._inspect_connected_values,
+            self._inspect_connected_drag,
             self._finish,
         )
         if self._phase == "restart":
@@ -146,6 +149,14 @@ class _MayaSmokeSession:
                 self._inspect_restart,
                 self._setup_scene,
                 self._edit_after_restart,
+                self._finish,
+            )
+        elif os.environ.get(_CONNECTIONS_ONLY_VARIABLE) == "1":
+            self._stages = (
+                self._setup_scene,
+                self._show,
+                self._inspect_connected_values,
+                self._inspect_connected_drag,
                 self._finish,
             )
         elif os.environ.get(_NAME_ONLY_VARIABLE) == "1":
@@ -2837,6 +2848,162 @@ class _MayaSmokeSession:
         self._capture("40-special-input-colors.png")
         self.steps.append("special_input_colors")
 
+    def _inspect_connected_values(self) -> None:
+        """実画面の値欄で時間キー・SDK・LayerとAuto Key・Undoを照合する。"""
+        from maya import cmds
+
+        from bd_util.ui import FloatSliderSpinBox, FloatValueStepSpinBox
+
+        widget = self._require_window().widget
+        widget.controller.set_mode("values")
+        widget.controller.set_attribute_filter("visible")
+        cmds.autoKeyframe(state=False)
+        cmds.file(new=True, force=True)
+        for auto_key in (False, True):
+            target = cmds.createNode(
+                "transform", name=f"bdChannelBoxConnected{int(auto_key)}"
+            )
+            driver = cmds.createNode("transform", name=target + "Driver")
+            for attribute in ("timeValue", "sdkValue", "layerValue"):
+                cmds.addAttr(
+                    target,
+                    longName=attribute,
+                    attributeType="double",
+                    minValue=0,
+                    maxValue=10,
+                    keyable=True,
+                )
+            cmds.setKeyframe(target + ".timeValue", time=1, value=1)
+            cmds.setKeyframe(target + ".timeValue", time=10, value=10)
+            cmds.setDrivenKeyframe(
+                target + ".sdkValue",
+                currentDriver=driver + ".translateX",
+                driverValue=0,
+                value=1,
+            )
+            cmds.setDrivenKeyframe(
+                target + ".sdkValue",
+                currentDriver=driver + ".translateX",
+                driverValue=10,
+                value=5,
+            )
+            cmds.setKeyframe(target + ".layerValue", time=1, value=1)
+            layer = cast(
+                str,
+                cmds.animLayer(
+                    target + "Layer", attribute=target + ".layerValue"
+                ),
+            )
+            cmds.setKeyframe(
+                target + ".layerValue", time=1, value=2, animLayer=layer
+            )
+            root = cast(str, cmds.animLayer(query=True, root=True))
+            cmds.animLayer(root, edit=True, selected=False)
+            cmds.animLayer(layer, edit=True, selected=True, preferred=True)
+            cmds.pointConstraint(driver, target)
+            cmds.currentTime(5)
+            cmds.select(target, replace=True)
+            cmds.autoKeyframe(state=auto_key)
+            self._flush_gui()
+
+            # 禁止したconstraintは値欄を無効化し、理由をtooltipへ表示する
+            constrained = self._row("translate.translateX")
+            assert isinstance(constrained.editor, FloatValueStepSpinBox)
+            assert not constrained.editor.spin_box.isEnabled()
+            assert constrained.row.binding.target_states[0].reason
+            for attribute in ("timeValue", "sdkValue", "layerValue"):
+                row = self._row(attribute)
+                assert isinstance(row.editor, FloatSliderSpinBox)
+                assert row.editor.spin_box.isEnabled()
+                tooltip = row.name_label.toolTip()
+                assert (
+                    "SDK" in tooltip
+                    if attribute == "sdkValue"
+                    else "Auto Key" in tooltip
+                )
+                if attribute == "layerValue":
+                    assert layer in tooltip
+                    curves = cast(
+                        list[str],
+                        cmds.animLayer(layer, query=True, animCurves=True),
+                    )
+                else:
+                    curves = cmds.keyframe(
+                        target + "." + attribute, query=True, name=True
+                    )
+                assert curves
+                before = cmds.getAttr(target + "." + attribute)
+                original = cmds.keyframe(
+                    curves[0], query=True, valueChange=True
+                )
+                cmds.flushUndo()
+
+                # 実際の数値Viewへ入力し、保存方式と一回Undoを確認する
+                row.editor.spin_box.setValue(7)
+                self._flush_gui()
+                assert cmds.getAttr(target + "." + attribute) == 7
+                if attribute == "sdkValue" or not auto_key:
+                    assert (
+                        cmds.keyframe(curves[0], query=True, valueChange=True)
+                        == original
+                    )
+                else:
+                    assert (
+                        cmds.keyframe(
+                            curves[0],
+                            query=True,
+                            time=(5, 5),
+                            keyframeCount=True,
+                        )
+                        == 1
+                    )
+                cmds.undo()
+                self._flush_gui()
+                assert cmds.getAttr(target + "." + attribute) == before
+                assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+                cmds.redo()
+                self._flush_gui()
+                assert cmds.getAttr(target + "." + attribute) == 7
+
+            self._capture(f"41-connected-values-auto-key-{int(auto_key)}.png")
+            cmds.setAttr(driver + ".translateX", 10)
+            assert cmds.getAttr(target + ".sdkValue") == 5
+            self.steps.append(f"connected_values_auto_key_{int(auto_key)}")
+            cmds.autoKeyframe(state=False)
+
+    def _inspect_connected_drag(self) -> None:
+        """時刻変更で接続属性のSlider操作を終了し、次の時刻への入力を防ぐ。"""
+        from maya import cmds
+
+        from bd_util.ui import FloatSliderSpinBox
+
+        widget = self._require_window().widget
+        cmds.select("bdChannelBoxConnected1", replace=True)
+        cmds.currentTime(5)
+        cmds.autoKeyframe(state=True)
+        self._flush_gui()
+        row = self._row("timeValue")
+        assert isinstance(row.editor, FloatSliderSpinBox)
+        slider = row.editor.slider
+        slider.setSliderDown(True)
+        slider.setValue(slider.maximum() * 4 // 10)
+        assert widget.controller.value_edit_session.is_editing
+        cmds.currentTime(6)
+        self._flush_gui()
+        assert not widget.controller.value_edit_session.is_editing
+        assert not slider.isSliderDown()
+        assert (
+            cmds.keyframe(
+                "bdChannelBoxConnected1.timeValue",
+                query=True,
+                time=(6, 6),
+                keyframeCount=True,
+            )
+            == 0
+        )
+        cmds.autoKeyframe(state=False)
+        self.steps.append("connected_drag_finishes_at_time_change")
+
     def _finish(self) -> None:
         """すべての操作結果を保存し、検証専用Mayaを終了する。"""
         from bd_tools import bd_channel_box
@@ -3348,6 +3515,7 @@ def _launch(
     prepare_restart: bool = False,
     restart_from: Path | None = None,
     name_only: bool = False,
+    connections_only: bool = False,
 ) -> int:
     """固有の設定と作業ディレクトリを使う検証Maya processを起動する。"""
     repository = Path(__file__).resolve().parents[1]
@@ -3394,6 +3562,7 @@ def _launch(
     environment[_PHASE_VARIABLE] = phase
     environment[_PREPARE_RESTART_VARIABLE] = "1" if prepare_restart else "0"
     environment[_NAME_ONLY_VARIABLE] = "1" if name_only else "0"
+    environment[_CONNECTIONS_ONLY_VARIABLE] = "1" if connections_only else "0"
     environment["BAKEDANUKI_UTIL_ROOT"] = str(util_root)
     environment["PYTHONPATH"] = os.pathsep.join(
         (
@@ -3489,6 +3658,7 @@ def main() -> int:
     restart_group.add_argument("--prepare-restart", action="store_true")
     restart_group.add_argument("--restart-from", type=Path)
     restart_group.add_argument("--name-only", action="store_true")
+    restart_group.add_argument("--connections-only", action="store_true")
     arguments = parser.parse_args()
     util_root = arguments.util_root or Path(
         os.environ.get(
@@ -3503,6 +3673,7 @@ def main() -> int:
         prepare_restart=arguments.prepare_restart,
         restart_from=arguments.restart_from,
         name_only=arguments.name_only,
+        connections_only=arguments.connections_only,
     )
 
 

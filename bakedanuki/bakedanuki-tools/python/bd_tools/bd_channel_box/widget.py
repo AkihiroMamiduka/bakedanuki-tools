@@ -745,11 +745,6 @@ class AttributeRowWidget(qt.QWidget):
             lock_states = tuple(target.is_locked for target in visible_targets)
             if any(locked != lock_states[0] for locked in lock_states[1:]):
                 details.append("ロック状態は選択ノード間で混在")
-        if not isinstance(binding, MayaStringPlugsBinding):
-            details.append(
-                "編集可能な通常時間カーブ接続では、値の変更時に"
-                "現在時刻へキーを設定します"
-            )
         if binding.is_mixed:
             details.append(
                 "• 選択ノード間で値が異なります（基準ノードの値を表示）"
@@ -759,6 +754,8 @@ class AttributeRowWidget(qt.QWidget):
         )
         reasons = list(self.row.excluded)
         for target in binding.target_states:
+            if target.edit_description:
+                details.append(f"{target.name}: {target.edit_description}")
             if target.reason:
                 reasons.append(f"{target.name}: {target.reason}")
         details.extend(reasons)

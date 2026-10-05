@@ -175,6 +175,8 @@ def test_attribute_input_opens_row_context_menu(
 def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     """異なる値を持つ2ノードを、値を揃えずに表示する。"""
     assert qt_application is not None
+    auto_key = bool(cmds.autoKeyframe(query=True, state=True))
+    cmds.autoKeyframe(state=False)
     _new_scene()
     for name, value in (("channelA", 0.25), ("channelB", 0.75)):
         cmds.createNode("transform", name=name)
@@ -213,6 +215,7 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     widget.deleteLater()
     _events()
     _new_scene()
+    cmds.autoKeyframe(state=auto_key)
 
 
 def test_selection_and_refresh_only_read_values(
@@ -863,13 +866,15 @@ def test_selection_change_finishes_drag_undo(
     assert cmds.getAttr("channelB.weight") == 0.75
 
 
-def test_animated_representative_accepts_value_and_updates_current_key(
-    editor: ChannelBoxWidget,
+@pytest.mark.parametrize("auto_key", [False, True])
+def test_animated_representative_follows_auto_key(
+    editor: ChannelBoxWidget, auto_key: bool
 ) -> None:
-    """キー付き代表属性は現在キーを更新し、未接続の後続は通常編集する。"""
+    """キー付き代表の保存をAuto Keyへ従わせ、未接続の後続は通常編集する。"""
     cmds.setKeyframe("channelA.weight", time=1, value=0.2)
     cmds.setKeyframe("channelA.weight", time=10, value=0.8)
     cmds.currentTime(10)
+    cmds.autoKeyframe(state=auto_key)
     _events()
     binding = _row(editor, "weight").row.binding
     assert isinstance(binding, MayaFloatPlugsBinding)
@@ -878,7 +883,7 @@ def test_animated_representative_accepts_value_and_updates_current_key(
     row = _row(editor, "weight")
     assert row.align_action.isEnabled()
     assert "2/2" in row.name_label.toolTip()
-    assert "現在時刻へキー" in row.name_label.toolTip()
+    assert "Auto Key" in row.name_label.toolTip()
     assert isinstance(row.editor, FloatSliderSpinBox)
     cmds.flushUndo()
     row.editor.spin_box.setValue(0.5)
@@ -887,7 +892,7 @@ def test_animated_representative_accepts_value_and_updates_current_key(
     assert cmds.getAttr("channelB.weight") == 0.5
     assert cmds.keyframe("channelA.weight", query=True, valueChange=True) == [
         0.2,
-        0.5,
+        0.5 if auto_key else 0.8,
     ]
     assert not cmds.listConnections("channelB.weight", source=True)
     cmds.undo()
