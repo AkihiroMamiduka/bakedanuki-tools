@@ -70,9 +70,10 @@
 
 ### bdChannelBoxのアニメーション値編集
 
-既存の時間駆動カーブへ現在時刻のキーを追加・更新する値編集を実装しました。
-utilの共通Bindingと一括書込み基盤を明示的に有効化し、値欄・上下・Slider・bool・enum・
-整列・Pasteで同じ規則を適用します。未接続属性への新規キー作成は行いません。
+当初は既存の時間駆動カーブへ常に現在時刻のキーを追加・更新する値編集を実装しました。
+現在はMaya標準のAuto Key設定に従い、OFFでは一時値、ONではキーを編集します。
+utilの共通Bindingと一括書込み基盤を使用し、値欄・上下・Slider・bool・enum・
+整列・Pasteで同じ規則を適用します。未接続属性への入力だけでは新規キーを作りません。
 時刻変更で連続操作と未確定入力を終了し、Maya plugを表示の正本として維持します。
 
 - [x] 通常値とアニメーション値が混在する複数属性・複数ノード編集
@@ -90,6 +91,16 @@ utilの共通Bindingと一括書込み基盤を明示的に有効化し、値欄
 - [x] Driven Key・Expression・Animation Layer・Animation Clip・Muted・Key Altered・Nonkeyableの専用色を追加
 - [x] Maya公式の13状態の表示を利用者が確認（2026-10-02）
 
+### bdChannelBoxの接続属性への値入力（開発完了）
+
+通常時間カーブはAuto KeyのON／OFFに従い、SDKはキーを変更せず一時値を入力します。
+Animation LayerはMayaが選ぶ編集先へ入力し、対象レイヤーと入力方針をtooltipへ示します。
+constraintを含む駆動や一般のpairBlendなど、未対応経路は入力不可のままです。
+数値・bool・enum、整列、Paste、複数属性のUndoと途中失敗時の復旧に同じ方針を適用します。
+Maya 2025 / 2026 / 2027のruntime testとMaya 2025本体で検証し、利用者による
+Maya本体の確認とpushは2026-10-05に完了しました。対応範囲と検証結果は
+[bdChannelBoxの仕様](bd_channel_box.md#アニメーション属性の値編集)を参照します。
+
 ### bdChannelBoxの拡張候補
 
 以下は実装済みの複数属性拡張とは別の候補です。
@@ -101,9 +112,20 @@ Slider操作範囲のカスタマイズも、用途が具体化したときに�
 避けるため候補に含めません。既存の「表示ノードの値に揃える」は、同じ選択中の即時操作として維持します。
 複数source nodeのCopy/Pasteも、sourceとtargetの暗黙対応を避けるため実装候補に含めません。
 
-Animation Layer、SDK、pairBlendなど複合接続への値編集は引き続き対象外です。
-対応時は編集するカーブと評価結果の関係、接続を維持する書込み方法、失敗時復旧を
-utilのキー操作基盤へ追加してからbdChannelBoxで利用します。
+次の機能候補は、Maya標準のChannel Boxに表示される汎用整数属性への対応です。
+現在はkeyableな`long`属性も表示対象から除外しています。初回の推奨範囲は
+`byte`・`short`・`long`の単一属性とcompoundの子属性です。整数値のまま扱い、
+既定の増減幅は1とし、検索・複数選択・整列・表示／ロック・Copy／Paste・Undoへ
+既存の規則で通します。型固有の範囲と属性のhard limitを入力前に検証します。
+接続中の整数は通常時間カーブ・SDK・Animation LayerのMaya実挙動を各対応versionで
+確認してから可否を決めます。`int64`、time、配列、compound親は初回の対象外とし、
+Qt入力欄の範囲や単位の問題を分けて扱います。
+汎用の整数Binding・Viewと値転送形式はutil側へ配置し、既存clipboard形式の読込み互換を
+保ってください。公開形式を変える場合は移行方法をCHANGELOGへ記録します。
+
+一般のpairBlendなど、その他の接続編集は経路ごとにMaya標準の挙動を調べてから検討します。
+特にweight、入力側、回転補間で結果が変わるため、一律に書込み可能とは扱いません。
+constraintを含む経路は従来どおり入力不可とします。
 
 ### 保守上の継続課題
 

@@ -83,12 +83,14 @@ bd_channel_box.show()
 初回はMaya右側へドッキングし、タイトル部分のドラッグでfloatingやタブ配置へ変更できます。
 終了は `bd_channel_box.close()`、配置のリセットと再表示は `bd_channel_box.reset_layout()` です。
 
-対象objectを抽出した選択リストの末尾ノードを基準に、Channel Box に表示する bool・float 系・enum属性の
+対象objectを抽出した選択リストの末尾ノードを基準に、Channel Box に表示する
+bool・float系・enum・単一typed string属性の
 入力欄を表示します。同名・同種の属性を持つ選択ノードへ、編集時だけ値を一括反映します。
 画面上部の名前欄では、複数選択中も末尾の基準ノードだけを改名できます。
 選択や表示更新では値を揃えません。両側に hard min/max がある属性は Slider 付き、
-bool は属性名の右に置く CheckBox です。対応する既存アニメーション属性を編集すると、
-現在時刻のキーを追加・更新します。未接続属性は通常の値設定のままです。
+bool は属性名の右に置く CheckBox です。通常時間カーブとAnimation Layerへの入力は
+MayaのAuto Key設定に従い、OFFでは一時値、ONでは現在時刻のキーを追加・更新します。
+Driven Keyはキーを変えずに一時値を入力できます。未接続属性は通常の値設定のままです。
 属性名と値欄の間の帯で、現在キー（赤）・アニメーション中のキーなし（淡い赤）・
 Key Altered（淡い桃）・Driven Key（青）・Expression（紫）・
 Animation Layer（青緑）・Animation Clip（橙）・Muted（茶）・
