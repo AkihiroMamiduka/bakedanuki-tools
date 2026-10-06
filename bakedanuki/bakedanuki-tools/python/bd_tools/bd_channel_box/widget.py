@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 from functools import partial
+from pathlib import Path
 from typing import Literal, Protocol, cast
 
 from bd_util import Nodes
@@ -40,11 +42,14 @@ from .controller import (
     ChannelRow,
     ChannelStateRow,
 )
+from .custom_filter_registry import CustomFilterRegistry
+from .custom_filters import CustomFilterSelection
 from .table import ChannelTableView, TableRow
 
 __all__ = [
     "AttributeRowWidget",
     "AttributeStateRowWidget",
+    "CustomFilterManagerDialog",
     "ChannelBoxWidget",
 ]
 
@@ -132,6 +137,13 @@ _SEARCH_VISIBILITY_OPTIONS: tuple[tuple[_SearchVisibility, str, str], ...] = (
         "Attribute Filterが「全て」の場合だけ検索欄を表示します。",
     ),
     ("always", "常に表示", "全てのAttribute Filterで検索欄を表示します。"),
+)
+_ATTRIBUTE_FILTER_OPTIONS: tuple[tuple[str, ChannelAttributeFilter], ...] = (
+    ("全て", "all"),
+    ("keyable + channelbox", "visible"),
+    ("keyable", "keyable"),
+    ("channelbox", "channel_box"),
+    ("hide", "hidden"),
 )
 
 
@@ -1026,12 +1038,204 @@ class _NodeNameLineEdit(StringLineEdit):
             self.setStyleSheet(style)
 
 
+class CustomFilterManagerDialog(qt.QDialog):
+    """共有 JSON の登録、表示切替、順序、読込状態を管理する。"""
+
+    def __init__(
+        self, registry: CustomFilterRegistry, parent: qt.QWidget
+    ) -> None:
+        """登録一覧と操作ボタンを構成し、registryの変更へ追従する。"""
+        super().__init__(parent)
+        self.registry = registry
+        self.setObjectName("bdChannelBoxCustomFilterManager")
+        self.setWindowTitle("カスタムフィルター管理")
+        self.resize(600, 390)
+        self.list_widget = qt.QListWidget(self)
+        self.list_widget.setObjectName("customFilterRegistrationList")
+        self.list_widget.setAccessibleName("カスタムフィルター登録一覧")
+        self.details_label = qt.QLabel(self)
+        self.details_label.setObjectName("customFilterRegistrationDetails")
+        self.details_label.setWordWrap(True)
+        self.details_label.setMaximumHeight(90)
+        self.details_label.setTextInteractionFlags(
+            qt.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.add_button = qt.QPushButton("追加...", self)
+        self.remove_button = qt.QPushButton("削除", self)
+        self.move_up_button = qt.QPushButton("上へ", self)
+        self.move_down_button = qt.QPushButton("下へ", self)
+        self.reload_button = qt.QPushButton("再読込", self)
+        self.reload_all_button = qt.QPushButton("すべて再読込", self)
+        buttons = qt.QHBoxLayout()
+        for button in (
+            self.add_button,
+            self.remove_button,
+            self.move_up_button,
+            self.move_down_button,
+            self.reload_button,
+            self.reload_all_button,
+        ):
+            buttons.addWidget(button)
+        layout = qt.QVBoxLayout(self)
+        layout.addWidget(
+            qt.QLabel("チェックした登録を Attribute Filter に表示します", self)
+        )
+        layout.addWidget(self.list_widget, 1)
+        layout.addWidget(self.details_label)
+        layout.addLayout(buttons)
+
+        self.list_widget.itemChanged.connect(self._change_enabled)
+        self.list_widget.currentRowChanged.connect(self._sync_selection)
+        self.add_button.clicked.connect(self._add_files)
+        self.remove_button.clicked.connect(self._remove_selected)
+        self.move_up_button.clicked.connect(self._move_up)
+        self.move_down_button.clicked.connect(self._move_down)
+        self.reload_button.clicked.connect(self._reload_selected)
+        self.reload_all_button.clicked.connect(self.registry.reload_all)
+        self.registry.changed.connect(self._refresh)
+        self._refresh()
+
+    def _selected_path(self) -> str | None:
+        """選択行に保存した正規化済みパスを返す。"""
+        item = cast(qt.QListWidgetItem | None, self.list_widget.currentItem())
+        if item is None:
+            return None
+        value: object = item.data(qt.Qt.ItemDataRole.UserRole)
+        return value if isinstance(value, str) else None
+
+    def _select_path(self, path: str) -> None:
+        """追加・移動後も対象の登録を選択して詳細を表示する。"""
+        for index in range(self.list_widget.count()):
+            item = cast(
+                qt.QListWidgetItem | None, self.list_widget.item(index)
+            )
+            if (
+                item is not None
+                and item.data(qt.Qt.ItemDataRole.UserRole) == path
+            ):
+                self.list_widget.setCurrentRow(index)
+                return
+
+    def _refresh(self) -> None:
+        """登録の順序と読込状態を一覧へ反映する。"""
+        selected = self._selected_path()
+        old_row = self.list_widget.currentRow()
+        blocked = self.list_widget.blockSignals(True)
+        try:
+            self.list_widget.clear()
+            for entry in self.registry.entries:
+                name = (
+                    entry.definition.name
+                    if entry.definition is not None
+                    else Path(entry.path).name + "（読込エラー）"
+                )
+                item = qt.QListWidgetItem(name, self.list_widget)
+                item.setData(qt.Qt.ItemDataRole.UserRole, entry.path)
+                item.setFlags(
+                    item.flags() | qt.Qt.ItemFlag.ItemIsUserCheckable
+                )
+                item.setCheckState(
+                    qt.Qt.CheckState.Checked
+                    if entry.enabled
+                    else qt.Qt.CheckState.Unchecked
+                )
+                item.setToolTip(entry.path)
+            if selected is not None:
+                self._select_path(selected)
+            if self.list_widget.currentRow() < 0 and self.list_widget.count():
+                self.list_widget.setCurrentRow(
+                    min(max(old_row, 0), self.list_widget.count() - 1)
+                )
+        finally:
+            self.list_widget.blockSignals(blocked)
+        self._sync_selection()
+
+    def _sync_selection(self, _row: int = -1) -> None:
+        """現在行のパスとエラーを示し、使用できる操作だけを有効にする。"""
+        path = self._selected_path()
+        index = self.list_widget.currentRow()
+        entry = next(
+            (item for item in self.registry.entries if item.path == path), None
+        )
+        has_selection = entry is not None
+        self.remove_button.setEnabled(has_selection)
+        self.move_up_button.setEnabled(has_selection and index > 0)
+        self.move_down_button.setEnabled(
+            has_selection and index < self.list_widget.count() - 1
+        )
+        self.reload_button.setEnabled(has_selection)
+        self.reload_all_button.setEnabled(bool(self.registry.entries))
+        if entry is None:
+            details = "JSON ファイルを追加してください"
+        else:
+            status = (
+                f"読込エラー: {entry.error}"
+                if entry.error is not None
+                else "読込済み"
+            )
+            details = f"ファイル: {entry.path}\n{status}"
+        if self.registry.storage_error is not None:
+            details += f"\n{self.registry.storage_error}"
+        self.details_label.setText(details)
+        self.details_label.setToolTip(details)
+
+    def _change_enabled(self, item: qt.QListWidgetItem) -> None:
+        """チェックの変更を個人設定と ComboBox へ反映する。"""
+        value: object = item.data(qt.Qt.ItemDataRole.UserRole)
+        if isinstance(value, str):
+            self.registry.set_enabled(
+                value, item.checkState() == qt.Qt.CheckState.Checked
+            )
+
+    def _add_files(self) -> None:
+        """任意数の共有 JSON をファイル選択から末尾へ追加する。"""
+        paths, _selected_filter = qt.QFileDialog.getOpenFileNames(
+            self,
+            "カスタムフィルター定義を追加",
+            "",
+            "JSON ファイル (*.json);;すべてのファイル (*)",
+        )
+        if not paths:
+            return
+        added = self.registry.add_paths(paths)
+        if added:
+            self._select_path(added[-1])
+            self._sync_selection()
+
+    def _remove_selected(self) -> None:
+        """選択した登録だけを削除する。"""
+        path = self._selected_path()
+        if path is not None:
+            self.registry.remove(path)
+
+    def _move_up(self) -> None:
+        """選択した登録を一段上へ移動する。"""
+        path = self._selected_path()
+        if path is not None:
+            self.registry.move(path, -1)
+
+    def _move_down(self) -> None:
+        """選択した登録を一段下へ移動する。"""
+        path = self._selected_path()
+        if path is not None:
+            self.registry.move(path, 1)
+
+    def _reload_selected(self) -> None:
+        """選択した共有 JSON の内容と読込エラーを更新する。"""
+        path = self._selected_path()
+        if path is not None:
+            self.registry.reload(path)
+
+
 class ChannelBoxWidget(qt.QWidget):
     """基準ノードの情報と、スクロール可能な属性入力欄を表示する。"""
 
     def __init__(self, parent: qt.QWidget | None = None) -> None:
         """画面を作成してから選択監視を開始する。"""
         super().__init__(parent)
+        self.custom_filter_registry = CustomFilterRegistry(self)
+        self.custom_filter_dialog: CustomFilterManagerDialog | None = None
+        self._active_custom_filters: dict[str, CustomFilterSelection] = {}
         self.step_profile = FloatStepProfile(self)
         self._changing_steps = False
         self.row_widgets: tuple[
@@ -1146,26 +1350,32 @@ class ChannelBoxWidget(qt.QWidget):
             self.search_visibility_actions[value] = action
         self.settings_menu.addSeparator()
         self.settings_menu.addMenu(self.search_visibility_menu)
+        self.manage_custom_filters_action = qt.QAction(
+            "カスタムフィルター管理...", self
+        )
+        self.manage_custom_filters_action.setObjectName(
+            "manageCustomFiltersAction"
+        )
+        cast(_MenuActions, self.settings_menu).addAction(
+            self.manage_custom_filters_action
+        )
         self.mode_combo = qt.QComboBox(self)
         self.mode_combo.addItem("値編集", "values")
         self.mode_combo.addItem("表示・ロック", "states")
         self.mode_combo.setAccessibleName("表示モード")
         self.filter_combo = qt.QComboBox(self)
-        for label, value in (
-            ("全て", "all"),
-            ("keyable + channelbox", "visible"),
-            ("keyable", "keyable"),
-            ("channelbox", "channel_box"),
-            ("hide", "hidden"),
-        ):
-            self.filter_combo.addItem(label, value)
+        self._populate_filter_combo()
         self.filter_combo.setAccessibleName("属性の表示フィルター")
         self.filter_combo.setToolTip(
-            "末尾の基準ノードの表示状態で絞り込みます。\n"
-            "channelboxは非keyableでChannel Boxに表示する属性です。"
+            "既定の5種類は末尾の基準ノードの表示状態で絞り込みます。\n"
+            "Customは登録したJSONの属性pathを使用します。"
         )
         self.mode_label = qt.QLabel("Mode:", self)
         self.filter_label = qt.QLabel("Attribute Filter:", self)
+        self.filter_fallback_label = qt.QLabel(self)
+        self.filter_fallback_label.setObjectName("customFilterFallbackNotice")
+        self.filter_fallback_label.setWordWrap(True)
+        self.filter_fallback_label.hide()
         self.search_label = qt.QLabel("Attribute Search:", self)
         self.search_edit = qt.QLineEdit(self)
         self.search_edit.setObjectName("attributeSearchEdit")
@@ -1254,6 +1464,7 @@ class ChannelBoxWidget(qt.QWidget):
         layout.setSpacing(6)
         layout.setMenuBar(self.menu_bar)
         layout.addLayout(controls_layout)
+        layout.addWidget(self.filter_fallback_label)
         layout.addLayout(self.header_layout)
         layout.addWidget(self.empty_label)
         layout.addWidget(self.scroll_area, 1)
@@ -1282,6 +1493,9 @@ class ChannelBoxWidget(qt.QWidget):
         self.controller.operation_reported.connect(self._show_operation_report)
         self.controller.mode_changed.connect(self._sync_mode)
         self.controller.filter_changed.connect(self._sync_filter)
+        self.custom_filter_registry.changed.connect(
+            self._custom_filters_changed
+        )
         self.controller.time_changed.connect(self._interrupt_value_input)
         self.mode_combo.currentIndexChanged.connect(self._change_mode)
         self.filter_combo.currentIndexChanged.connect(self._change_filter)
@@ -1313,9 +1527,77 @@ class ChannelBoxWidget(qt.QWidget):
             action.toggled.connect(
                 partial(self._change_search_visibility, value)
             )
+        self.manage_custom_filters_action.triggered.connect(
+            self._show_custom_filter_manager
+        )
         self.search_edit.textChanged.connect(self._queue_search_filter)
         self._sync_filter()
         self.controller.refresh()
+
+    def _populate_filter_combo(self) -> None:
+        """既定の5件に続き、有効で正常な共有フィルターを登録順に並べる。"""
+        self.filter_combo.clear()
+        for label, value in _ATTRIBUTE_FILTER_OPTIONS:
+            self.filter_combo.addItem(label, value)
+        active: dict[str, CustomFilterSelection] = {}
+        available = [
+            entry
+            for entry in self.custom_filter_registry.entries
+            if entry.enabled and entry.definition is not None
+        ]
+        counts = Counter(
+            entry.definition.name
+            for entry in available
+            if entry.definition is not None
+        )
+        for index, entry in enumerate(available, start=1):
+            definition = entry.definition
+            if definition is None:
+                continue
+            label = f"Custom: {definition.name}"
+            if counts[definition.name] > 1:
+                label += f" ({Path(entry.path).name}, {index})"
+            selection = CustomFilterSelection(entry.path, definition)
+            active[entry.path] = selection
+            self.filter_combo.addItem(label, selection)
+            self.filter_combo.setItemData(
+                self.filter_combo.count() - 1,
+                "定義ファイル: "
+                + entry.path
+                + "\n基準ノードの型に定義がない場合は、"
+                "keyable + channelbox へ戻ります。",
+                qt.Qt.ItemDataRole.ToolTipRole,
+            )
+        self._active_custom_filters = active
+
+    def _custom_filters_changed(self) -> None:
+        """登録変更を ComboBox と両モードの選択へ安全に反映する。"""
+        if self.controller.is_disposed:
+            return
+        previous = self._active_custom_filters
+        blocked = self.filter_combo.blockSignals(True)
+        try:
+            self._populate_filter_combo()
+        finally:
+            self.filter_combo.blockSignals(blocked)
+        for path in previous.keys() - self._active_custom_filters.keys():
+            self.controller.clear_custom_filter(path)
+        for path, selection in self._active_custom_filters.items():
+            if previous.get(path) != selection:
+                self.controller.replace_custom_filter(selection)
+        self._sync_filter()
+
+    def _show_custom_filter_manager(self) -> None:
+        """設定メニューから同じ管理画面を再利用して表示する。"""
+        dialog = self.custom_filter_dialog
+        if dialog is None or not qt.isValid(dialog):
+            dialog = CustomFilterManagerDialog(
+                self.custom_filter_registry, self
+            )
+            self.custom_filter_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _set_wheel_editing_without_focus(self, enabled: bool) -> None:
         """表示中の全値入力行へ、メニューで選んだホイール方針を反映する。"""
@@ -1398,6 +1680,10 @@ class ChannelBoxWidget(qt.QWidget):
     def _change_filter(self, index: int) -> None:
         """編集中の値を確定し、現在のモードのフィルターを切り替える。"""
         value = self.filter_combo.itemData(index)
+        if isinstance(value, CustomFilterSelection):
+            self._prepare_view_change()
+            self.controller.set_attribute_filter(value)
+            return
         if value in ("all", "visible", "keyable", "channel_box", "hidden"):
             self._prepare_view_change()
             self.controller.set_attribute_filter(value)
@@ -1428,14 +1714,41 @@ class ChannelBoxWidget(qt.QWidget):
 
     def _sync_filter(self) -> None:
         """モードごとのフィルター選択を再入力せずComboBoxへ反映する。"""
+        selected = self.controller.attribute_filter
+        if isinstance(selected, CustomFilterSelection):
+            # QtのitemData比較はPython objectの同値より同一性を優先する場合がある
+            index = next(
+                (
+                    index
+                    for index in range(self.filter_combo.count())
+                    if (
+                        isinstance(
+                            candidate := self.filter_combo.itemData(index),
+                            CustomFilterSelection,
+                        )
+                        and candidate.path == selected.path
+                    )
+                ),
+                -1,
+            )
+        else:
+            index = self.filter_combo.findData(selected)
         blocked = self.filter_combo.blockSignals(True)
         try:
-            self.filter_combo.setCurrentIndex(
-                self.filter_combo.findData(self.controller.attribute_filter)
-            )
+            self.filter_combo.setCurrentIndex(index)
         finally:
             self.filter_combo.blockSignals(blocked)
         self._sync_search_visibility()
+
+    def _sync_filter_fallback_notice(self) -> None:
+        """カスタム定義に基準ノード型がない場合だけ代替条件を示す。"""
+        node_type = self.controller.custom_filter_fallback_node_type
+        self.filter_fallback_label.setText(
+            f"{node_type} 型: keyable + channelbox（JSON に未定義）"
+            if node_type is not None
+            else ""
+        )
+        self.filter_fallback_label.setVisible(node_type is not None)
 
     def _remember_scroll_anchor(self) -> None:
         """表示先頭の属性pathを記録して、設定行の増減後も位置を保つ。"""
@@ -2413,6 +2726,7 @@ class ChannelBoxWidget(qt.QWidget):
             == self.controller.node_ids,
         )
         self._table_node_ids = self.controller.node_ids
+        self._sync_filter_fallback_notice()
         self._prepare_edit_menu()
         self._apply_search_filter()
         # 行の配置が確定してから、残っている属性のスクロール位置を復元する
@@ -2484,6 +2798,10 @@ class ChannelBoxWidget(qt.QWidget):
 
     def dispose(self) -> None:
         """画面の入力と監視を即時に終了する。"""
+        if self.custom_filter_dialog is not None:
+            self.custom_filter_dialog.close()
+            self.custom_filter_dialog.deleteLater()
+            self.custom_filter_dialog = None
         self._dispose_node_name_editor()
         self.state_sweep.dispose()
         self.lock_sweep.dispose()

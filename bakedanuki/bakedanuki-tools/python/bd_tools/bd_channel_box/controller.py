@@ -56,6 +56,7 @@ from bd_util.maya.ui import (
 from bd_util.ui import qt
 
 from . import config
+from .custom_filters import CustomFilterSelection
 
 ChannelBinding: TypeAlias = (
     MayaBoolPlugsBinding
@@ -65,11 +66,19 @@ ChannelBinding: TypeAlias = (
 )
 ChannelBoxMode: TypeAlias = Literal["values", "states"]
 ChannelAttributeFilter: TypeAlias = ScalarAttributeDisplayFilter
+ChannelDisplayFilter: TypeAlias = (
+    ChannelAttributeFilter | CustomFilterSelection
+)
+_DEFAULT_FILTERS: dict[ChannelBoxMode, ChannelAttributeFilter] = {
+    "values": "visible",
+    "states": "all",
+}
 
 __all__ = [
     "ChannelBinding",
     "ChannelBoxMode",
     "ChannelAttributeFilter",
+    "ChannelDisplayFilter",
     "ChannelRow",
     "ChannelStateRow",
     "ChannelBoxController",
@@ -154,10 +163,11 @@ class ChannelBoxController(qt.QObject):
         self.node_names: tuple[str, ...] = ()
         self.node_ids: tuple[str, ...] = ()
         self._mode: ChannelBoxMode = "values"
-        self._filters: dict[ChannelBoxMode, ChannelAttributeFilter] = {
+        self._filters: dict[ChannelBoxMode, ChannelDisplayFilter] = {
             "values": "visible",
             "states": "all",
         }
+        self._custom_filter_fallback_node_type: str | None = None
         self._disposed = False
         self._current_time_seconds = oma.MAnimControl.currentTime().asUnits(
             om.MTime.kSeconds
@@ -246,13 +256,24 @@ class ChannelBoxController(qt.QObject):
         self.refresh()
 
     @property
-    def attribute_filter(self) -> ChannelAttributeFilter:
+    def attribute_filter(self) -> ChannelDisplayFilter:
         """現在のモードに保持している属性フィルターを返す。"""
         return self._filters[self._mode]
 
-    def set_attribute_filter(self, value: ChannelAttributeFilter) -> None:
+    @property
+    def custom_filter_fallback_node_type(self) -> str | None:
+        """現在のカスタム定義が未指定の基準ノード型を返す。"""
+        return self._custom_filter_fallback_node_type
+
+    def set_attribute_filter(self, value: ChannelDisplayFilter) -> None:
         """連続編集を終了し、sceneを変更せず表示対象を絞り込む。"""
-        if value not in ("all", "visible", "keyable", "channel_box", "hidden"):
+        if not isinstance(value, CustomFilterSelection) and value not in (
+            "all",
+            "visible",
+            "keyable",
+            "channel_box",
+            "hidden",
+        ):
             raise ValueError("未対応の属性フィルターです")
         if self._disposed or value == self.attribute_filter:
             return
@@ -260,6 +281,40 @@ class ChannelBoxController(qt.QObject):
         self._filters[self._mode] = value
         self.filter_changed.emit()
         self.refresh()
+
+    def clear_custom_filter(self, path: str) -> None:
+        """利用不能になったカスタム選択を両モードで既定値へ戻す。"""
+        if self._disposed:
+            return
+        active_changed = False
+        for mode, default in _DEFAULT_FILTERS.items():
+            selected = self._filters[mode]
+            if isinstance(selected, CustomFilterSelection) and (
+                selected.path == path
+            ):
+                self._filters[mode] = default
+                active_changed |= mode == self._mode
+        if active_changed:
+            self._finish_value_edit()
+            self.filter_changed.emit()
+            self.refresh()
+
+    def replace_custom_filter(self, selection: CustomFilterSelection) -> None:
+        """再読込した同一ファイルの定義を両モードの選択へ反映する。"""
+        if self._disposed:
+            return
+        active_changed = False
+        for mode in ("values", "states"):
+            selected = self._filters[mode]
+            if isinstance(selected, CustomFilterSelection) and (
+                selected.path == selection.path
+            ):
+                self._filters[mode] = selection
+                active_changed |= mode == self._mode
+        if active_changed:
+            self._finish_value_edit()
+            self.filter_changed.emit()
+            self.refresh()
 
     def _finish_value_edit(self) -> None:
         """行を切り替える前に、値の連続編集とUndoのまとまりを閉じる。"""
@@ -415,7 +470,7 @@ class ChannelBoxController(qt.QObject):
         *,
         display_filter: ChannelAttributeFilter | None = None,
     ) -> tuple[ChannelRow | ChannelStateRow, ...]:
-        """指定した表示条件で基準属性を絞り、同名・同種属性を対応付ける。"""
+        """表示条件かカスタム定義で基準属性を絞り、同名・同種属性を結ぶ。"""
         if not attributes:
             return ()
         effective_filter = (
@@ -434,17 +489,48 @@ class ChannelBoxController(qt.QObject):
                     dict.fromkeys(config.ATTRIBUTE_PRIORITY_PATHS)
                 )
             }
-            # 同じ優先度では元の属性順を保ち、行の構築時だけ並べ替える
-            for attribute in sorted(
-                attributes[-1],
-                key=partial(
-                    _attribute_display_priority, priorities=priorities
-                ),
-            ):
-                if not matches_scalar_attribute_display_filter(
-                    attribute, effective_filter
-                ):
-                    continue
+            custom_paths: tuple[str, ...] | None = None
+            if isinstance(effective_filter, CustomFilterSelection):
+                node_type = cast(str, cmds.nodeType(self.node_names[-1]))
+                custom_paths = effective_filter.definition.node_types.get(
+                    node_type
+                )
+                if custom_paths is None and display_filter is None:
+                    self._custom_filter_fallback_node_type = node_type
+            if custom_paths is not None:
+                # 定義済みの型は表示状態によらずJSONのpath順を使う
+                custom_attributes: list[ScalarAttributeInfo] = []
+                seen_paths: set[str] = set()
+                for path in custom_paths:
+                    attribute = lookup[-1].get(path)
+                    if attribute is None and path.startswith("."):
+                        attribute = lookup[-1].get(path[1:])
+                    if attribute is None or attribute.path in seen_paths:
+                        continue
+                    custom_attributes.append(attribute)
+                    seen_paths.add(attribute.path)
+                ordered_attributes = tuple(custom_attributes)
+            else:
+                # 組込み条件か、型未定義時の既定条件で既存の優先順を使う
+                builtin_filter: ChannelAttributeFilter = (
+                    "visible"
+                    if isinstance(effective_filter, CustomFilterSelection)
+                    else effective_filter
+                )
+                # 同じ優先度では元の属性順を保ち、行の構築時だけ並べ替える
+                ordered_attributes = tuple(
+                    attribute
+                    for attribute in sorted(
+                        attributes[-1],
+                        key=partial(
+                            _attribute_display_priority, priorities=priorities
+                        ),
+                    )
+                    if matches_scalar_attribute_display_filter(
+                        attribute, builtin_filter
+                    )
+                )
+            for attribute in ordered_attributes:
                 targets: list[str] = []
                 excluded: list[str] = []
                 for name, info in zip(ordered_names, ordered_lookup):
@@ -555,6 +641,7 @@ class ChannelBoxController(qt.QObject):
     def _dispose_rows(self) -> None:
         """Qtの遅延削除を待たず、すべての入力とMaya監視を終了する。"""
         self._filter_refresh_pending = False
+        self._custom_filter_fallback_node_type = None
         self.rows_about_to_change.emit()
         if self._active_state_binding is not None:
             self._active_state_binding.dispose()

@@ -24,8 +24,13 @@ from bd_util.ui import (
 from bd_tools import bd_channel_box
 from bd_tools.bd_channel_box.controller import (
     ChannelAttributeFilter,
+    ChannelDisplayFilter,
     ChannelRow,
     ChannelStateRow,
+)
+from bd_tools.bd_channel_box.custom_filters import (
+    CustomFilterDefinition,
+    CustomFilterSelection,
 )
 from bd_tools.bd_channel_box.widget import (
     AttributeRowWidget,
@@ -157,10 +162,36 @@ assert_type(
 assert_type(bd_channel_box.show().widget.controller.begin_state_edit(), None)
 assert_type(
     bd_channel_box.show().widget.controller.attribute_filter,
-    ChannelAttributeFilter,
+    ChannelDisplayFilter,
+)
+assert_type(
+    bd_channel_box.show().widget.controller.custom_filter_fallback_node_type,
+    str | None,
 )
 assert_type(
     bd_channel_box.show().widget.controller.set_attribute_filter("hidden"),
+    None,
+)
+custom_filter = CustomFilterSelection(
+    "C:/filters/rig.json",
+    CustomFilterDefinition("Rig", {"joint": ("rotateOrder",)}),
+)
+assert_type(
+    bd_channel_box.show().widget.controller.set_attribute_filter(
+        custom_filter
+    ),
+    None,
+)
+assert_type(
+    bd_channel_box.show().widget.controller.replace_custom_filter(
+        custom_filter
+    ),
+    None,
+)
+assert_type(
+    bd_channel_box.show().widget.controller.clear_custom_filter(
+        custom_filter.path
+    ),
     None,
 )
 assert_type(

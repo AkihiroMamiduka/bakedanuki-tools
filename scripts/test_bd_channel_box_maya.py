@@ -32,6 +32,7 @@ _PHASE_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PHASE"
 _PREPARE_RESTART_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PREPARE_RESTART"
 _NAME_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_NAME_ONLY"
 _CONNECTIONS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CONNECTIONS_ONLY"
+_CUSTOM_FILTERS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CUSTOM_FILTERS_ONLY"
 _PERSISTED_STEP = 0.5
 _STARTUP_IDLE_COMMAND = (
     "import __main__; "
@@ -165,6 +166,13 @@ class _MayaSmokeSession:
                 self._show,
                 self._inspect,
                 self._inspect_node_name_enter,
+                self._finish,
+            )
+        elif os.environ.get(_CUSTOM_FILTERS_ONLY_VARIABLE) == "1":
+            self._stages = (
+                self._setup_scene,
+                self._show,
+                self._inspect_custom_filters,
                 self._finish,
             )
 
@@ -1569,6 +1577,199 @@ class _MayaSmokeSession:
             raise AssertionError("値モードへの切替でUndo履歴が増えました")
         self._capture("14-values-after-mode-switch.png")
         self.steps.append("return_to_values_preserves_width_step_and_scene")
+
+    def _inspect_custom_filters(self) -> None:
+        """共有JSONの管理画面と、実ノードでの表示・編集を確認する。"""
+        from maya import cmds
+
+        from bd_tools.bd_channel_box.custom_filters import (
+            CustomFilterSelection,
+            normalize_filter_path,
+        )
+        from bd_tools.bd_channel_box.widget import CustomFilterManagerDialog
+        from bd_util.ui import FloatValueStepSpinBox, qt
+
+        widget = self._require_window().widget
+        registry = widget.custom_filter_registry
+        combo = widget.filter_combo
+        if registry.entries or combo.count() != 5:
+            raise AssertionError(
+                "独立profileのフィルター登録が空ではありません"
+            )
+
+        # 共有ファイル2件を隔離した出力先へ作り、個人設定に登録する
+        first_path = self.output / "custom-filter-rig.json"
+        second_path = self.output / "custom-filter-controls.json"
+        _write_json(
+            first_path,
+            {
+                "schema_version": 1,
+                "name": "Rig",
+                "node_types": {
+                    "transform": [
+                        "hiddenWeight",
+                        "weight",
+                        "translate.translateX",
+                    ]
+                },
+            },
+        )
+        _write_json(
+            second_path,
+            {
+                "schema_version": 1,
+                "name": "Controls",
+                "node_types": {"transform": ["mode", "enabled"]},
+            },
+        )
+        paths = (
+            normalize_filter_path(first_path),
+            normalize_filter_path(second_path),
+        )
+        if registry.add_paths((first_path, second_path)) != paths:
+            raise AssertionError("共有JSONを2件登録できません")
+        self._flush_gui()
+        if tuple(entry.path for entry in registry.entries) != paths:
+            raise AssertionError("共有JSONの登録順が保持されません")
+        if tuple(combo.itemText(index) for index in range(5, 7)) != (
+            "Custom: Rig",
+            "Custom: Controls",
+        ):
+            raise AssertionError(
+                "Attribute Filterの末尾に登録順で追加されません"
+            )
+        self.steps.append("register_two_custom_filter_files")
+
+        # 設定メニューから管理画面を表示し、一覧と読込状態を撮影する
+        widget.manage_custom_filters_action.trigger()
+        self._flush_gui()
+        dialog = widget.custom_filter_dialog
+        if (
+            not isinstance(dialog, CustomFilterManagerDialog)
+            or not dialog.isVisible()
+        ):
+            raise AssertionError("カスタムフィルター管理画面が表示されません")
+        items = tuple(dialog.list_widget.item(index) for index in range(2))
+        if dialog.list_widget.count() != 2 or any(
+            item is None for item in items
+        ):
+            raise AssertionError("管理画面の登録件数が不正です")
+        if tuple(item.text() for item in items if item is not None) != (
+            "Rig",
+            "Controls",
+        ):
+            raise AssertionError("管理画面の登録順が不正です")
+        if paths[0] not in dialog.details_label.text():
+            raise AssertionError(
+                "管理画面に共有ファイルのパスが表示されません"
+            )
+        image_path = self.output / "43-custom-filter-manager.png"
+        if not dialog.grab().save(str(image_path)):
+            raise RuntimeError("カスタムフィルター管理画面を撮影できません")
+        self.screenshots.append(str(image_path))
+        self.steps.append("inspect_custom_filter_manager_dialog")
+
+        # 上下移動とチェック操作を画面から行い、ComboBoxへ即時反映させる
+        dialog.list_widget.setCurrentRow(1)
+        dialog.move_up_button.click()
+        self._flush_gui()
+        if tuple(entry.path for entry in registry.entries) != paths[::-1]:
+            raise AssertionError("管理画面の上移動が登録順へ反映されません")
+        if tuple(combo.itemText(index) for index in range(5, 7)) != (
+            "Custom: Controls",
+            "Custom: Rig",
+        ):
+            raise AssertionError("上移動がAttribute Filterへ反映されません")
+        dialog.move_down_button.click()
+        self._flush_gui()
+        if tuple(entry.path for entry in registry.entries) != paths:
+            raise AssertionError("管理画面の下移動が登録順へ反映されません")
+        dialog.list_widget.setCurrentRow(0)
+        first_item = dialog.list_widget.item(0)
+        if first_item is None:
+            raise AssertionError("管理画面の先頭登録がありません")
+        first_item.setCheckState(qt.Qt.CheckState.Unchecked)
+        self._flush_gui()
+        if registry.entries[0].enabled or combo.count() != 6:
+            raise AssertionError(
+                "OFFにした登録がAttribute Filterから消えません"
+            )
+        restored_item = dialog.list_widget.item(0)
+        if restored_item is None:
+            raise AssertionError("OFFにした登録を再選択できません")
+        restored_item.setCheckState(qt.Qt.CheckState.Checked)
+        self._flush_gui()
+        if not registry.entries[0].enabled or combo.count() != 7:
+            raise AssertionError(
+                "ONに戻した登録がAttribute Filterへ戻りません"
+            )
+        dialog.close()
+        self._flush_gui()
+        self.steps.append("move_and_toggle_custom_filter_registrations")
+
+        # 非表示属性もJSONの指定順で値編集行へ出し、表示フラグを変えない
+        selection: object = combo.itemData(5)
+        if not isinstance(selection, CustomFilterSelection):
+            raise AssertionError("カスタム項目の識別子が見つかりません")
+        if selection.path != paths[0]:
+            raise AssertionError("登録順とComboBoxの選択対象が異なります")
+        self._select_combo_item(combo, 5)
+        expected_rows = ("hiddenWeight", "weight", "translate.translateX")
+        if (
+            tuple(row.row.attribute.path for row in widget.row_widgets)
+            != expected_rows
+        ):
+            raise AssertionError("カスタム属性がJSONの順に表示されません")
+        if widget.filter_fallback_label.isVisible():
+            raise AssertionError(
+                "定義済みノード型で代替条件の案内が表示されます"
+            )
+        self._capture("44-custom-filter-hidden-rows.png")
+        cmds.flushUndo()
+        view = self._row("hiddenWeight").editor
+        if not isinstance(view, FloatValueStepSpinBox):
+            raise AssertionError("非表示属性の値入力欄がありません")
+        view.spin_box.setValue(0.5)
+        self._flush_gui()
+        self._assert_values("hiddenWeight", (0.5, 0.5))
+        for node in self.nodes:
+            plug = f"{node}.hiddenWeight"
+            if cmds.getAttr(plug, keyable=True) or cmds.getAttr(
+                plug, channelBox=True
+            ):
+                raise AssertionError("値入力で属性の表示フラグが変わりました")
+        cmds.undo()
+        self._flush_gui()
+        self._assert_values("hiddenWeight", (0.2, 0.6))
+        self.steps.append("edit_hidden_attribute_in_json_order")
+
+        # JSONで未定義のjointでは型の継承をせず既定のvisibleへ戻す
+        other = cmds.createNode("joint", name="bdChannelBoxCustomFallback")
+        cmds.addAttr(
+            other, longName="weight", attributeType="double", keyable=True
+        )
+        cmds.addAttr(other, longName="hiddenWeight", attributeType="double")
+        cmds.select(other, replace=True)
+        self._flush_gui()
+        fallback_rows = {row.row.attribute.path for row in widget.row_widgets}
+        if "weight" not in fallback_rows or "hiddenWeight" in fallback_rows:
+            raise AssertionError(
+                "未定義ノード型のvisibleフォールバックが不正です"
+            )
+        if widget.controller.attribute_filter != selection:
+            raise AssertionError(
+                "ノード変更でカスタムフィルター選択が失われました"
+            )
+        fallback_label = widget.filter_fallback_label
+        if not fallback_label.isVisible() or not all(
+            word in fallback_label.text()
+            for word in ("joint", "keyable + channelbox")
+        ):
+            raise AssertionError(
+                "未定義ノード型の代替条件が画面に示されません"
+            )
+        self._capture("45-custom-filter-undefined-joint.png")
+        self.steps.append("undefined_node_type_uses_visible_fallback")
 
     def _inspect_filters(self) -> None:
         """両モードの絞り込み、選択保持と状態操作後の行の出入りを実UIで確認する。"""
@@ -3516,6 +3717,7 @@ def _launch(
     restart_from: Path | None = None,
     name_only: bool = False,
     connections_only: bool = False,
+    custom_filters_only: bool = False,
 ) -> int:
     """固有の設定と作業ディレクトリを使う検証Maya processを起動する。"""
     repository = Path(__file__).resolve().parents[1]
@@ -3563,6 +3765,9 @@ def _launch(
     environment[_PREPARE_RESTART_VARIABLE] = "1" if prepare_restart else "0"
     environment[_NAME_ONLY_VARIABLE] = "1" if name_only else "0"
     environment[_CONNECTIONS_ONLY_VARIABLE] = "1" if connections_only else "0"
+    environment[_CUSTOM_FILTERS_ONLY_VARIABLE] = (
+        "1" if custom_filters_only else "0"
+    )
     environment["BAKEDANUKI_UTIL_ROOT"] = str(util_root)
     environment["PYTHONPATH"] = os.pathsep.join(
         (
@@ -3659,6 +3864,7 @@ def main() -> int:
     restart_group.add_argument("--restart-from", type=Path)
     restart_group.add_argument("--name-only", action="store_true")
     restart_group.add_argument("--connections-only", action="store_true")
+    restart_group.add_argument("--custom-filters-only", action="store_true")
     arguments = parser.parse_args()
     util_root = arguments.util_root or Path(
         os.environ.get(
@@ -3674,6 +3880,7 @@ def main() -> int:
         restart_from=arguments.restart_from,
         name_only=arguments.name_only,
         connections_only=arguments.connections_only,
+        custom_filters_only=arguments.custom_filters_only,
     )
 
 

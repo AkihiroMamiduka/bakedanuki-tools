@@ -59,7 +59,9 @@ bd_tools/
 
 最初の実装は `bd_tools.bd_channel_box` です。`ui.py` がWindow、`widget.py` が入力行、
 `table.py`が一覧内の属性選択と数値直接入力、`controller.py` が選択ノード・対応属性と
-操作対象を組み立てます。汎用の属性列挙と一括編集はutilへ配置します。
+操作対象を組み立てます。`custom_filters.py`は共有JSONの形式と読込みを、
+`custom_filter_registry.py`はツール固有の登録順・有効状態と個人設定を扱います。
+汎用の属性列挙と一括編集はutilへ配置します。
 bdChannelBoxは `MayaDockableWindowController` を使い、固定workspaceControl IDと
 `bd_tools.bd_channel_box.ui.restore` を維持します。初回は右ドック、close時は完全破棄とし、
 workspace配置の復元・resetはutil、入力と選択監視の終了はtoolsが所有します。
@@ -100,7 +102,9 @@ float値欄とStep欄ではutilの`select_all_on_mouse_focus`を有効にし、�
 既定ではvisibility・translate・rotate・scaleの10属性、残りの指定22属性、
 drawOverride配下、その他の順に安定ソートしてから行を構築します。
 drawOverride内では設定に含めたoverrideEnabledを先頭にし、残りの相対順を維持します。
-両モードと全フィルターで共有し、utilの列挙順とscene内の属性順は変更しません。
+両モードと標準5フィルターで共有し、utilの列挙順とscene内の属性順は変更しません。
+カスタムフィルターではJSONの属性配列順を用い、登録ファイルの順序はComboBoxの
+カスタム項目の順序にだけ適用します。
 通常の値変更では並べ替えや行の再構築を行いません。
 今後対応型を追加するときも、toolsで汎用BindingやViewを複製せずutilを拡張します。
 空の directory は作りません。個別ツール同士の
@@ -172,8 +176,8 @@ enumも同じ責務分担です。実定義の取得と比較用の値型はutil
 複数対象の混在と操作可否、外部変更の監視、表示・ロックごとの一括操作、
 Maya標準Undoへの登録はutilが所有します。値入力不可でもロック解除や表示変更を
 操作できるよう、値用Bindingと状態用Bindingの可否判定を分離します。
-toolsは値編集／表示・ロックのモード、基準属性の表示状態による5種類のフィルターと
-モードごとの選択保持、非表示属性を含む編集対象の選別、
+toolsは値編集／表示・ロックのモード、基準属性の表示状態による5種類の標準フィルターと
+ノード型別のカスタムフィルター、モードごとの選択保持、非表示属性を含む編集対象の選別、
 状態RadioButton・ロックCheckBox、名前の省略表示と共通列幅を所有します。
 フィルターは両モードへ適用し、後続ノードとの対応付けは表示状態で除外しません。
 表示フラグの通知時はQtの次のイベントで再評価し、状態の一括操作中にBindingを破棄しません。

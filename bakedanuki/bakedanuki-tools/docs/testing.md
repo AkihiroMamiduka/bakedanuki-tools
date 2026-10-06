@@ -69,6 +69,18 @@ util側の`tests/maya/ui/test_plugs_value_edits.py`で、複数Bindingをまと�
 tooltip、constraintの入力禁止、Undo／Redo、時刻変更でのSlider終了を確認します。
 同じ検証は通常の全工程にも含みます。
 
+共有カスタムフィルターの管理画面と表示・値入力を検証する場合は、
+独立した`--custom-filters-only`工程を実行します。
+
+```powershell
+& "C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe" -B `
+    scripts/test_bd_channel_box_maya.py --maya-version 2025 --custom-filters-only --timeout 300
+```
+
+検証用の共有JSONを2件作成して登録し、管理画面の一覧・順序変更・ON/OFFと
+Attribute Filterへの反映を確認します。非表示属性をJSONの順に表示して値編集・Undoを行い、
+定義にないjoint型では`keyable + channelbox`へ戻る案内と表示行を確認します。
+
 runnerは別の `maya.exe` を起動し、一時ディレクトリの `MAYA_APP_DIR`、Maya.env探索先、
 project、script pathを使用します。通常のMaya.envを書き換えず、起動済みMayaへ接続しません。
 PythonのuserSetupは読み込まず、検証用sceneで操作した後に専用processを終了します。
@@ -154,6 +166,9 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 - `41-last-selected-reference.png`: 2ノードの元の選択順を保ち、末尾ノードの名前と値を表示した画像。
 - `42-native-reference-0.png`〜`42-native-reference-7.png`: 選択履歴設定のOFF／ONと
   transform・jointの順序変更、再追加、network混在時のMaya標準Channel Boxの実表示。
+- `43-custom-filter-manager.png`: 共有JSONを2件登録した管理画面と読込状態。
+- `44-custom-filter-hidden-rows.png`: カスタム定義の順に並ぶ非表示属性を含む値編集行。
+- `45-custom-filter-undefined-joint.png`: 未定義joint型の代替条件の案内と表示行。
 - `result-restart.json`、`clipboard-original.json`: 別Maya processでのOSクリップボード読取り結果と、
   検証後に復元する元のMIME data。
 - `progress.json`: 実行中の段階と完了済みの操作。
