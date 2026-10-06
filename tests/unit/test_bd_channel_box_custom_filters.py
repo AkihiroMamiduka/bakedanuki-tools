@@ -121,10 +121,6 @@ def test_valid_definition_keeps_order_and_first_duplicate(
             "node_types",
         ),
         (
-            {"schema_version": 1, "name": "Rig", "node_types": {}},
-            "node_types",
-        ),
-        (
             {
                 "schema_version": 1,
                 "name": "Rig",

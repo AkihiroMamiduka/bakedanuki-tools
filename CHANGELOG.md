@@ -7,6 +7,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- bdChannelBoxの管理画面から共有カスタムフィルターJSONを新規作成して自動登録できる。
+  新しい「カスタムフィルター設定」モードで、基準ノード型の属性所属とJSON内の表示順を
+  編集・保存できる。保存前の変更確認と共有ファイルの外部変更検出に対応する。
+  `node_types`が空のJSONも有効になり、既存定義の移行は不要。設定モードはsceneと
+  Undo履歴を変更しない。既存JSONの形式と登録設定はそのまま利用できる。
+
 ### Changed
 
 - bdChannelBoxの通常時間キーへの値入力をMayaのAuto Keyへ連動させ、SDKとAnimation Layerの

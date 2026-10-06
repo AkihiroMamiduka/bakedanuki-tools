@@ -64,7 +64,7 @@ ChannelBinding: TypeAlias = (
     | MayaEnumPlugsBinding
     | MayaStringPlugsBinding
 )
-ChannelBoxMode: TypeAlias = Literal["values", "states"]
+ChannelBoxMode: TypeAlias = Literal["values", "states", "custom_filter_setup"]
 ChannelAttributeFilter: TypeAlias = ScalarAttributeDisplayFilter
 ChannelDisplayFilter: TypeAlias = (
     ChannelAttributeFilter | CustomFilterSelection
@@ -72,6 +72,7 @@ ChannelDisplayFilter: TypeAlias = (
 _DEFAULT_FILTERS: dict[ChannelBoxMode, ChannelAttributeFilter] = {
     "values": "visible",
     "states": "all",
+    "custom_filter_setup": "all",
 }
 
 __all__ = [
@@ -160,12 +161,14 @@ class ChannelBoxController(qt.QObject):
         """表示用状態と、Windowと同じ寿命の監視を初期化する。"""
         super().__init__(parent)
         self.rows: tuple[ChannelRow | ChannelStateRow, ...] = ()
+        self.setup_attributes: tuple[ScalarAttributeInfo, ...] = ()
         self.node_names: tuple[str, ...] = ()
         self.node_ids: tuple[str, ...] = ()
         self._mode: ChannelBoxMode = "values"
         self._filters: dict[ChannelBoxMode, ChannelDisplayFilter] = {
             "values": "visible",
             "states": "all",
+            "custom_filter_setup": "all",
         }
         self._custom_filter_fallback_node_type: str | None = None
         self._disposed = False
@@ -240,13 +243,13 @@ class ChannelBoxController(qt.QObject):
 
     @property
     def mode(self) -> ChannelBoxMode:
-        """値入力または表示・ロック設定の表示モードを返す。"""
+        """値入力・状態設定・共有フィルター設定の表示モードを返す。"""
         return self._mode
 
     def set_mode(self, mode: ChannelBoxMode) -> None:
         """連続編集を終了し、属性を書き換えずに操作する状態を切り替える。"""
-        if mode not in ("values", "states"):
-            raise ValueError("modeにはvaluesまたはstatesを指定してください")
+        if mode not in ("values", "states", "custom_filter_setup"):
+            raise ValueError("未対応の表示モードです")
         if self._disposed or mode == self._mode:
             return
         self._finish_value_edit()
@@ -267,6 +270,10 @@ class ChannelBoxController(qt.QObject):
 
     def set_attribute_filter(self, value: ChannelDisplayFilter) -> None:
         """連続編集を終了し、sceneを変更せず表示対象を絞り込む。"""
+        if self._mode == "custom_filter_setup" and isinstance(
+            value, CustomFilterSelection
+        ):
+            raise ValueError("設定モードでは標準フィルターを指定してください")
         if not isinstance(value, CustomFilterSelection) and value not in (
             "all",
             "visible",
@@ -489,6 +496,25 @@ class ChannelBoxController(qt.QObject):
                     dict.fromkeys(config.ATTRIBUTE_PRIORITY_PATHS)
                 )
             }
+            if self._mode == "custom_filter_setup":
+                if isinstance(effective_filter, CustomFilterSelection):
+                    raise ValueError(
+                        "設定モードでは標準フィルターを使用します"
+                    )
+                # 基準ノードの対応属性だけを提示し、Maya編集用Bindingを作らない
+                self.setup_attributes = tuple(
+                    attribute
+                    for attribute in sorted(
+                        attributes[-1],
+                        key=partial(
+                            _attribute_display_priority, priorities=priorities
+                        ),
+                    )
+                    if matches_scalar_attribute_display_filter(
+                        attribute, effective_filter
+                    )
+                )
+                return ()
             custom_paths: tuple[str, ...] | None = None
             if isinstance(effective_filter, CustomFilterSelection):
                 node_type = cast(str, cmds.nodeType(self.node_names[-1]))
@@ -642,6 +668,7 @@ class ChannelBoxController(qt.QObject):
         """Qtの遅延削除を待たず、すべての入力とMaya監視を終了する。"""
         self._filter_refresh_pending = False
         self._custom_filter_fallback_node_type = None
+        self.setup_attributes = ()
         self.rows_about_to_change.emit()
         if self._active_state_binding is not None:
             self._active_state_binding.dispose()

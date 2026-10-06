@@ -1579,7 +1579,7 @@ class _MayaSmokeSession:
         self.steps.append("return_to_values_preserves_width_step_and_scene")
 
     def _inspect_custom_filters(self) -> None:
-        """共有JSONの管理画面と、実ノードでの表示・編集を確認する。"""
+        """共有JSONの管理・設定画面と、実ノードでの表示・編集を確認する。"""
         from maya import cmds
 
         from bd_tools.bd_channel_box.custom_filters import (
@@ -1770,6 +1770,40 @@ class _MayaSmokeSession:
             )
         self._capture("45-custom-filter-undefined-joint.png")
         self.steps.append("undefined_node_type_uses_visible_fallback")
+
+        # 設定モードで非表示属性をJSONへ登録し、通常表示へ反映する
+        cmds.flushUndo()
+        self._select_combo_item(widget.mode_combo, 2)
+        panel = widget.setup_panel
+        panel.set_target(paths[0])
+        self._flush_gui()
+        if combo.count() != 5 or not panel.isVisible():
+            raise AssertionError("設定モードの表示条件と画面が不正です")
+        candidates = (
+            button
+            for button in panel.findChildren(qt.QRadioButton)
+            if button.toolTip() == "hiddenWeight" and button.text() == "含める"
+        )
+        include = next(candidates, None)
+        if include is None:
+            raise AssertionError("非表示属性の所属ボタンがありません")
+        include.click()
+        panel.candidate_scroll.ensureWidgetVisible(include)
+        self._flush_gui()
+        self._capture("46-custom-filter-setup.png")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("設定モードの選択がUndo履歴を変更しました")
+        panel.save_button.click()
+        self._flush_gui()
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("JSON保存がUndo履歴を変更しました")
+        self._select_combo_item(widget.mode_combo, 0)
+        self._select_combo_item(combo, 5)
+        if "hiddenWeight" not in (
+            row.row.attribute.path for row in widget.row_widgets
+        ):
+            raise AssertionError("保存したjoint型の属性が表示されません")
+        self.steps.append("author_custom_filter_for_joint")
 
     def _inspect_filters(self) -> None:
         """両モードの絞り込み、選択保持と状態操作後の行の出入りを実UIで確認する。"""

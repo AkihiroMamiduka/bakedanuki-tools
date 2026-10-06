@@ -9,6 +9,8 @@ from functools import partial
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
+from maya import cmds
+
 from bd_util import Nodes
 from bd_util.maya.ui import (
     ChannelDisplayState,
@@ -43,7 +45,9 @@ from .controller import (
     ChannelStateRow,
 )
 from .custom_filter_registry import CustomFilterRegistry
-from .custom_filters import CustomFilterSelection
+from .custom_filter_editor import create_custom_filter
+from .custom_filter_setup import CustomFilterSetupPanel
+from .custom_filters import CustomFilterError, CustomFilterSelection
 from .table import ChannelTableView, TableRow
 
 __all__ = [
@@ -1041,6 +1045,8 @@ class _NodeNameLineEdit(StringLineEdit):
 class CustomFilterManagerDialog(qt.QDialog):
     """共有 JSON の登録、表示切替、順序、読込状態を管理する。"""
 
+    created = qt.Signal(str)
+
     def __init__(
         self, registry: CustomFilterRegistry, parent: qt.QWidget
     ) -> None:
@@ -1060,6 +1066,8 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.details_label.setTextInteractionFlags(
             qt.Qt.TextInteractionFlag.TextSelectableByMouse
         )
+        self.new_button = qt.QPushButton("新規作成...", self)
+        self.new_button.setObjectName("createCustomFilterButton")
         self.add_button = qt.QPushButton("追加...", self)
         self.remove_button = qt.QPushButton("削除", self)
         self.move_up_button = qt.QPushButton("上へ", self)
@@ -1068,6 +1076,7 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.reload_all_button = qt.QPushButton("すべて再読込", self)
         buttons = qt.QHBoxLayout()
         for button in (
+            self.new_button,
             self.add_button,
             self.remove_button,
             self.move_up_button,
@@ -1086,6 +1095,7 @@ class CustomFilterManagerDialog(qt.QDialog):
 
         self.list_widget.itemChanged.connect(self._change_enabled)
         self.list_widget.currentRowChanged.connect(self._sync_selection)
+        self.new_button.clicked.connect(self._create_file)
         self.add_button.clicked.connect(self._add_files)
         self.remove_button.clicked.connect(self._remove_selected)
         self.move_up_button.clicked.connect(self._move_up)
@@ -1202,6 +1212,53 @@ class CustomFilterManagerDialog(qt.QDialog):
             self._select_path(added[-1])
             self._sync_selection()
 
+    def _create_file(self) -> None:
+        """名前と保存先を選び、空の定義を作成して末尾へ登録する。"""
+        dialog = qt.QDialog(self)
+        dialog.setWindowTitle("カスタムフィルターを新規作成")
+        name_edit = qt.QLineEdit(dialog)
+        name_edit.setObjectName("newCustomFilterName")
+        buttons = qt.QDialogButtonBox(
+            qt.QDialogButtonBox.StandardButton.Ok
+            | qt.QDialogButtonBox.StandardButton.Cancel,
+            dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout = qt.QVBoxLayout(dialog)
+        layout.addWidget(qt.QLabel("フィルター名:", dialog))
+        layout.addWidget(name_edit)
+        layout.addWidget(buttons)
+        accepted = dialog.exec() == qt.QDialog.DialogCode.Accepted
+        name = name_edit.text() if accepted else ""
+        dialog.deleteLater()
+        if not accepted:
+            return
+        if not name.strip():
+            qt.QMessageBox.warning(
+                self, "作成できません", "名前を入力してください。"
+            )
+            return
+        path, _selected_filter = qt.QFileDialog.getSaveFileName(
+            self,
+            "カスタムフィルター定義の保存先",
+            f"{name.strip()}.json",
+            "JSON ファイル (*.json)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".json"):
+            path += ".json"
+        try:
+            created = create_custom_filter(path, name)
+        except CustomFilterError as error:
+            qt.QMessageBox.warning(self, "作成できません", str(error))
+            return
+        added = self.registry.add_paths((created,))
+        if added:
+            self._select_path(added[-1])
+            self.created.emit(added[-1])
+
     def _remove_selected(self) -> None:
         """選択した登録だけを削除する。"""
         path = self._selected_path()
@@ -1236,6 +1293,7 @@ class ChannelBoxWidget(qt.QWidget):
         self.custom_filter_registry = CustomFilterRegistry(self)
         self.custom_filter_dialog: CustomFilterManagerDialog | None = None
         self._active_custom_filters: dict[str, CustomFilterSelection] = {}
+        self._setup_mode_active = False
         self.step_profile = FloatStepProfile(self)
         self._changing_steps = False
         self.row_widgets: tuple[
@@ -1362,6 +1420,9 @@ class ChannelBoxWidget(qt.QWidget):
         self.mode_combo = qt.QComboBox(self)
         self.mode_combo.addItem("値編集", "values")
         self.mode_combo.addItem("表示・ロック", "states")
+        self.mode_combo.addItem(
+            "カスタムフィルター設定", "custom_filter_setup"
+        )
         self.mode_combo.setAccessibleName("表示モード")
         self.filter_combo = qt.QComboBox(self)
         self._populate_filter_combo()
@@ -1457,6 +1518,10 @@ class ChannelBoxWidget(qt.QWidget):
         self.message_label.hide()
         self.table_view = ChannelTableView(self)
         self.scroll_area = self.table_view
+        self.setup_panel = CustomFilterSetupPanel(
+            self.custom_filter_registry, self
+        )
+        self.setup_panel.hide()
         self.empty_label = qt.QLabel("", self)
         self.empty_label.setWordWrap(True)
         layout = qt.QVBoxLayout(self)
@@ -1468,6 +1533,7 @@ class ChannelBoxWidget(qt.QWidget):
         layout.addLayout(self.header_layout)
         layout.addWidget(self.empty_label)
         layout.addWidget(self.scroll_area, 1)
+        layout.addWidget(self.setup_panel, 1)
         layout.addWidget(self.message_label)
 
         # 選択・表示更新と、ユーザーによる値変更の経路を分離する
@@ -1496,6 +1562,7 @@ class ChannelBoxWidget(qt.QWidget):
         self.custom_filter_registry.changed.connect(
             self._custom_filters_changed
         )
+        self.setup_panel.error_occurred.connect(self._show_error)
         self.controller.time_changed.connect(self._interrupt_value_input)
         self.mode_combo.currentIndexChanged.connect(self._change_mode)
         self.filter_combo.currentIndexChanged.connect(self._change_filter)
@@ -1559,15 +1626,16 @@ class ChannelBoxWidget(qt.QWidget):
                 label += f" ({Path(entry.path).name}, {index})"
             selection = CustomFilterSelection(entry.path, definition)
             active[entry.path] = selection
-            self.filter_combo.addItem(label, selection)
-            self.filter_combo.setItemData(
-                self.filter_combo.count() - 1,
-                "定義ファイル: "
-                + entry.path
-                + "\n基準ノードの型に定義がない場合は、"
-                "keyable + channelbox へ戻ります。",
-                qt.Qt.ItemDataRole.ToolTipRole,
-            )
+            if not self._setup_mode_active:
+                self.filter_combo.addItem(label, selection)
+                self.filter_combo.setItemData(
+                    self.filter_combo.count() - 1,
+                    "定義ファイル: "
+                    + entry.path
+                    + "\n基準ノードの型に定義がない場合は、"
+                    "keyable + channelbox へ戻ります。",
+                    qt.Qt.ItemDataRole.ToolTipRole,
+                )
         self._active_custom_filters = active
 
     def _custom_filters_changed(self) -> None:
@@ -1594,10 +1662,23 @@ class ChannelBoxWidget(qt.QWidget):
             dialog = CustomFilterManagerDialog(
                 self.custom_filter_registry, self
             )
+            dialog.created.connect(self._edit_created_filter)
             self.custom_filter_dialog = dialog
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
+
+    def _edit_created_filter(self, path: str) -> None:
+        """新規定義を作成したら設定モードで編集対象にする。"""
+        if self.controller.mode != "custom_filter_setup":
+            self.controller.set_mode("custom_filter_setup")
+        self.setup_panel.set_target(path)
+        if (
+            self.custom_filter_dialog is not None
+            and self.setup_panel.target_combo.currentData() == path
+        ):
+            self.custom_filter_dialog.hide()
+            self.activateWindow()
 
     def _set_wheel_editing_without_focus(self, enabled: bool) -> None:
         """表示中の全値入力行へ、メニューで選んだホイール方針を反映する。"""
@@ -1630,7 +1711,9 @@ class ChannelBoxWidget(qt.QWidget):
 
     def _sync_search_visibility(self) -> None:
         """検索欄を表示方針へ揃え、見えない検索条件を無効化する。"""
-        visible = self._search_should_be_visible()
+        visible = (
+            not self._setup_mode_active and self._search_should_be_visible()
+        )
         self.search_label.setVisible(visible)
         self.search_edit.setVisible(visible)
         self._search_timer.stop()
@@ -1674,8 +1757,18 @@ class ChannelBoxWidget(qt.QWidget):
 
     def _change_mode(self, index: int) -> None:
         """編集中の値を通常のフォーカス移動で確定してから表示を切り替える。"""
+        mode = self.mode_combo.itemData(index)
+        if mode not in ("values", "states", "custom_filter_setup"):
+            return
+        if (
+            self.controller.mode == "custom_filter_setup"
+            and mode != "custom_filter_setup"
+            and not self.setup_panel.confirm_leave()
+        ):
+            self._sync_mode()
+            return
         self._prepare_view_change()
-        self.controller.set_mode("states" if index == 1 else "values")
+        self.controller.set_mode(mode)
 
     def _change_filter(self, index: int) -> None:
         """編集中の値を確定し、現在のモードのフィルターを切り替える。"""
@@ -1704,13 +1797,27 @@ class ChannelBoxWidget(qt.QWidget):
 
     def _sync_mode(self) -> None:
         """controllerからのモード変更を属性へ入力せず表示へ反映する。"""
+        setup = self.controller.mode == "custom_filter_setup"
+        self._setup_mode_active = setup
         blocked = self.mode_combo.blockSignals(True)
         try:
             self.mode_combo.setCurrentIndex(
-                1 if self.controller.mode == "states" else 0
+                self.mode_combo.findData(self.controller.mode)
             )
         finally:
             self.mode_combo.blockSignals(blocked)
+        self.header_label.setVisible(not setup)
+        if setup:
+            self.selection_count_label.hide()
+        self.table_view.setVisible(not setup)
+        self.empty_label.setVisible(not setup)
+        self.setup_panel.setVisible(setup)
+        blocked = self.filter_combo.blockSignals(True)
+        try:
+            self._populate_filter_combo()
+        finally:
+            self.filter_combo.blockSignals(blocked)
+        self._sync_filter()
 
     def _sync_filter(self) -> None:
         """モードごとのフィルター選択を再入力せずComboBoxへ反映する。"""
@@ -2278,6 +2385,13 @@ class ChannelBoxWidget(qt.QWidget):
 
     def _prepare_edit_menu(self) -> None:
         """現在のnode・行選択・clipboardに合わせて編集メニューを準備する。"""
+        if self.controller.mode == "custom_filter_setup":
+            self.copy_all_values_action.setEnabled(False)
+            self.copy_selected_values_action.setEnabled(False)
+            self.paste_selected_values_action.setEnabled(False)
+            for action in self.paste_copied_values_actions.values():
+                action.setEnabled(False)
+            return
         has_nodes = bool(self.controller.node_names)
         has_value_selection = self.controller.mode == "values" and bool(
             self.table_view.selected_keys()
@@ -2502,6 +2616,25 @@ class ChannelBoxWidget(qt.QWidget):
             widget.hide()
         self.row_widgets = ()
         names = self.controller.node_names
+        if self.controller.mode == "custom_filter_setup":
+            self._dispose_node_name_editor()
+            self.header_label.hide()
+            self.selection_count_label.hide()
+            self.table_view.set_rows([])
+            self._table_node_ids = self.controller.node_ids
+            node_name = self.controller.representative_node_name
+            node_type = (
+                cast(str, cmds.nodeType(node_name))
+                if node_name is not None
+                else None
+            )
+            self.setup_panel.set_node(
+                node_name, node_type, self.controller.setup_attributes
+            )
+            self.filter_fallback_label.hide()
+            self.empty_label.hide()
+            self._prepare_edit_menu()
+            return
         self._sync_node_name_editor()
         widgets: list[AttributeRowWidget | AttributeStateRowWidget] = []
         try:

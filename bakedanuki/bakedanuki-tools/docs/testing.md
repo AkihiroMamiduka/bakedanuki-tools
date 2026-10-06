@@ -80,6 +80,10 @@ tooltip、constraintの入力禁止、Undo／Redo、時刻変更でのSlider終�
 検証用の共有JSONを2件作成して登録し、管理画面の一覧・順序変更・ON/OFFと
 Attribute Filterへの反映を確認します。非表示属性をJSONの順に表示して値編集・Undoを行い、
 定義にないjoint型では`keyable + channelbox`へ戻る案内と表示行を確認します。
+設定モードは`tests/maya/test_bd_channel_box_custom_filters.py`で標準5条件、非表示属性の
+JSON登録、保存後のCustom表示、sceneとUndo履歴の不変を確認します。
+JSONの新規作成、型・属性順の保持、空定義と未定義型、外部更新時の上書き防止は
+`tests/unit/test_bd_channel_box_custom_filter_editor.py`で確認します。
 
 runnerは別の `maya.exe` を起動し、一時ディレクトリの `MAYA_APP_DIR`、Maya.env探索先、
 project、script pathを使用します。通常のMaya.envを書き換えず、起動済みMayaへ接続しません。
@@ -169,6 +173,7 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 - `43-custom-filter-manager.png`: 共有JSONを2件登録した管理画面と読込状態。
 - `44-custom-filter-hidden-rows.png`: カスタム定義の順に並ぶ非表示属性を含む値編集行。
 - `45-custom-filter-undefined-joint.png`: 未定義joint型の代替条件の案内と表示行。
+- `46-custom-filter-setup.png`: 設定モードの編集対象、属性2択、表示順、保存操作。
 - `result-restart.json`、`clipboard-original.json`: 別Maya processでのOSクリップボード読取り結果と、
   検証後に復元する元のMIME data。
 - `progress.json`: 実行中の段階と完了済みの操作。

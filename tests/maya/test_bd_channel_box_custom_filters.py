@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import cast
@@ -15,6 +16,7 @@ from bd_util.maya.ui import settings as maya_settings
 from bd_util.ui import qt
 
 from bd_tools.bd_channel_box.controller import ChannelBoxMode, ChannelRow
+from bd_tools.bd_channel_box.custom_filter_editor import create_custom_filter
 from bd_tools.bd_channel_box.custom_filters import (
     CustomFilterDefinition,
     CustomFilterSelection,
@@ -126,6 +128,127 @@ def test_custom_filter_uses_json_order_and_edits_hidden_scalar(
     cmds.undo()
     _events()
     assert cmds.getAttr(f"{node}.hiddenB") == 0.0
+
+
+def test_setup_mode_saves_hidden_attribute_without_scene_edit(
+    editor: ChannelBoxWidget, tmp_path: Path
+) -> None:
+    """設定モードの2択と保存がJSONのみを更新し、通常表示へ反映する。"""
+    node = cmds.createNode("transform", name="setupBase")
+    cmds.addAttr(node, longName="hiddenRig", attributeType="double")
+    cmds.select(node, replace=True)
+    _events()
+    path = tmp_path / "setup-rig.json"
+    create_custom_filter(path, "Rig")
+    editor.custom_filter_registry.add_paths((str(path),))
+    cmds.flushUndo()
+
+    editor.mode_combo.setCurrentIndex(2)
+    _events()
+    panel = editor.setup_panel
+    panel.set_target(str(path))
+    _events()
+    assert editor.filter_combo.count() == 5
+    assert editor.controller.mode == "custom_filter_setup"
+    assert not editor.header_label.isVisible()
+    assert "transform 型" in panel.node_label.text()
+    editor.filter_combo.setCurrentIndex(editor.filter_combo.findData("hidden"))
+    _events()
+    assert "hiddenRig" in (
+        attribute.path for attribute in editor.controller.setup_attributes
+    )
+    assert "translate.translateX" not in (
+        attribute.path for attribute in editor.controller.setup_attributes
+    )
+    editor.filter_combo.setCurrentIndex(editor.filter_combo.findData("all"))
+    _events()
+    find_buttons = cast(
+        Callable[[type[qt.QRadioButton]], list[qt.QRadioButton]],
+        getattr(panel, "findChildren"),
+    )
+    include = next(
+        button
+        for button in find_buttons(qt.QRadioButton)
+        if button.toolTip() == "hiddenRig" and button.text() == "含める"
+    )
+    include.click()
+    _events()
+    assert json.loads(path.read_text(encoding="utf-8"))["node_types"] == {}
+    assert panel.draft is not None and panel.draft.is_dirty
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    panel.save_button.click()
+    _events()
+    assert json.loads(path.read_text(encoding="utf-8"))["node_types"] == {
+        "transform": ["hiddenRig"]
+    }
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    editor.mode_combo.setCurrentIndex(0)
+    _events()
+    index = next(
+        index
+        for index in range(editor.filter_combo.count())
+        if editor.filter_combo.itemText(index) == "Custom: Rig"
+    )
+    editor.filter_combo.setCurrentIndex(index)
+    _events()
+    assert _paths(editor) == ("hiddenRig",)
+    editor.mode_combo.setCurrentIndex(2)
+    editor.mode_combo.setCurrentIndex(0)
+    _events()
+    assert editor.filter_combo.currentText() == "Custom: Rig"
+
+
+def test_manager_creates_and_selects_new_filter(
+    editor: ChannelBoxWidget,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """管理画面の新規作成が登録末尾と設定モードの対象に反映する。"""
+    path = tmp_path / "new-rig.json"
+
+    def choose_path(*_args: object) -> tuple[str, str]:
+        """保存ダイアログから検証用の新規pathを返す。"""
+        return str(path), "JSON ファイル (*.json)"
+
+    def accept_name() -> None:
+        """名前入力ダイアログへ値を入力して確定する。"""
+        active_modal = cast(
+            Callable[[], qt.QWidget | None],
+            getattr(qt.QApplication, "activeModalWidget"),
+        )()
+        assert isinstance(active_modal, qt.QDialog)
+        layout = active_modal.layout()
+        assert layout is not None
+        field = layout.itemAt(1).widget()
+        assert isinstance(field, qt.QLineEdit)
+        field.setText("New Rig")
+        active_modal.accept()
+
+    monkeypatch.setattr(qt.QFileDialog, "getSaveFileName", choose_path)
+    editor.manage_custom_filters_action.trigger()
+    manager = editor.custom_filter_dialog
+    assert manager is not None
+    single_shot = cast(
+        Callable[[int, Callable[[], None]], None],
+        getattr(qt.QTimer, "singleShot"),
+    )
+    single_shot(0, accept_name)
+    manager.new_button.click()
+    _events()
+
+    assert path.exists()
+    assert editor.custom_filter_registry.entries[-1].definition is not None
+    assert (
+        editor.custom_filter_registry.entries[-1].definition.name == "New Rig"
+    )
+    assert editor.controller.mode == "custom_filter_setup"
+    assert editor.setup_panel.draft is not None
+    assert (
+        editor.setup_panel.draft.path
+        == editor.custom_filter_registry.entries[-1].path
+    )
 
 
 @pytest.mark.parametrize("mode", ("values", "states"))

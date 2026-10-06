@@ -111,10 +111,8 @@ def _parse_definition(raw: object) -> CustomFilterDefinition:
         raise CustomFilterError("nameに改行や制御文字は使用できません。")
 
     raw_node_types = data["node_types"]
-    if not isinstance(raw_node_types, dict) or not raw_node_types:
-        raise CustomFilterError(
-            "node_typesは空でないオブジェクトにしてください。"
-        )
+    if not isinstance(raw_node_types, dict):
+        raise CustomFilterError("node_typesはオブジェクトにしてください。")
     node_types = cast(dict[str, object], raw_node_types)
     parsed: dict[str, tuple[str, ...]] = {}
 

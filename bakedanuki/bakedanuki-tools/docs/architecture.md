@@ -61,6 +61,8 @@ bd_tools/
 `table.py`が一覧内の属性選択と数値直接入力、`controller.py` が選択ノード・対応属性と
 操作対象を組み立てます。`custom_filters.py`は共有JSONの形式と読込みを、
 `custom_filter_registry.py`はツール固有の登録順・有効状態と個人設定を扱います。
+`custom_filter_editor.py`は共有JSONの作業中データと競合検出・原子的保存を、
+`custom_filter_setup.py`はノード型ごとの属性選択・順序・保存UIを扱います。
 汎用の属性列挙と一括編集はutilへ配置します。
 bdChannelBoxは `MayaDockableWindowController` を使い、固定workspaceControl IDと
 `bd_tools.bd_channel_box.ui.restore` を維持します。初回は右ドック、close時は完全破棄とし、

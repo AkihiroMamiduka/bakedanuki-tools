@@ -3,6 +3,7 @@
 
 from typing import Literal, assert_type
 
+from bd_util.maya.node.inspection import ScalarAttributeInfo
 from bd_util.maya.ui import (
     ChannelDisplayState,
     MayaEditSession,
@@ -32,6 +33,7 @@ from bd_tools.bd_channel_box.custom_filters import (
     CustomFilterDefinition,
     CustomFilterSelection,
 )
+from bd_tools.bd_channel_box.custom_filter_setup import CustomFilterSetupPanel
 from bd_tools.bd_channel_box.widget import (
     AttributeRowWidget,
     AttributeStateRowWidget,
@@ -42,6 +44,11 @@ from bd_tools.bd_channel_box.table import ChannelTableView
 assert_type(bd_channel_box.show(), bd_channel_box.ChannelBoxWindow)
 assert_type(bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
 assert_type(bd_channel_box.show().widget, ChannelBoxWidget)
+assert_type(bd_channel_box.show().widget.setup_panel, CustomFilterSetupPanel)
+assert_type(
+    bd_channel_box.show().widget.controller.setup_attributes,
+    tuple[ScalarAttributeInfo, ...],
+)
 assert_type(bd_channel_box.show().widget.node_name_edit, StringLineEdit | None)
 assert_type(bd_channel_box.show().ui_state, UiStateManager)
 assert_type(bd_channel_box.show().ui_state_tracker, MayaUiStateTracker)
@@ -195,7 +202,8 @@ assert_type(
     None,
 )
 assert_type(
-    bd_channel_box.show().widget.controller.mode, Literal["values", "states"]
+    bd_channel_box.show().widget.controller.mode,
+    Literal["values", "states", "custom_filter_setup"],
 )
 assert_type(bd_channel_box.show().widget.controller.set_mode("states"), None)
 table = bd_channel_box.show().widget.table_view
