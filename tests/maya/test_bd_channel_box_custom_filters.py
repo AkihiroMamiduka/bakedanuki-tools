@@ -17,6 +17,7 @@ from bd_util.ui import qt
 
 from bd_tools.bd_channel_box.controller import ChannelBoxMode, ChannelRow
 from bd_tools.bd_channel_box.custom_filter_editor import create_custom_filter
+from bd_tools.bd_channel_box.custom_filter_setup import CustomFilterSetupPanel
 from bd_tools.bd_channel_box.custom_filters import (
     CustomFilterDefinition,
     CustomFilterSelection,
@@ -49,6 +50,82 @@ def _selection(
 def _paths(editor: ChannelBoxWidget) -> tuple[str, ...]:
     """表示基準ノードから構築された行の正式pathを返す。"""
     return tuple(row.attribute.path for row in editor.controller.rows)
+
+
+def _candidate_label(panel: CustomFilterSetupPanel, path: str) -> qt.QLabel:
+    """正式pathに対応する設定候補の属性名欄を取得する。"""
+    find_labels = cast(
+        Callable[[type[qt.QLabel]], list[qt.QLabel]],
+        getattr(panel, "findChildren"),
+    )
+    return next(
+        label for label in find_labels(qt.QLabel) if label.toolTip() == path
+    )
+
+
+def _candidate_radio(
+    panel: CustomFilterSetupPanel, path: str, included: bool
+) -> qt.QRadioButton:
+    """正式pathと所属方向に対応する候補のラジオを取得する。"""
+    find_radios = cast(
+        Callable[[type[qt.QRadioButton]], list[qt.QRadioButton]],
+        getattr(panel, "findChildren"),
+    )
+    text = "含める" if included else "含めない"
+    return next(
+        radio
+        for radio in find_radios(qt.QRadioButton)
+        if radio.toolTip().splitlines()[0] == path and radio.text() == text
+    )
+
+
+def _mouse_candidate(
+    widget: qt.QWidget,
+    modifiers: qt.Qt.KeyboardModifier = qt.Qt.KeyboardModifier.NoModifier,
+    *,
+    end_global: qt.QPoint | None = None,
+) -> None:
+    """属性名へクリックまたは縦ドラッグ相当のマウス入力を送る。"""
+    start = widget.rect().center()
+    start_global = widget.mapToGlobal(start)
+    events = [
+        (
+            qt.QEvent.Type.MouseButtonPress,
+            start_global,
+            qt.Qt.MouseButton.LeftButton,
+        )
+    ]
+    if end_global is not None:
+        events.append(
+            (
+                qt.QEvent.Type.MouseMove,
+                end_global,
+                qt.Qt.MouseButton.LeftButton,
+            )
+        )
+    events.append(
+        (
+            qt.QEvent.Type.MouseButtonRelease,
+            end_global if end_global is not None else start_global,
+            qt.Qt.MouseButton.NoButton,
+        )
+    )
+    for kind, global_position, buttons in events:
+        button = (
+            qt.Qt.MouseButton.NoButton
+            if kind == qt.QEvent.Type.MouseMove
+            else qt.Qt.MouseButton.LeftButton
+        )
+        event = qt.QtGui.QMouseEvent(
+            kind,
+            qt.QPointF(widget.mapFromGlobal(global_position)),
+            qt.QPointF(global_position),
+            button,
+            buttons,
+            modifiers,
+        )
+        qt.QApplication.sendEvent(widget, event)
+    _events()
 
 
 @pytest.fixture
@@ -169,7 +246,8 @@ def test_setup_mode_saves_hidden_attribute_without_scene_edit(
     include = next(
         button
         for button in find_buttons(qt.QRadioButton)
-        if button.toolTip() == "hiddenRig" and button.text() == "含める"
+        if button.toolTip().splitlines()[0] == "hiddenRig"
+        and button.text() == "含める"
     )
     include.click()
     _events()
@@ -329,6 +407,188 @@ def test_setup_bulk_exclusion_saves_explicit_empty_type(
     editor.filter_combo.setCurrentIndex(index)
     _events()
     assert _paths(editor) == ()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_setup_selected_radio_applies_once_to_selected_attributes(
+    editor: ChannelBoxWidget, tmp_path: Path
+) -> None:
+    """選択中のラジオは選択全体へ、選択外のラジオは一行だけへ適用する。"""
+    node = cmds.createNode("transform", name="selectedSetupBase")
+    for name in ("selectA", "selectB", "selectC", "selectD"):
+        cmds.addAttr(node, longName=name, attributeType="double")
+    cmds.select(node, replace=True)
+    _events()
+    path = tmp_path / "selected-rig.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "Selected Rig",
+                "node_types": {
+                    "transform": ["legacyMissing", "selectA"],
+                    "joint": ["jointOnly"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    source = path.read_bytes()
+    editor.custom_filter_registry.add_paths((str(path),))
+    cmds.flushUndo()
+
+    editor.mode_combo.setCurrentIndex(2)
+    _events()
+    panel = editor.setup_panel
+    panel.set_target(str(path))
+    editor.filter_combo.setCurrentIndex(editor.filter_combo.findData("hidden"))
+    panel.search_edit.setText("select")
+    _events()
+    _mouse_candidate(_candidate_label(panel, "selectA"))
+    _mouse_candidate(
+        _candidate_label(panel, "selectC"),
+        qt.Qt.KeyboardModifier.ControlModifier,
+    )
+    assert panel.selected_candidate_paths() == ("selectA", "selectC")
+    assert panel.draft is not None and not panel.draft.is_dirty
+    assert (
+        "選択中の属性すべて"
+        in _candidate_radio(panel, "selectA", True).toolTip()
+    )
+
+    # 既にONのラジオも選択した別の属性へ適用する
+    _candidate_radio(panel, "selectA", True).click()
+    _events()
+    assert panel.draft.paths("transform") == (
+        "legacyMissing",
+        "selectA",
+        "selectC",
+    )
+    _candidate_radio(panel, "selectB", True).click()
+    _events()
+    assert panel.draft.paths("transform") == (
+        "legacyMissing",
+        "selectA",
+        "selectC",
+        "selectB",
+    )
+    assert panel.selected_candidate_paths() == ("selectA", "selectC")
+    _candidate_radio(panel, "selectA", False).click()
+    _events()
+    assert panel.draft.paths("transform") == ("legacyMissing", "selectB")
+    assert panel.draft.paths("joint") == ("jointOnly",)
+    assert path.read_bytes() == source
+    assert cmds.getAttr(f"{node}.selectA") == 0.0
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    panel.search_edit.setText("selectA")
+    _events()
+    assert panel.selected_candidate_paths() == ("selectA",)
+    panel.search_edit.clear()
+    _events()
+    assert panel.selected_candidate_paths() == ("selectA",)
+    _mouse_candidate(panel.candidate_container)
+    assert panel.selected_candidate_paths() == ()
+
+
+def test_setup_name_range_drag_and_offscreen_selection(
+    editor: ChannelBoxWidget, tmp_path: Path
+) -> None:
+    """名前の範囲ドラッグと画面外への選択保持を確認する。"""
+    node = cmds.createNode("transform", name="rangeSetupBase")
+    paths = tuple(f"range{index:02d}" for index in range(30))
+    for name in paths:
+        cmds.addAttr(node, longName=name, attributeType="double")
+    cmds.select(node, replace=True)
+    _events()
+    path = tmp_path / "range-rig.json"
+    create_custom_filter(path, "Range Rig")
+    editor.custom_filter_registry.add_paths((str(path),))
+    cmds.flushUndo()
+
+    editor.resize(640, 800)
+    editor.mode_combo.setCurrentIndex(2)
+    _events()
+    panel = editor.setup_panel
+    panel.set_target(str(path))
+    editor.filter_combo.setCurrentIndex(editor.filter_combo.findData("hidden"))
+    panel.search_edit.setText("range")
+    panel.list_splitter.setSizes([80, 500])
+    _events()
+    _mouse_candidate(_candidate_label(panel, "range01"))
+    _mouse_candidate(
+        _candidate_label(panel, "range03"),
+        qt.Qt.KeyboardModifier.ShiftModifier,
+    )
+    assert panel.selected_candidate_paths() == paths[1:4]
+    _mouse_candidate(
+        _candidate_label(panel, "range02"),
+        qt.Qt.KeyboardModifier.ControlModifier,
+    )
+    assert panel.selected_candidate_paths() == ("range01", "range03")
+
+    start = _candidate_label(panel, "range00")
+    end = _candidate_label(panel, "range04")
+    _mouse_candidate(start, end_global=end.mapToGlobal(end.rect().center()))
+    assert panel.selected_candidate_paths() == paths[:5]
+    assert panel.draft is not None and not panel.draft.is_dirty
+    assert panel.candidate_scroll.verticalScrollBar().maximum() > 0
+
+    _mouse_candidate(_candidate_label(panel, "range00"))
+    last = _candidate_label(panel, "range29")
+    panel.candidate_scroll.ensureWidgetVisible(last)
+    _events()
+    _mouse_candidate(last, qt.Qt.KeyboardModifier.ControlModifier)
+    assert panel.selected_candidate_paths() == ("range00", "range29")
+    first = _candidate_label(panel, "range00")
+    panel.candidate_scroll.ensureWidgetVisible(first)
+    _events()
+    _candidate_radio(panel, "range00", True).click()
+    _events()
+    assert panel.draft.paths("transform") == ("range00", "range29")
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    editor.filter_combo.setCurrentIndex(
+        editor.filter_combo.findData("keyable")
+    )
+    _events()
+    assert panel.selected_candidate_paths() == ()
+    editor.filter_combo.setCurrentIndex(editor.filter_combo.findData("hidden"))
+    _events()
+    assert panel.selected_candidate_paths() == ()
+
+
+def test_setup_checked_exclude_is_noop_for_undefined_type(
+    editor: ChannelBoxWidget, tmp_path: Path
+) -> None:
+    """未定義型で既に除外中のラジオを押しても空定義を作らない。"""
+    node = cmds.createNode("transform", name="undefinedSetupBase")
+    cmds.addAttr(node, longName="onlyHidden", attributeType="double")
+    cmds.select(node, replace=True)
+    _events()
+    path = tmp_path / "undefined-rig.json"
+    create_custom_filter(path, "Undefined Rig")
+    editor.custom_filter_registry.add_paths((str(path),))
+    cmds.flushUndo()
+
+    editor.mode_combo.setCurrentIndex(2)
+    _events()
+    panel = editor.setup_panel
+    panel.set_target(str(path))
+    editor.filter_combo.setCurrentIndex(editor.filter_combo.findData("hidden"))
+    panel.search_edit.setText("onlyHidden")
+    _events()
+    _mouse_candidate(_candidate_label(panel, "onlyHidden"))
+    _candidate_radio(panel, "onlyHidden", False).click()
+    _events()
+    assert panel.draft is not None
+    assert not panel.draft.has_node_type("transform")
+    assert not panel.draft.is_dirty
+    _candidate_radio(panel, "onlyHidden", True).click()
+    _candidate_radio(panel, "onlyHidden", False).click()
+    _events()
+    assert panel.draft.has_node_type("transform")
+    assert panel.draft.paths("transform") == ()
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 

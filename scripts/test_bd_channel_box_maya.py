@@ -1749,6 +1749,8 @@ class _MayaSmokeSession:
             other, longName="weight", attributeType="double", keyable=True
         )
         cmds.addAttr(other, longName="hiddenWeight", attributeType="double")
+        for name in ("multiHiddenA", "multiHiddenB"):
+            cmds.addAttr(other, longName=name, attributeType="double")
         cmds.select(other, replace=True)
         self._flush_gui()
         fallback_rows = {row.row.attribute.path for row in widget.row_widgets}
@@ -1782,7 +1784,8 @@ class _MayaSmokeSession:
         candidates = (
             button
             for button in panel.findChildren(qt.QRadioButton)
-            if button.toolTip() == "hiddenWeight" and button.text() == "含める"
+            if button.toolTip().splitlines()[0] == "hiddenWeight"
+            and button.text() == "含める"
         )
         include = next(candidates, None)
         if include is None:
@@ -1829,6 +1832,81 @@ class _MayaSmokeSession:
         if not cmds.undoInfo(query=True, undoQueueEmpty=True):
             raise AssertionError("候補の一括操作がUndo履歴を変更しました")
         self.steps.append("resize_and_batch_custom_filter_setup")
+
+        # 属性名の縦ドラッグと選択行へのラジオ一括適用を実画面で確かめる
+        panel.search_edit.setText("multiHidden")
+        self._flush_gui()
+        label_a = next(
+            (
+                label
+                for label in panel.findChildren(qt.QLabel)
+                if label.toolTip() == "multiHiddenA"
+            ),
+            None,
+        )
+        label_b = next(
+            (
+                label
+                for label in panel.findChildren(qt.QLabel)
+                if label.toolTip() == "multiHiddenB"
+            ),
+            None,
+        )
+        if label_a is None or label_b is None:
+            raise AssertionError("複数選択用の属性名が見つかりません")
+        panel.candidate_scroll.ensureWidgetVisible(label_a)
+        self._flush_gui()
+        start = label_a.rect().center()
+        end = label_a.mapFromGlobal(
+            label_b.mapToGlobal(label_b.rect().center())
+        )
+        self._mouse(label_a, qt.QEvent.Type.MouseButtonPress, start)
+        self._mouse(label_a, qt.QEvent.Type.MouseMove, end)
+        self._mouse(label_a, qt.QEvent.Type.MouseButtonRelease, end)
+        self._flush_gui()
+        if panel.selected_candidate_paths() != (
+            "multiHiddenA",
+            "multiHiddenB",
+        ):
+            raise AssertionError("属性名のドラッグで範囲を選択できません")
+        include_many = next(
+            (
+                button
+                for button in panel.findChildren(qt.QRadioButton)
+                if button.toolTip().splitlines()[0] == "multiHiddenA"
+                and button.text() == "含める"
+            ),
+            None,
+        )
+        exclude_many = next(
+            (
+                button
+                for button in panel.findChildren(qt.QRadioButton)
+                if button.toolTip().splitlines()[0] == "multiHiddenA"
+                and button.text() == "含めない"
+            ),
+            None,
+        )
+        if include_many is None or exclude_many is None:
+            raise AssertionError("複数選択用の所属ボタンが見つかりません")
+        include_many.click()
+        self._flush_gui()
+        if panel.draft is None or panel.draft.paths("joint") != (
+            "hiddenWeight",
+            "multiHiddenA",
+            "multiHiddenB",
+        ):
+            raise AssertionError("選択した属性を一度で追加できません")
+        self._capture("48-custom-filter-selection.png")
+        exclude_many.click()
+        self._flush_gui()
+        if panel.draft is None or panel.draft.paths("joint") != (
+            "hiddenWeight",
+        ):
+            raise AssertionError("選択した属性を一度で除外できません")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("複数選択と所属変更がUndo履歴を変更しました")
+        self.steps.append("select_and_toggle_custom_filter_candidates")
 
         panel.save_button.click()
         self._flush_gui()

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import cast
@@ -15,6 +17,19 @@ from .custom_filter_registry import CustomFilterRegistry
 from .custom_filters import CustomFilterError, normalize_filter_path
 
 __all__ = ["CustomFilterSetupPanel"]
+
+
+@dataclass(frozen=True)
+class _CandidateRow:
+    """候補属性の操作部品と選択色を戻すための元の配色。"""
+
+    attribute: ScalarAttributeInfo
+    widget: qt.QWidget
+    label: qt.QLabel
+    include: qt.QRadioButton
+    exclude: qt.QRadioButton
+    palette: qt.QPalette
+    fill_background: bool
 
 
 class CustomFilterSetupPanel(qt.QWidget):
@@ -33,14 +48,17 @@ class CustomFilterSetupPanel(qt.QWidget):
         self._node_name: str | None = None
         self._node_type: str | None = None
         self._attributes: tuple[ScalarAttributeInfo, ...] = ()
-        self._candidate_rows: list[
-            tuple[
-                ScalarAttributeInfo,
-                qt.QWidget,
-                qt.QRadioButton,
-                qt.QRadioButton,
-            ]
-        ] = []
+        self._candidate_rows: list[_CandidateRow] = []
+        self._candidate_rows_by_path: dict[str, _CandidateRow] = {}
+        self._candidate_selection_targets: dict[qt.QObject, str] = {}
+        self._selected_candidate_paths: set[str] = set()
+        self._selection_anchor: str | None = None
+        self._selection_press_path: str | None = None
+        self._selection_press_position = qt.QPoint()
+        self._selection_dragging = False
+        self._selection_drag_base: set[str] = set()
+        self._selection_drag_paths: tuple[str, ...] = ()
+        self._selection_drag_bottoms: tuple[int, ...] = ()
         self._search_tokens: tuple[str, ...] = ()
 
         self.target_label = qt.QLabel("編集するフィルター:", self)
@@ -104,6 +122,8 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.candidate_layout.setSpacing(2)
         self.candidate_layout.addStretch(1)
         self.candidate_scroll.setWidget(self.candidate_container)
+        self.candidate_container.installEventFilter(self)
+        self.candidate_scroll.viewport().installEventFilter(self)
 
         grid = qt.QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
@@ -232,6 +252,7 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def _load_target(self, path: str | None) -> None:
         """保存済みJSONから新しい作業中データを取得する。"""
+        self._clear_candidate_selection()
         try:
             self.draft = CustomFilterDraft(path) if path is not None else None
         except CustomFilterError as error:
@@ -265,6 +286,8 @@ class CustomFilterSetupPanel(qt.QWidget):
         attributes: tuple[ScalarAttributeInfo, ...],
     ) -> None:
         """選択末尾のノード型と現在の標準表示条件の候補を示す。"""
+        if node_name != self._node_name or node_type != self._node_type:
+            self._clear_candidate_selection()
         self._node_name = node_name
         self._node_type = node_type
         self._attributes = attributes
@@ -273,9 +296,20 @@ class CustomFilterSetupPanel(qt.QWidget):
     def set_search_tokens(self, tokens: tuple[str, ...]) -> None:
         """現在の属性候補へ検索語を適用し、所属は変更しない。"""
         self._search_tokens = tokens
-        for attribute, row, _include, _exclude in self._candidate_rows:
-            row.setVisible(self._matches_search(attribute))
+        for candidate in self._candidate_rows:
+            candidate.widget.setVisible(
+                self._matches_search(candidate.attribute)
+            )
+        self._set_selected_candidate_paths(self._selected_candidate_paths)
         self._sync_buttons()
+
+    def selected_candidate_paths(self) -> tuple[str, ...]:
+        """現在見える候補の選択を属性の表示順で返す。"""
+        return tuple(
+            path
+            for path in self._candidate_paths()
+            if path in self._selected_candidate_paths
+        )
 
     def _matches_search(self, attribute: ScalarAttributeInfo) -> bool:
         """属性候補が現在の検索語すべてに一致するか返す。"""
@@ -293,6 +327,199 @@ class CustomFilterSetupPanel(qt.QWidget):
             for attribute in self._attributes
             if self._matches_search(attribute)
         )
+
+    def _paint_candidate_selection(self, paths: set[str]) -> None:
+        """変更した属性名の選択色とラジオの適用範囲だけを更新する。"""
+        for path in paths:
+            candidate = self._candidate_rows_by_path.get(path)
+            if candidate is None or not qt.isValid(candidate.label):
+                continue
+            selected = path in self._selected_candidate_paths
+            palette = qt.QPalette(candidate.palette)
+            if selected:
+                highlight = self.palette().color(
+                    qt.QPalette.ColorRole.Highlight
+                )
+                text = self.palette().color(
+                    qt.QPalette.ColorRole.HighlightedText
+                )
+                for role in (
+                    qt.QPalette.ColorRole.Window,
+                    qt.QPalette.ColorRole.Base,
+                ):
+                    palette.setColor(role, highlight)
+                for role in (
+                    qt.QPalette.ColorRole.WindowText,
+                    qt.QPalette.ColorRole.Text,
+                ):
+                    palette.setColor(role, text)
+            candidate.label.setPalette(palette)
+            candidate.label.setAutoFillBackground(
+                selected or candidate.fill_background
+            )
+            candidate.label.update()
+            scope = (
+                "選択中の属性すべてに適用（スクロール外も対象）"
+                if selected
+                else "この属性だけに適用"
+            )
+            tooltip = f"{path}\n{scope}"
+            candidate.include.setToolTip(tooltip)
+            candidate.exclude.setToolTip(tooltip)
+
+    def _set_selected_candidate_paths(self, paths: set[str]) -> None:
+        """現在見える正式pathだけを選択し、差分の名前欄を描き直す。"""
+        visible = set(self._candidate_paths())
+        selected = paths & visible
+        changed = self._selected_candidate_paths ^ selected
+        self._selected_candidate_paths = selected
+        if self._selection_anchor not in visible:
+            self._selection_anchor = None
+        self._paint_candidate_selection(changed)
+
+    def _clear_candidate_selection(self) -> None:
+        """候補選択と進行中のドラッグを解除する。"""
+        self._finish_candidate_drag()
+        self._set_selected_candidate_paths(set())
+        self._selection_anchor = None
+
+    def _press_candidate_name(
+        self, path: str, event: qt.QtGui.QMouseEvent
+    ) -> None:
+        """属性名の単独・Ctrl・Shift選択とドラッグ起点を記録する。"""
+        visible = self._candidate_paths()
+        if path not in visible:
+            return
+        previous = set(self._selected_candidate_paths)
+        modifiers = event.modifiers()
+        if modifiers & qt.Qt.KeyboardModifier.ShiftModifier:
+            anchor = (
+                self._selection_anchor
+                if self._selection_anchor in visible
+                else path
+            )
+            start, end = sorted((visible.index(anchor), visible.index(path)))
+            selected = set(visible[start : end + 1])
+            if modifiers & qt.Qt.KeyboardModifier.ControlModifier:
+                selected.update(previous)
+            self._selection_anchor = anchor
+        elif modifiers & qt.Qt.KeyboardModifier.ControlModifier:
+            selected = previous ^ {path}
+            self._selection_anchor = path
+        else:
+            selected = {path}
+            self._selection_anchor = path
+        self._set_selected_candidate_paths(selected)
+        self._selection_press_path = path
+        self._selection_press_position = event.globalPosition().toPoint()
+        self._selection_drag_base = (
+            previous
+            if modifiers & qt.Qt.KeyboardModifier.ControlModifier
+            else set()
+        )
+        application = qt.QApplication.instance()
+        if application is not None:
+            application.installEventFilter(self)
+
+    def _drag_candidate_selection(self, event: qt.QtGui.QMouseEvent) -> bool:
+        """属性名からの縦ドラッグを見えている候補の範囲選択にする。"""
+        pressed = self._selection_press_path
+        if pressed is None:
+            return False
+        if not event.buttons() & qt.Qt.MouseButton.LeftButton:
+            self._finish_candidate_drag()
+            return False
+        global_position = event.globalPosition().toPoint()
+        if not self._selection_dragging:
+            distance = (
+                global_position - self._selection_press_position
+            ).manhattanLength()
+            if distance < qt.QApplication.startDragDistance():
+                return False
+            self._selection_dragging = True
+            candidates = tuple(
+                candidate
+                for candidate in self._candidate_rows
+                if self._matches_search(candidate.attribute)
+            )
+            self._selection_drag_paths = tuple(
+                candidate.attribute.path for candidate in candidates
+            )
+            self._selection_drag_bottoms = tuple(
+                candidate.widget.geometry().bottom()
+                for candidate in candidates
+            )
+        if pressed not in self._selection_drag_paths:
+            self._finish_candidate_drag()
+            return False
+
+        # 画面外への移動は表示中の端で止め、隠れた候補を巻き込まない
+        viewport = self.candidate_scroll.viewport()
+        top = self.candidate_container.mapFromGlobal(
+            viewport.mapToGlobal(qt.QPoint(0, 0))
+        ).y()
+        bottom = top + viewport.height() - 1
+        local_y = self.candidate_container.mapFromGlobal(global_position).y()
+        target_y = max(top, min(bottom, local_y))
+        target = min(
+            bisect_left(self._selection_drag_bottoms, target_y),
+            len(self._selection_drag_paths) - 1,
+        )
+        origin = self._selection_drag_paths.index(pressed)
+        start, end = sorted((origin, target))
+        selected = set(self._selection_drag_base)
+        selected.update(self._selection_drag_paths[start : end + 1])
+        self._set_selected_candidate_paths(selected)
+        return True
+
+    def _finish_candidate_drag(self) -> None:
+        """クリック・ドラッグ終了時にアプリ全体の一時監視を解除する。"""
+        application = qt.QApplication.instance()
+        if application is not None:
+            application.removeEventFilter(self)
+        self._selection_press_path = None
+        self._selection_dragging = False
+        self._selection_drag_base.clear()
+        self._selection_drag_paths = ()
+        self._selection_drag_bottoms = ()
+
+    def eventFilter(self, watched: qt.QObject, event: qt.QEvent) -> bool:
+        """属性名と余白の選択操作だけを受け、ラジオ操作を妨げない。"""
+        kind = event.type()
+        if isinstance(event, qt.QtGui.QMouseEvent):
+            if kind == qt.QEvent.Type.MouseMove:
+                if self._drag_candidate_selection(event):
+                    return True
+            elif kind == qt.QEvent.Type.MouseButtonRelease:
+                dragging = self._selection_dragging
+                self._finish_candidate_drag()
+                if dragging:
+                    return True
+            elif (
+                kind == qt.QEvent.Type.MouseButtonPress
+                and event.button() == qt.Qt.MouseButton.LeftButton
+            ):
+                path = self._candidate_selection_targets.get(watched)
+                if path is not None:
+                    self._press_candidate_name(path, event)
+                    return True
+                if watched in (
+                    self.candidate_container,
+                    self.candidate_scroll.viewport(),
+                ):
+                    self._clear_candidate_selection()
+        elif kind in (
+            qt.QEvent.Type.ApplicationDeactivate,
+            qt.QEvent.Type.WindowDeactivate,
+            qt.QEvent.Type.UngrabMouse,
+        ):
+            self._finish_candidate_drag()
+        return super().eventFilter(watched, event)
+
+    def hideEvent(self, event: qt.QtGui.QHideEvent) -> None:
+        """設定モードを隠す際にドラッグの一時監視を解除する。"""
+        self._finish_candidate_drag()
+        super().hideEvent(event)
 
     def _change_search(self, text: str) -> None:
         """検索欄の空白区切り語を候補行だけへ反映する。"""
@@ -377,13 +604,20 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def _refresh_candidates(self) -> None:
         """属性行を作り直し、Maya値・表示状態への操作を接続しない。"""
-        for _attribute, row, _include, _exclude in self._candidate_rows:
-            self.candidate_layout.removeWidget(row)
-            row.deleteLater()
+        self._finish_candidate_drag()
+        for candidate in self._candidate_rows:
+            candidate.widget.removeEventFilter(self)
+            candidate.label.removeEventFilter(self)
+            self.candidate_layout.removeWidget(candidate.widget)
+            candidate.widget.deleteLater()
         self._candidate_rows.clear()
+        self._candidate_rows_by_path.clear()
+        self._candidate_selection_targets.clear()
         draft = self.draft
         node_type = self._node_type
         if draft is None or node_type is None:
+            self._selected_candidate_paths.clear()
+            self._selection_anchor = None
             return
         included_paths = {path.lstrip(".") for path in draft.paths(node_type)}
         for attribute in self._attributes:
@@ -402,14 +636,15 @@ class CustomFilterSetupPanel(qt.QWidget):
             exclude = qt.QRadioButton("含めない", row)
             include.setObjectName("customFilterInclude")
             exclude.setObjectName("customFilterExclude")
-            include.setToolTip(attribute.path)
-            exclude.setToolTip(attribute.path)
             if attribute.path in included_paths:
                 include.setChecked(True)
             else:
                 exclude.setChecked(True)
-            include.toggled.connect(
-                partial(self._change_included, attribute.path)
+            include.clicked.connect(
+                partial(self._apply_radio_included, attribute.path, True)
+            )
+            exclude.clicked.connect(
+                partial(self._apply_radio_included, attribute.path, False)
             )
             layout.addWidget(label, 1)
             layout.addWidget(include)
@@ -417,45 +652,72 @@ class CustomFilterSetupPanel(qt.QWidget):
             self.candidate_layout.insertWidget(
                 self.candidate_layout.count() - 1, row
             )
-            self._candidate_rows.append((attribute, row, include, exclude))
+            candidate = _CandidateRow(
+                attribute,
+                row,
+                label,
+                include,
+                exclude,
+                qt.QPalette(label.palette()),
+                label.autoFillBackground(),
+            )
+            self._candidate_rows.append(candidate)
+            self._candidate_rows_by_path[attribute.path] = candidate
+            for target in (row, label):
+                self._candidate_selection_targets[target] = attribute.path
+                target.installEventFilter(self)
         self.set_search_tokens(self._search_tokens)
+        self._paint_candidate_selection(
+            {candidate.attribute.path for candidate in self._candidate_rows}
+        )
 
-    def _change_included(self, path: str, included: bool) -> None:
-        """属性の2択をJSONの作業中データだけへ反映する。"""
+    def _apply_radio_included(
+        self, path: str, included: bool, _checked: bool = False
+    ) -> None:
+        """選択中の行なら選択全体、それ以外なら一行だけ所属を変える。"""
         draft = self.draft
         node_type = self._node_type
         if draft is None or node_type is None:
             return
-        draft.set_included(node_type, path, included)
-        self._refresh_order()
-        self._refresh_status()
+        paths = (
+            self.selected_candidate_paths()
+            if path in self._selected_candidate_paths
+            else (path,)
+        )
+        current = {item.lstrip(".") for item in draft.paths(node_type)}
+        if not any((item in current) != included for item in paths):
+            return
+        self._set_paths_included(paths, included)
 
-    def _apply_bulk_included(self, included: bool) -> None:
-        """現在候補の所属を一括変更し、行と表示順を一度ずつ更新する。"""
+    def _set_paths_included(
+        self, paths: tuple[str, ...], included: bool
+    ) -> None:
+        """指定候補だけを一度で変更し、radioと表示順を一度ずつ同期する。"""
         draft = self.draft
         node_type = self._node_type
-        paths = self._candidate_paths()
         if draft is None or node_type is None or not paths:
             return
-
-        # 候補外pathを保持したまま、検索結果だけを作業中の定義へ反映する
         draft.set_many_included(node_type, paths, included)
-        targets = set(paths)
         self.candidate_container.setUpdatesEnabled(False)
         try:
-            for attribute, _row, include, exclude in self._candidate_rows:
-                if attribute.path not in targets:
+            for path in paths:
+                candidate = self._candidate_rows_by_path.get(path)
+                if candidate is None:
                     continue
-                blocked = include.blockSignals(True)
-                try:
-                    (include if included else exclude).setChecked(True)
-                finally:
-                    include.blockSignals(blocked)
+                (
+                    candidate.include if included else candidate.exclude
+                ).setChecked(True)
         finally:
             self.candidate_container.setUpdatesEnabled(True)
         self._refresh_order()
         self._refresh_status()
         self._sync_buttons()
+
+    def _apply_bulk_included(self, included: bool) -> None:
+        """現在候補の所属を一括変更し、行と表示順を一度ずつ更新する。"""
+        paths = self._candidate_paths()
+        # 候補外pathを保持したまま、検索結果だけを作業中の定義へ反映する
+        self._set_paths_included(paths, included)
 
     def _move_selected(self, offset: int) -> None:
         """選択したpathをJSONの表示順で一段移動する。"""

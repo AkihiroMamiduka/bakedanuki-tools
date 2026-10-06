@@ -46,6 +46,10 @@ assert_type(bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
 assert_type(bd_channel_box.show().widget, ChannelBoxWidget)
 assert_type(bd_channel_box.show().widget.setup_panel, CustomFilterSetupPanel)
 assert_type(
+    bd_channel_box.show().widget.setup_panel.selected_candidate_paths(),
+    tuple[str, ...],
+)
+assert_type(
     bd_channel_box.show().widget.controller.setup_attributes,
     tuple[ScalarAttributeInfo, ...],
 )
