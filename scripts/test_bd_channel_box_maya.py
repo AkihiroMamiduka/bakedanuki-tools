@@ -1793,6 +1793,43 @@ class _MayaSmokeSession:
         self._capture("46-custom-filter-setup.png")
         if not cmds.undoInfo(query=True, undoQueueEmpty=True):
             raise AssertionError("設定モードの選択がUndo履歴を変更しました")
+
+        # 分割バーと候補一括操作を実画面で確かめる
+        splitter = panel.list_splitter
+        if splitter.orientation() != qt.Qt.Orientation.Vertical:
+            raise AssertionError("表示順と候補の分割方向が縦ではありません")
+        splitter.setSizes([300, 80])
+        self._flush_gui()
+        order_large = splitter.sizes()
+        splitter.setSizes([80, 300])
+        self._flush_gui()
+        candidates_large = splitter.sizes()
+        if not (
+            order_large[0] > candidates_large[0]
+            and order_large[1] < candidates_large[1]
+        ):
+            raise AssertionError("分割バーで一覧の表示範囲を変更できません")
+        panel.search_edit.setText("hiddenWeight")
+        self._flush_gui()
+        panel.exclude_all_button.click()
+        self._flush_gui()
+        if panel.draft is None or panel.draft.paths("joint"):
+            raise AssertionError(
+                "候補の一括除外が作業中の定義へ反映されません"
+            )
+        panel.include_all_button.click()
+        self._flush_gui()
+        if panel.draft is None or panel.draft.paths("joint") != (
+            "hiddenWeight",
+        ):
+            raise AssertionError(
+                "候補の一括追加が作業中の定義へ反映されません"
+            )
+        self._capture("47-custom-filter-batch.png")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("候補の一括操作がUndo履歴を変更しました")
+        self.steps.append("resize_and_batch_custom_filter_setup")
+
         panel.save_button.click()
         self._flush_gui()
         if not cmds.undoInfo(query=True, undoQueueEmpty=True):

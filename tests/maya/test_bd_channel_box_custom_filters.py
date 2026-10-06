@@ -200,6 +200,138 @@ def test_setup_mode_saves_hidden_attribute_without_scene_edit(
     assert editor.filter_combo.currentText() == "Custom: Rig"
 
 
+def test_setup_splitter_and_bulk_actions_use_filtered_candidates(
+    editor: ChannelBoxWidget, tmp_path: Path
+) -> None:
+    """分割幅と検索候補の一括操作をUIから確認し、候補外の定義を守る。"""
+    node = cmds.createNode("transform", name="bulkSetupBase")
+    batch_paths = tuple(f"batch{index:02d}" for index in range(30))
+    for path in (*batch_paths, "hiddenOther"):
+        cmds.addAttr(node, longName=path, attributeType="double")
+    cmds.select(node, replace=True)
+    _events()
+    path = tmp_path / "bulk-rig.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "Bulk Rig",
+                "node_types": {
+                    "transform": ["legacyMissing", "hiddenOther", "batch20"],
+                    "joint": ["jointOnly"],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    original_json = path.read_bytes()
+    editor.custom_filter_registry.add_paths((str(path),))
+    cmds.flushUndo()
+
+    editor.resize(640, 800)
+    editor.mode_combo.setCurrentIndex(2)
+    _events()
+    panel = editor.setup_panel
+    panel.set_target(str(path))
+    editor.filter_combo.setCurrentIndex(editor.filter_combo.findData("hidden"))
+    panel.search_edit.setText("batch")
+    _events()
+
+    assert panel.list_splitter.orientation() == qt.Qt.Orientation.Vertical
+    assert panel.list_splitter.count() == 2
+    panel.list_splitter.setSizes([300, 80])
+    _events()
+    upper_large = panel.list_splitter.sizes()
+    panel.list_splitter.setSizes([80, 300])
+    _events()
+    lower_large = panel.list_splitter.sizes()
+    assert upper_large[0] > lower_large[0]
+    assert upper_large[1] < lower_large[1]
+    assert panel.candidate_scroll.verticalScrollBar().maximum() > 0
+
+    panel.include_all_button.click()
+    _events()
+    assert panel.draft is not None
+    assert panel.draft.paths("transform") == (
+        "legacyMissing",
+        "hiddenOther",
+        "batch20",
+        *(candidate for candidate in batch_paths if candidate != "batch20"),
+    )
+    assert panel.draft.paths("joint") == ("jointOnly",)
+    assert path.read_bytes() == original_json
+    assert cmds.getAttr(f"{node}.batch00") == 0.0
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    panel.exclude_all_button.click()
+    _events()
+    assert panel.draft.paths("transform") == ("legacyMissing", "hiddenOther")
+    assert panel.draft.paths("joint") == ("jointOnly",)
+    assert path.read_bytes() == original_json
+    panel.save_button.click()
+    _events()
+    assert json.loads(path.read_text(encoding="utf-8"))["node_types"] == {
+        "transform": ["legacyMissing", "hiddenOther"],
+        "joint": ["jointOnly"],
+    }
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_setup_bulk_exclusion_saves_explicit_empty_type(
+    editor: ChannelBoxWidget, tmp_path: Path
+) -> None:
+    """候補をすべて除外しても空の型定義を保存し、標準表示へ戻さない。"""
+    node = cmds.createNode("transform", name="emptyBulkBase")
+    cmds.addAttr(node, longName="bulkHidden", attributeType="double")
+    cmds.select(node, replace=True)
+    _events()
+    path = tmp_path / "empty-bulk.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "Empty Bulk",
+                "node_types": {"transform": ["bulkHidden"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    editor.custom_filter_registry.add_paths((str(path),))
+    cmds.flushUndo()
+
+    editor.mode_combo.setCurrentIndex(2)
+    _events()
+    panel = editor.setup_panel
+    panel.set_target(str(path))
+    editor.filter_combo.setCurrentIndex(editor.filter_combo.findData("hidden"))
+    panel.search_edit.setText("bulkHidden")
+    _events()
+    panel.exclude_all_button.click()
+    _events()
+    assert panel.draft is not None
+    assert panel.draft.has_node_type("transform")
+    assert panel.draft.paths("transform") == ()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    panel.save_button.click()
+    _events()
+    assert json.loads(path.read_text(encoding="utf-8"))["node_types"] == {
+        "transform": []
+    }
+    editor.mode_combo.setCurrentIndex(0)
+    _events()
+    index = next(
+        index
+        for index in range(editor.filter_combo.count())
+        if editor.filter_combo.itemText(index) == "Custom: Empty Bulk"
+    )
+    editor.filter_combo.setCurrentIndex(index)
+    _events()
+    assert _paths(editor) == ()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
 def test_manager_creates_and_selects_new_filter(
     editor: ChannelBoxWidget,
     tmp_path: Path,

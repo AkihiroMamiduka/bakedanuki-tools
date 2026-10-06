@@ -132,6 +132,101 @@ def test_reverting_first_inclusion_restores_undefined_type(
     assert not draft.is_dirty
 
 
+def test_batch_include_preserves_order_other_types_and_missing_paths(
+    tmp_path: Path,
+) -> None:
+    """一括追加は既存順を保持し、重複候補を入力順で一度だけ追加する。"""
+    path = tmp_path / "rig.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "Rig",
+                "node_types": {
+                    "joint": [".visibility", "oldRigSetting"],
+                    "transform": ["translate.translateX"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    draft = CustomFilterDraft(path)
+    draft.set_many_included(
+        "joint",
+        (
+            "rigMode",
+            ".visibility",
+            ".rigMode",
+            "translate.translateY",
+            "translate.translateY",
+        ),
+        True,
+    )
+    draft.save()
+
+    definition = load_custom_filter(path)
+    assert definition.node_types["joint"] == (
+        ".visibility",
+        "oldRigSetting",
+        "rigMode",
+        "translate.translateY",
+    )
+    assert definition.node_types["transform"] == ("translate.translateX",)
+    assert not draft.is_dirty
+
+
+def test_batch_exclude_keeps_missing_paths_and_explicit_empty_type(
+    tmp_path: Path,
+) -> None:
+    """一括除外は候補外を保ち、全件除外なら空配列を明示する。"""
+    path = tmp_path / "rig.json"
+    create_custom_filter(path, "Rig")
+    draft = CustomFilterDraft(path)
+    draft.set_many_included(
+        "joint", (".visibility", "rigMode", "oldRigSetting"), True
+    )
+    draft.set_many_included(
+        "joint", ("visibility", ".rigMode", ".rigMode"), False
+    )
+    assert draft.paths("joint") == ("oldRigSetting",)
+    draft.set_many_included("joint", ("oldRigSetting",), False)
+    assert draft.has_node_type("joint")
+    assert draft.paths("joint") == ()
+    draft.set_included("joint", "visibility", False)
+    assert draft.has_node_type("joint")
+    draft.save()
+    assert load_custom_filter(path).node_types["joint"] == ()
+
+    draft.remove_node_type("joint")
+    draft.save()
+    assert "joint" not in load_custom_filter(path).node_types
+
+
+def test_batch_exclude_undefined_type_creates_empty_definition(
+    tmp_path: Path,
+) -> None:
+    """未定義型を一括除外すると標準条件へ戻さず空配列を作る。"""
+    path = tmp_path / "rig.json"
+    create_custom_filter(path, "Rig")
+    draft = CustomFilterDraft(path)
+    draft.set_many_included("joint", ("visibility",), False)
+    assert draft.has_node_type("joint")
+    assert draft.paths("joint") == ()
+    draft.save()
+    assert load_custom_filter(path).node_types["joint"] == ()
+
+
+def test_batch_empty_input_does_not_define_type(tmp_path: Path) -> None:
+    """候補が空なら一括操作でノード型定義を増やさない。"""
+    path = tmp_path / "rig.json"
+    create_custom_filter(path, "Rig")
+    draft = CustomFilterDraft(path)
+    draft.set_many_included("joint", iter(()), True)
+    draft.set_many_included("joint", iter(()), False)
+    assert not draft.has_node_type("joint")
+    assert not draft.is_dirty
+
+
 def test_external_change_blocks_save(tmp_path: Path) -> None:
     """読込後に別の利用者が書き換えた内容を上書きしない。"""
     path = tmp_path / "rig.json"

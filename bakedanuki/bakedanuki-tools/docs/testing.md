@@ -82,6 +82,10 @@ Attribute Filterへの反映を確認します。非表示属性をJSONの順に
 定義にないjoint型では`keyable + channelbox`へ戻る案内と表示行を確認します。
 設定モードは`tests/maya/test_bd_channel_box_custom_filters.py`で標準5条件、非表示属性の
 JSON登録、保存後のCustom表示、sceneとUndo履歴の不変を確認します。
+表示順と候補の境界を動かした際の両領域の表示、絞り込み候補の一括含める／含めない、
+スクロール外の候補、候補外の既存pathと別ノード型の保持、0件時の空配列も確認します。
+一括操作では保存前に共有JSON・scene・Undoが変わらず、保存後の再読込で反映されることを
+確認します。候補数が多い場合も、各候補の変更ごとに画面全体を再構築しないことを確認します。
 JSONの新規作成、型・属性順の保持、空定義と未定義型、外部更新時の上書き防止は
 `tests/unit/test_bd_channel_box_custom_filter_editor.py`で確認します。
 
@@ -174,6 +178,7 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 - `44-custom-filter-hidden-rows.png`: カスタム定義の順に並ぶ非表示属性を含む値編集行。
 - `45-custom-filter-undefined-joint.png`: 未定義joint型の代替条件の案内と表示行。
 - `46-custom-filter-setup.png`: 設定モードの編集対象、属性2択、表示順、保存操作。
+- `47-custom-filter-batch.png`: 分割バー調整後の設定画面と、検索候補の一括操作。
 - `result-restart.json`、`clipboard-original.json`: 別Maya processでのOSクリップボード読取り結果と、
   検証後に復元する元のMIME data。
 - `progress.json`: 実行中の段階と完了済みの操作。

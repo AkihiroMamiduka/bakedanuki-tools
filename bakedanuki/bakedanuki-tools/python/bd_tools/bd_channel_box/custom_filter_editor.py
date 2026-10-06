@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 
 from .custom_filters import (
@@ -191,6 +192,36 @@ class CustomFilterDraft:
             and node_type not in self._explicit_types
         ):
             del self.node_types[node_type]
+
+    def set_many_included(
+        self, node_type: str, paths: Iterable[str], included: bool
+    ) -> None:
+        """候補の属性を一括変更し、既存順と候補外の定義を維持する。"""
+        # 入力順を保ちながら先頭ドットの表記差をまとめる
+        unique_paths = tuple(
+            dict.fromkeys(_attribute_key(path) for path in paths)
+        )
+        if not unique_paths:
+            return
+
+        if included:
+            current = self.node_types.setdefault(node_type, [])
+            existing = {_attribute_key(path) for path in current}
+            for path in unique_paths:
+                if path not in existing:
+                    current.append(path)
+                    existing.add(path)
+            return
+
+        # 除外後に0件となる型も明示定義として残し、代替表示を停止する
+        excluded = set(unique_paths)
+        current = self.node_types.get(node_type, [])
+        remaining = [
+            path for path in current if _attribute_key(path) not in excluded
+        ]
+        self.node_types[node_type] = remaining
+        if not remaining:
+            self._explicit_types.add(node_type)
 
     def ensure_node_type(self, node_type: str) -> None:
         """属性0件の明示定義を追加して代替表示を停止する。"""

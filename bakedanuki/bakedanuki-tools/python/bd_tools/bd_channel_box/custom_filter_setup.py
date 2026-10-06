@@ -33,7 +33,14 @@ class CustomFilterSetupPanel(qt.QWidget):
         self._node_name: str | None = None
         self._node_type: str | None = None
         self._attributes: tuple[ScalarAttributeInfo, ...] = ()
-        self._candidate_rows: list[tuple[ScalarAttributeInfo, qt.QWidget]] = []
+        self._candidate_rows: list[
+            tuple[
+                ScalarAttributeInfo,
+                qt.QWidget,
+                qt.QRadioButton,
+                qt.QRadioButton,
+            ]
+        ] = []
         self._search_tokens: tuple[str, ...] = ()
 
         self.target_label = qt.QLabel("編集するフィルター:", self)
@@ -56,7 +63,10 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.order_label = qt.QLabel("フィルターの表示順:", self)
         self.order_list = qt.QListWidget(self)
         self.order_list.setObjectName("customFilterSetupOrder")
-        self.order_list.setMaximumHeight(124)
+        self.order_list.setMinimumHeight(28)
+        self.order_list.setSizePolicy(
+            qt.QSizePolicy.Policy.Expanding, qt.QSizePolicy.Policy.Ignored
+        )
         self.up_button = qt.QPushButton("上へ", self)
         self.down_button = qt.QPushButton("下へ", self)
         self.remove_button = qt.QPushButton("除外", self)
@@ -66,8 +76,26 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.save_button.setObjectName("customFilterSetupSave")
         self.discard_button = qt.QPushButton("変更を破棄", self)
         self.candidates_label = qt.QLabel("属性をフィルターに含める:", self)
+        self.include_all_button = qt.QPushButton("候補をすべて含める", self)
+        self.include_all_button.setObjectName(
+            "customFilterIncludeAllCandidates"
+        )
+        self.exclude_all_button = qt.QPushButton("候補をすべて含めない", self)
+        self.exclude_all_button.setObjectName(
+            "customFilterExcludeAllCandidates"
+        )
+        bulk_tooltip = (
+            "現在のAttribute Filterと属性検索に一致する候補全件に適用します。"
+            "スクロール外の候補も対象です。"
+        )
+        self.include_all_button.setToolTip(bulk_tooltip)
+        self.exclude_all_button.setToolTip(bulk_tooltip)
         self.candidate_scroll = qt.QScrollArea(self)
         self.candidate_scroll.setObjectName("customFilterSetupAttributes")
+        self.candidate_scroll.setMinimumHeight(28)
+        self.candidate_scroll.setSizePolicy(
+            qt.QSizePolicy.Policy.Expanding, qt.QSizePolicy.Policy.Ignored
+        )
         self.candidate_scroll.setWidgetResizable(True)
         self.candidate_scroll.setFrameShape(qt.QFrame.Shape.NoFrame)
         self.candidate_container = qt.QWidget(self.candidate_scroll)
@@ -89,6 +117,33 @@ class CustomFilterSetupPanel(qt.QWidget):
         order_buttons = qt.QHBoxLayout()
         for button in (self.up_button, self.down_button, self.remove_button):
             order_buttons.addWidget(button)
+        order_pane = qt.QWidget(self)
+        order_layout = qt.QVBoxLayout(order_pane)
+        order_layout.setContentsMargins(0, 0, 0, 0)
+        order_layout.setSpacing(4)
+        order_layout.addWidget(self.order_label)
+        order_layout.addWidget(self.order_list, 1)
+        order_layout.addLayout(order_buttons)
+        bulk_buttons = qt.QHBoxLayout()
+        bulk_buttons.addWidget(self.include_all_button)
+        bulk_buttons.addWidget(self.exclude_all_button)
+        candidate_pane = qt.QWidget(self)
+        candidate_layout = qt.QVBoxLayout(candidate_pane)
+        candidate_layout.setContentsMargins(0, 0, 0, 0)
+        candidate_layout.setSpacing(4)
+        candidate_layout.addWidget(self.candidates_label)
+        candidate_layout.addLayout(bulk_buttons)
+        candidate_layout.addWidget(self.candidate_scroll, 1)
+        self.list_splitter = qt.QSplitter(qt.Qt.Orientation.Vertical, self)
+        self.list_splitter.setObjectName("customFilterSetupSplitter")
+        self.list_splitter.setChildrenCollapsible(False)
+        # 大量の候補行は境界を離したときだけ再配置する
+        self.list_splitter.setOpaqueResize(False)
+        self.list_splitter.addWidget(order_pane)
+        self.list_splitter.addWidget(candidate_pane)
+        self.list_splitter.setStretchFactor(0, 1)
+        self.list_splitter.setStretchFactor(1, 2)
+        self.list_splitter.setSizes([140, 280])
         type_buttons = qt.QHBoxLayout()
         type_buttons.addWidget(self.define_type_button)
         type_buttons.addWidget(self.clear_type_button)
@@ -101,13 +156,9 @@ class CustomFilterSetupPanel(qt.QWidget):
         layout.addLayout(grid)
         layout.addWidget(self.node_label)
         layout.addWidget(self.status_label)
-        layout.addWidget(self.order_label)
-        layout.addWidget(self.order_list)
-        layout.addLayout(order_buttons)
+        layout.addWidget(self.list_splitter, 1)
         layout.addLayout(type_buttons)
         layout.addLayout(save_buttons)
-        layout.addWidget(self.candidates_label)
-        layout.addWidget(self.candidate_scroll, 1)
 
         self.target_combo.currentIndexChanged.connect(self._change_target)
         self.name_edit.textChanged.connect(self._change_name)
@@ -116,6 +167,12 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.up_button.clicked.connect(partial(self._move_selected, -1))
         self.down_button.clicked.connect(partial(self._move_selected, 1))
         self.remove_button.clicked.connect(self._remove_selected)
+        self.include_all_button.clicked.connect(
+            partial(self._apply_bulk_included, True)
+        )
+        self.exclude_all_button.clicked.connect(
+            partial(self._apply_bulk_included, False)
+        )
         self.define_type_button.clicked.connect(self._define_type)
         self.clear_type_button.clicked.connect(self._clear_type)
         self.save_button.clicked.connect(self.save)
@@ -216,13 +273,26 @@ class CustomFilterSetupPanel(qt.QWidget):
     def set_search_tokens(self, tokens: tuple[str, ...]) -> None:
         """現在の属性候補へ検索語を適用し、所属は変更しない。"""
         self._search_tokens = tokens
-        for attribute, row in self._candidate_rows:
-            searchable = " ".join(
-                (attribute.nice_name, attribute.name, attribute.path)
-            ).casefold()
-            row.setVisible(
-                all(token in searchable for token in self._search_tokens)
-            )
+        for attribute, row, _include, _exclude in self._candidate_rows:
+            row.setVisible(self._matches_search(attribute))
+        self._sync_buttons()
+
+    def _matches_search(self, attribute: ScalarAttributeInfo) -> bool:
+        """属性候補が現在の検索語すべてに一致するか返す。"""
+        if not self._search_tokens:
+            return True
+        searchable = " ".join(
+            (attribute.nice_name, attribute.name, attribute.path)
+        ).casefold()
+        return all(token in searchable for token in self._search_tokens)
+
+    def _candidate_paths(self) -> tuple[str, ...]:
+        """標準フィルターと検索を通過した候補pathを表示順で返す。"""
+        return tuple(
+            attribute.path
+            for attribute in self._attributes
+            if self._matches_search(attribute)
+        )
 
     def _change_search(self, text: str) -> None:
         """検索欄の空白区切り語を候補行だけへ反映する。"""
@@ -307,7 +377,7 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def _refresh_candidates(self) -> None:
         """属性行を作り直し、Maya値・表示状態への操作を接続しない。"""
-        for _attribute, row in self._candidate_rows:
+        for _attribute, row, _include, _exclude in self._candidate_rows:
             self.candidate_layout.removeWidget(row)
             row.deleteLater()
         self._candidate_rows.clear()
@@ -315,6 +385,7 @@ class CustomFilterSetupPanel(qt.QWidget):
         node_type = self._node_type
         if draft is None or node_type is None:
             return
+        included_paths = {path.lstrip(".") for path in draft.paths(node_type)}
         for attribute in self._attributes:
             row = qt.QWidget(self.candidate_container)
             row.setObjectName("customFilterSetupAttributeRow")
@@ -333,7 +404,7 @@ class CustomFilterSetupPanel(qt.QWidget):
             exclude.setObjectName("customFilterExclude")
             include.setToolTip(attribute.path)
             exclude.setToolTip(attribute.path)
-            if draft.is_included(node_type, attribute.path):
+            if attribute.path in included_paths:
                 include.setChecked(True)
             else:
                 exclude.setChecked(True)
@@ -346,7 +417,7 @@ class CustomFilterSetupPanel(qt.QWidget):
             self.candidate_layout.insertWidget(
                 self.candidate_layout.count() - 1, row
             )
-            self._candidate_rows.append((attribute, row))
+            self._candidate_rows.append((attribute, row, include, exclude))
         self.set_search_tokens(self._search_tokens)
 
     def _change_included(self, path: str, included: bool) -> None:
@@ -358,6 +429,33 @@ class CustomFilterSetupPanel(qt.QWidget):
         draft.set_included(node_type, path, included)
         self._refresh_order()
         self._refresh_status()
+
+    def _apply_bulk_included(self, included: bool) -> None:
+        """現在候補の所属を一括変更し、行と表示順を一度ずつ更新する。"""
+        draft = self.draft
+        node_type = self._node_type
+        paths = self._candidate_paths()
+        if draft is None or node_type is None or not paths:
+            return
+
+        # 候補外pathを保持したまま、検索結果だけを作業中の定義へ反映する
+        draft.set_many_included(node_type, paths, included)
+        targets = set(paths)
+        self.candidate_container.setUpdatesEnabled(False)
+        try:
+            for attribute, _row, include, exclude in self._candidate_rows:
+                if attribute.path not in targets:
+                    continue
+                blocked = include.blockSignals(True)
+                try:
+                    (include if included else exclude).setChecked(True)
+                finally:
+                    include.blockSignals(blocked)
+        finally:
+            self.candidate_container.setUpdatesEnabled(True)
+        self._refresh_order()
+        self._refresh_status()
+        self._sync_buttons()
 
     def _move_selected(self, offset: int) -> None:
         """選択したpathをJSONの表示順で一段移動する。"""
@@ -425,6 +523,16 @@ class CustomFilterSetupPanel(qt.QWidget):
         )
         self.save_button.setEnabled(draft is not None and draft.is_dirty)
         self.discard_button.setEnabled(draft is not None and draft.is_dirty)
+        has_candidates = (
+            draft is not None
+            and node_type is not None
+            and any(
+                self._matches_search(attribute)
+                for attribute in self._attributes
+            )
+        )
+        self.include_all_button.setEnabled(has_candidates)
+        self.exclude_all_button.setEnabled(has_candidates)
 
     def save(self) -> bool:
         """共有JSONへ保存し、通常モードの登録定義を再読込する。"""
