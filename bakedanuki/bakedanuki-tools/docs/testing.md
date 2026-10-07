@@ -80,6 +80,8 @@ tooltip、constraintの入力禁止、Undo／Redo、時刻変更でのSlider終�
 検証用の共有JSONを2件作成して登録し、管理画面の一覧・順序変更・ON/OFFと
 Attribute Filterへの反映を確認します。非表示属性をJSONの順に表示して値編集・Undoを行い、
 定義にないjoint型では`keyable + channelbox`へ戻る案内と表示行を確認します。
+同じ工程で設定モードのJSON保存、分割バー、候補の一括操作とドラッグ複数選択、
+表示順一覧の複数選択・上下移動・除外も実画面で確認します。
 設定モードは`tests/maya/test_bd_channel_box_custom_filters.py`で標準5条件、非表示属性の
 JSON登録、保存後のCustom表示、sceneとUndo履歴の不変を確認します。
 表示順と候補の境界を動かした際の両領域の表示、絞り込み候補の一括含める／含めない、

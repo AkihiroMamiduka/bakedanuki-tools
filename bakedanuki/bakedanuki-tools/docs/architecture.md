@@ -117,6 +117,11 @@ drawOverride内では設定に含めたoverrideEnabledを先頭にし、残り�
 選択中の行のラジオ操作は選択したpathを候補の表示順で既存の一括編集へ渡し、
 選択外のラジオはその1件だけを渡します。選択色とtooltipは変更した行だけを更新し、
 行の再構築とJSON書込みを選択中に行いません。
+`CustomFilterDraft`は設定画面の生存中だけ作業中データを保持し、保存時に共有JSONの
+外部変更を確認して書き込みます。登録定義の再読込は保存後に行います。モードと編集対象の
+切替は未保存確認を通しますが、Window終了・配置reset・package reloadの破棄経路は
+確認を通さず作業中データを捨てます。この経路を変更する場合はworkspaceControlの終了、
+配置reset、reloadの各lifecycleとcallbackの解除を併せて検証します。
 通常の値変更では並べ替えや行の再構築を行いません。
 今後対応型を追加するときも、toolsで汎用BindingやViewを複製せずutilを拡張します。
 空の directory は作りません。個別ツール同士の
