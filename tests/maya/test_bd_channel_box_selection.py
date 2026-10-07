@@ -3,12 +3,13 @@
 
 from collections.abc import Callable, Iterator
 from math import isclose
-from typing import Literal, cast
+from typing import Literal, NoReturn, cast
 
 import pytest
 from maya import cmds
 
 from bd_util.maya.ui import (
+    MayaCallbackRegistry,
     MayaScalarValueClipboard,
     MayaScalarValueTransfer,
     capture_scalar_node_values,
@@ -20,6 +21,7 @@ from bd_util.ui import (
     FloatValueStepSpinBox,
     qt,
 )
+import bd_tools.bd_channel_box.controller as controller_module
 from bd_tools.bd_channel_box.controller import ChannelAttributeFilter
 from bd_tools.bd_channel_box.widget import AttributeRowWidget, ChannelBoxWidget
 
@@ -745,6 +747,83 @@ def test_selection_reordering_discards_pending_numeric_input(
     assert cmds.getAttr("multiA.translateY") == 1.0
     assert cmds.getAttr("multiB.translateX") == 9.0
     assert cmds.getAttr("multiB.translateY") == 3.0
+
+
+def test_selection_limit_skips_inspection_and_recovers_in_all_modes(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """50ノード以上では属性取得を止め、全モードで案内と復帰を確認する。"""
+    nodes = tuple(
+        cmds.createNode("network", name=f"selectionLimit{index}")
+        for index in range(51)
+    )
+    expected_message = (
+        "対象ノードが50個以上あります。\n"
+        "多数のノードを対象にすると、処理が重くレスポンスが悪い為、"
+        "bdChannelBoxの表示・編集を休止しています。\n"
+        "49個以下に減らすと再開します。"
+    )
+    cmds.select(*nodes[:49], replace=True)
+    _events()
+    assert not editor.controller.selection_limit_exceeded
+    assert len(editor.controller.node_names) == 49
+    callbacks = cast(
+        MayaCallbackRegistry, getattr(editor.controller, "_nodes")
+    )
+    assert not callbacks.is_disposed
+
+    original_inspect = controller_module.inspect_scalar_attributes
+
+    def reject_inspection(_name: str) -> NoReturn:
+        """上限時の属性取得を検出する。"""
+        raise AssertionError("上限時に属性を取得しました")
+
+    monkeypatch.setattr(
+        controller_module, "inspect_scalar_attributes", reject_inspection
+    )
+    cmds.select(*nodes[:50], replace=True)
+    _events()
+    assert editor.controller.selection_limit_exceeded
+    assert editor.controller.node_names == ()
+    assert editor.controller.node_ids == ()
+    assert editor.controller.rows == ()
+    assert callbacks.is_disposed
+    assert editor.row_widgets == ()
+    assert editor.node_name_edit is None
+    assert editor.empty_label.text() == expected_message
+    assert editor.empty_label.isVisible()
+    assert not editor.table_view.isVisible()
+    assert not editor.copy_all_values_action.isEnabled()
+
+    for mode in ("states", "custom_filter_setup", "values"):
+        editor.controller.set_mode(mode)
+        _events()
+        assert editor.empty_label.text() == expected_message
+        assert editor.empty_label.isVisible()
+        assert not editor.table_view.isVisible()
+        assert not editor.setup_panel.isVisible()
+    editor.refresh()
+    cmds.select(*nodes, replace=True)
+    _events()
+    assert editor.controller.selection_limit_exceeded
+    assert editor.empty_label.text() == expected_message
+
+    monkeypatch.setattr(
+        controller_module, "inspect_scalar_attributes", original_inspect
+    )
+    cmds.select(*nodes[:49], replace=True)
+    _events()
+    assert not editor.controller.selection_limit_exceeded
+    assert len(editor.controller.node_names) == 49
+    assert editor.table_view.isVisible()
+    assert editor.empty_label.text() != expected_message
+
+    cmds.select("multiA", "multiB", replace=True)
+    _events()
+    assert len(editor.controller.node_names) == 2
+    assert editor.row_widgets
+    assert editor.node_name_edit is not None
+    assert editor.copy_all_values_action.isEnabled()
 
 
 @pytest.mark.parametrize("action", ["escape", "selection", "dispose"])

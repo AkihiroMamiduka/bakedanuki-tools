@@ -71,6 +71,12 @@ _NAME_CONFLICT_MESSAGE = (
     "ノード名が外部で変更されました。"
     "Enterで入力名を適用するか、Escapeで取り消してください。"
 )
+_SELECTION_LIMIT_MESSAGE = (
+    "対象ノードが50個以上あります。\n"
+    "多数のノードを対象にすると、処理が重くレスポンスが悪い為、"
+    "bdChannelBoxの表示・編集を休止しています。\n"
+    "49個以下に減らすと再開します。"
+)
 _NAME_IDLE_STYLE = (
     "background-color: palette(window); "
     "color: palette(window-text); "
@@ -1798,6 +1804,7 @@ class ChannelBoxWidget(qt.QWidget):
     def _sync_mode(self) -> None:
         """controllerからのモード変更を属性へ入力せず表示へ反映する。"""
         setup = self.controller.mode == "custom_filter_setup"
+        limited = self.controller.selection_limit_exceeded
         self._setup_mode_active = setup
         blocked = self.mode_combo.blockSignals(True)
         try:
@@ -1806,12 +1813,12 @@ class ChannelBoxWidget(qt.QWidget):
             )
         finally:
             self.mode_combo.blockSignals(blocked)
-        self.header_label.setVisible(not setup)
+        self.header_label.setVisible(not setup and not limited)
         if setup:
             self.selection_count_label.hide()
-        self.table_view.setVisible(not setup)
-        self.empty_label.setVisible(not setup)
-        self.setup_panel.setVisible(setup)
+        self.table_view.setVisible(not setup and not limited)
+        self.empty_label.setVisible(not setup or limited)
+        self.setup_panel.setVisible(setup and not limited)
         blocked = self.filter_combo.blockSignals(True)
         try:
             self._populate_filter_combo()
@@ -2616,7 +2623,23 @@ class ChannelBoxWidget(qt.QWidget):
             widget.hide()
         self.row_widgets = ()
         names = self.controller.node_names
+        if self.controller.selection_limit_exceeded:
+            # 旧対象のViewを消し、どのモードでも上限の理由を表示する
+            self._dispose_node_name_editor()
+            self.header_label.hide()
+            self.table_view.set_rows([], preserve_selection=False)
+            self._table_node_ids = ()
+            self._scroll_anchor = None
+            self.setup_panel.set_node(None, None, ())
+            self.table_view.hide()
+            self.setup_panel.hide()
+            self.filter_fallback_label.hide()
+            self.empty_label.setText(_SELECTION_LIMIT_MESSAGE)
+            self.empty_label.show()
+            self._prepare_edit_menu()
+            return
         if self.controller.mode == "custom_filter_setup":
+            self.setup_panel.show()
             self._dispose_node_name_editor()
             self.header_label.hide()
             self.selection_count_label.hide()
@@ -2635,6 +2658,7 @@ class ChannelBoxWidget(qt.QWidget):
             self.empty_label.hide()
             self._prepare_edit_menu()
             return
+        self.table_view.show()
         self._sync_node_name_editor()
         widgets: list[AttributeRowWidget | AttributeStateRowWidget] = []
         try:
@@ -2869,7 +2893,9 @@ class ChannelBoxWidget(qt.QWidget):
         self, visible_count: int, *, searching: bool
     ) -> None:
         """ノード・表示条件・検索結果の空状態を区別して表示する。"""
-        if not self.controller.node_names:
+        if self.controller.selection_limit_exceeded:
+            message = _SELECTION_LIMIT_MESSAGE
+        elif not self.controller.node_names:
             message = (
                 "Maya ノードを選択すると、入力可能な種類の属性を表示します。"
             )
@@ -2882,7 +2908,13 @@ class ChannelBoxWidget(qt.QWidget):
         else:
             message = ""
         self.empty_label.setText(message)
-        self.empty_label.setVisible(bool(message))
+        self.empty_label.setVisible(
+            bool(message)
+            and (
+                self.controller.selection_limit_exceeded
+                or not self._setup_mode_active
+            )
+        )
 
     def _apply_step_value(
         self, source_key: tuple[str, str], value: float

@@ -28,6 +28,11 @@
 
 ### Changed
 
+- bdChannelBoxは対象objectが50ノード以上の選択で、全モードのノード固有の表示・編集を
+  休止し、理由と49ノード以下への減らし方を画面に表示する。component・plugは数えず、
+  DAG instanceの重複は同一nodeとして扱う。49ノード以下へ戻すと自動再開する。
+  Mayaの選択・scene・Undoと保存設定の移行は不要。対応するutilと同時更新し、
+  `bd_tools.reload_package(reload_util=True)`で反映する。
 - bdChannelBoxの通常時間キーへの値入力をMayaのAuto Keyへ連動させ、SDKとAnimation Layerの
   値入力を許可。Auto Key OFFでは一時値だけを変更し、ONではMayaのレイヤ選択に従って
   既存アニメーションへキーを設定する。SDKはAuto Keyによらず一時値の変更のみ。

@@ -74,6 +74,7 @@ _DEFAULT_FILTERS: dict[ChannelBoxMode, ChannelAttributeFilter] = {
     "states": "all",
     "custom_filter_setup": "all",
 }
+_SELECTION_LIMIT = 50
 
 __all__ = [
     "ChannelBinding",
@@ -164,6 +165,7 @@ class ChannelBoxController(qt.QObject):
         self.setup_attributes: tuple[ScalarAttributeInfo, ...] = ()
         self.node_names: tuple[str, ...] = ()
         self.node_ids: tuple[str, ...] = ()
+        self.selection_limit_exceeded = False
         self._mode: ChannelBoxMode = "values"
         self._filters: dict[ChannelBoxMode, ChannelDisplayFilter] = {
             "values": "visible",
@@ -456,18 +458,30 @@ class ChannelBoxController(qt.QObject):
             return
         self._filter_refresh_pending = False
         try:
-            names = selected_node_names()
-            attributes = tuple(inspect_scalar_attributes(n) for n in names)
-            self._dispose_rows()
-            self.node_names = names
-            self.node_ids = tuple(
-                om.MFnDependencyNode(self._node_object(name)).uuid().asString()
-                for name in names
-            )
-            self._watch_nodes()
-            self.rows = self._create_rows(attributes)
+            names = selected_node_names(limit=_SELECTION_LIMIT)
+            if len(names) >= _SELECTION_LIMIT:
+                # 多数選択では旧対象を解放し、属性取得と行生成を行わない
+                self._dispose_rows()
+                self._nodes.dispose()
+                self.node_names = ()
+                self.node_ids = ()
+                self.selection_limit_exceeded = True
+            else:
+                self.selection_limit_exceeded = False
+                attributes = tuple(inspect_scalar_attributes(n) for n in names)
+                self._dispose_rows()
+                self.node_names = names
+                self.node_ids = tuple(
+                    om.MFnDependencyNode(self._node_object(name))
+                    .uuid()
+                    .asString()
+                    for name in names
+                )
+                self._watch_nodes()
+                self.rows = self._create_rows(attributes)
         except Exception as error:
             self._dispose_rows()
+            self.selection_limit_exceeded = False
             self.error_occurred.emit(str(error))
         self.rows_changed.emit()
 
