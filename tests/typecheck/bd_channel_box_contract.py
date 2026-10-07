@@ -33,6 +33,7 @@ from bd_tools.bd_channel_box.custom_filters import (
     CustomFilterDefinition,
     CustomFilterSelection,
 )
+from bd_tools.bd_channel_box.custom_filter_editor import CustomFilterDraft
 from bd_tools.bd_channel_box.custom_filter_setup import CustomFilterSetupPanel
 from bd_tools.bd_channel_box.widget import (
     AttributeRowWidget,
@@ -45,6 +46,8 @@ assert_type(bd_channel_box.show(), bd_channel_box.ChannelBoxWindow)
 assert_type(bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
 assert_type(bd_channel_box.show().widget, ChannelBoxWidget)
 assert_type(bd_channel_box.show().widget.setup_panel, CustomFilterSetupPanel)
+assert_type(CustomFilterDraft("rig.json").move_many("joint", ("a",), -1), bool)
+assert_type(CustomFilterDraft("rig.json").remove_many("joint", ("a",)), None)
 assert_type(
     bd_channel_box.show().widget.setup_panel.selected_candidate_paths(),
     tuple[str, ...],

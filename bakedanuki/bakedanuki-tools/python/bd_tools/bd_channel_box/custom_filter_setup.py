@@ -81,6 +81,9 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.order_label = qt.QLabel("フィルターの表示順:", self)
         self.order_list = qt.QListWidget(self)
         self.order_list.setObjectName("customFilterSetupOrder")
+        self.order_list.setSelectionMode(
+            qt.QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self.order_list.setMinimumHeight(28)
         self.order_list.setSizePolicy(
             qt.QSizePolicy.Policy.Expanding, qt.QSizePolicy.Policy.Ignored
@@ -183,7 +186,7 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.target_combo.currentIndexChanged.connect(self._change_target)
         self.name_edit.textChanged.connect(self._change_name)
         self.search_edit.textChanged.connect(self._change_search)
-        self.order_list.currentRowChanged.connect(self._sync_buttons)
+        self.order_list.itemSelectionChanged.connect(self._sync_buttons)
         self.up_button.clicked.connect(partial(self._move_selected, -1))
         self.down_button.clicked.connect(partial(self._move_selected, 1))
         self.remove_button.clicked.connect(self._remove_selected)
@@ -253,6 +256,8 @@ class CustomFilterSetupPanel(qt.QWidget):
     def _load_target(self, path: str | None) -> None:
         """保存済みJSONから新しい作業中データを取得する。"""
         self._clear_candidate_selection()
+        self.order_list.clearSelection()
+        self.order_list.setCurrentRow(-1)
         try:
             self.draft = CustomFilterDraft(path) if path is not None else None
         except CustomFilterError as error:
@@ -288,6 +293,8 @@ class CustomFilterSetupPanel(qt.QWidget):
         """選択末尾のノード型と現在の標準表示条件の候補を示す。"""
         if node_name != self._node_name or node_type != self._node_type:
             self._clear_candidate_selection()
+            self.order_list.clearSelection()
+            self.order_list.setCurrentRow(-1)
         self._node_name = node_name
         self._node_type = node_type
         self._attributes = attributes
@@ -566,10 +573,11 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.status_label.setText(message)
 
     def _refresh_order(self) -> None:
-        """現在の型の全登録pathを、ノードにないものも含めて並べる。"""
+        """全登録pathを並べ、複数選択と現在行を正式pathで復元する。"""
         draft = self.draft
         node_type = self._node_type
-        previous = self._selected_order_path()
+        previous = set(self._selected_order_paths())
+        current = self._selected_order_path()
         available = {attribute.path for attribute in self._attributes}
         blocked = self.order_list.blockSignals(True)
         try:
@@ -584,23 +592,39 @@ class CustomFilterSetupPanel(qt.QWidget):
                     item = qt.QListWidgetItem(label, self.order_list)
                     item.setData(qt.Qt.ItemDataRole.UserRole, path)
                     item.setToolTip(path)
-            if previous is not None:
-                for index in range(self.order_list.count()):
-                    item = self.order_list.item(index)
-                    if item.data(qt.Qt.ItemDataRole.UserRole) == previous:
-                        self.order_list.setCurrentRow(index)
-                        break
+            for index in range(self.order_list.count()):
+                item = self.order_list.item(index)
+                if item.data(qt.Qt.ItemDataRole.UserRole) == current:
+                    self.order_list.setCurrentRow(index)
+                    break
+            for index in range(self.order_list.count()):
+                item = self.order_list.item(index)
+                item.setSelected(
+                    item.data(qt.Qt.ItemDataRole.UserRole) in previous
+                )
         finally:
             self.order_list.blockSignals(blocked)
         self._sync_buttons()
 
     def _selected_order_path(self) -> str | None:
-        """表示順一覧で選択した正式pathを返す。"""
+        """表示順一覧の現在行にある正式pathを返す。"""
         item = cast(qt.QListWidgetItem | None, self.order_list.currentItem())
         if item is None:
             return None
         path: object = item.data(qt.Qt.ItemDataRole.UserRole)
         return path if isinstance(path, str) else None
+
+    def _selected_order_paths(self) -> tuple[str, ...]:
+        """表示順一覧で選択した正式pathを現在の並び順で返す。"""
+        paths: list[str] = []
+        for index in range(self.order_list.count()):
+            item = self.order_list.item(index)
+            if not item.isSelected():
+                continue
+            path: object = item.data(qt.Qt.ItemDataRole.UserRole)
+            if isinstance(path, str):
+                paths.append(path)
+        return tuple(paths)
 
     def _refresh_candidates(self) -> None:
         """属性行を作り直し、Maya値・表示状態への操作を接続しない。"""
@@ -720,24 +744,24 @@ class CustomFilterSetupPanel(qt.QWidget):
         self._set_paths_included(paths, included)
 
     def _move_selected(self, offset: int) -> None:
-        """選択したpathをJSONの表示順で一段移動する。"""
+        """選択した全pathをJSONの表示順で同時に一段移動する。"""
         draft = self.draft
         node_type = self._node_type
-        path = self._selected_order_path()
-        if draft is None or node_type is None or path is None:
+        paths = self._selected_order_paths()
+        if draft is None or node_type is None or not paths:
             return
-        if draft.move(node_type, path, offset):
+        if draft.move_many(node_type, paths, offset):
             self._refresh_order()
             self._refresh_status()
 
     def _remove_selected(self) -> None:
-        """現在ノードにないpathも順序一覧から除外できるようにする。"""
+        """ノードにないpathも含め、選択した全pathをまとめて除外する。"""
         draft = self.draft
         node_type = self._node_type
-        path = self._selected_order_path()
-        if draft is None or node_type is None or path is None:
+        paths = self._selected_order_paths()
+        if draft is None or node_type is None or not paths:
             return
-        draft.set_included(node_type, path, False)
+        draft.remove_many(node_type, paths)
         self._refresh_view()
 
     def _define_type(self) -> None:
@@ -761,16 +785,22 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.draft.name = text
         self._refresh_status()
 
-    def _sync_buttons(self, _row: int = -1) -> None:
+    def _sync_buttons(self) -> None:
         """現在の型・選択・未保存状態に応じて操作を有効化する。"""
         draft = self.draft
         node_type = self._node_type
-        row = self.order_list.currentRow()
-        has_order = draft is not None and node_type is not None and row >= 0
+        selected_rows = tuple(
+            index
+            for index in range(self.order_list.count())
+            if self.order_list.item(index).isSelected()
+        )
+        has_order = (
+            draft is not None and node_type is not None and bool(selected_rows)
+        )
         self.name_edit.setEnabled(draft is not None)
-        self.up_button.setEnabled(has_order and row > 0)
+        self.up_button.setEnabled(has_order and selected_rows[0] > 0)
         self.down_button.setEnabled(
-            has_order and row < self.order_list.count() - 1
+            has_order and selected_rows[-1] < self.order_list.count() - 1
         )
         self.remove_button.setEnabled(has_order)
         self.define_type_button.setEnabled(

@@ -128,6 +128,47 @@ def _mouse_candidate(
     _events()
 
 
+def _mouse_order_item(
+    panel: CustomFilterSetupPanel,
+    index: int,
+    modifiers: qt.Qt.KeyboardModifier = qt.Qt.KeyboardModifier.NoModifier,
+) -> None:
+    """表示順一覧の項目を修飾キー付きでクリックする。"""
+    order = panel.order_list
+    item = order.item(index)
+    order.scrollToItem(item)
+    _events()
+    viewport = order.viewport()
+    position = order.visualItemRect(item).center()
+    for kind, buttons in (
+        (qt.QEvent.Type.MouseButtonPress, qt.Qt.MouseButton.LeftButton),
+        (qt.QEvent.Type.MouseButtonRelease, qt.Qt.MouseButton.NoButton),
+    ):
+        event = qt.QtGui.QMouseEvent(
+            kind,
+            qt.QPointF(position),
+            qt.QPointF(viewport.mapToGlobal(position)),
+            qt.Qt.MouseButton.LeftButton,
+            buttons,
+            modifiers,
+        )
+        qt.QApplication.sendEvent(viewport, event)
+    _events()
+
+
+def _selected_order_paths(panel: CustomFilterSetupPanel) -> tuple[str, ...]:
+    """表示順一覧の選択項目を現在の並び順で取得する。"""
+    order = panel.order_list
+    return tuple(
+        path
+        for index in range(order.count())
+        if order.item(index).isSelected()
+        if isinstance(
+            path := order.item(index).data(qt.Qt.ItemDataRole.UserRole), str
+        )
+    )
+
+
 @pytest.fixture
 def editor(
     qt_application: qt.QApplication,
@@ -276,6 +317,120 @@ def test_setup_mode_saves_hidden_attribute_without_scene_edit(
     editor.mode_combo.setCurrentIndex(0)
     _events()
     assert editor.filter_combo.currentText() == "Custom: Rig"
+
+
+def test_setup_order_multi_selection_moves_and_removes_as_one_action(
+    editor: ChannelBoxWidget, tmp_path: Path
+) -> None:
+    """上段の連続・非連続選択を保持して移動し、全選択を除外する。"""
+    node = cmds.createNode("joint", name="multiOrderBase")
+    for name in ("orderA", "orderB", "orderC", "orderD"):
+        cmds.addAttr(node, longName=name, attributeType="double")
+    cmds.select(node, replace=True)
+    _events()
+    path = tmp_path / "order-rig.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "Order Rig",
+                "node_types": {
+                    "joint": [
+                        "missingOld",
+                        "orderA",
+                        "orderB",
+                        "orderC",
+                        "orderD",
+                    ],
+                    "transform": ["other"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    source = path.read_bytes()
+    editor.custom_filter_registry.add_paths((str(path),))
+    cmds.flushUndo()
+
+    editor.mode_combo.setCurrentIndex(2)
+    _events()
+    panel = editor.setup_panel
+    panel.set_target(str(path))
+    _events()
+    assert panel.order_list.selectionMode() == (
+        qt.QAbstractItemView.SelectionMode.ExtendedSelection
+    )
+    _mouse_order_item(panel, 1)
+    assert _selected_order_paths(panel) == ("orderA",)
+    panel.order_list.setFocus()
+    for kind in (qt.QEvent.Type.KeyPress, qt.QEvent.Type.KeyRelease):
+        qt.QApplication.sendEvent(
+            panel.order_list,
+            qt.QtGui.QKeyEvent(
+                kind,
+                qt.Qt.Key.Key_Down,
+                qt.Qt.KeyboardModifier.ShiftModifier,
+            ),
+        )
+    _events()
+    assert _selected_order_paths(panel) == ("orderA", "orderB")
+    _mouse_order_item(panel, 4, qt.Qt.KeyboardModifier.ControlModifier)
+    assert _selected_order_paths(panel) == ("orderA", "orderB", "orderD")
+    assert panel.up_button.isEnabled()
+    assert not panel.down_button.isEnabled()
+
+    panel.up_button.click()
+    _events()
+    assert panel.draft is not None
+    assert panel.draft.paths("joint") == (
+        "orderA",
+        "orderB",
+        "missingOld",
+        "orderD",
+        "orderC",
+    )
+    assert _selected_order_paths(panel) == ("orderA", "orderB", "orderD")
+    assert not panel.up_button.isEnabled()
+    assert panel.down_button.isEnabled()
+    panel.down_button.click()
+    _events()
+    assert panel.draft.paths("joint") == (
+        "missingOld",
+        "orderA",
+        "orderB",
+        "orderC",
+        "orderD",
+    )
+    assert _selected_order_paths(panel) == ("orderA", "orderB", "orderD")
+    assert not panel.down_button.isEnabled()
+    assert not panel.draft.is_dirty
+
+    _mouse_order_item(panel, 4, qt.Qt.KeyboardModifier.ControlModifier)
+    assert _selected_order_paths(panel) == ("orderA", "orderB")
+    panel.remove_button.click()
+    _events()
+    assert panel.draft.paths("joint") == (
+        "missingOld",
+        "orderC",
+        "orderD",
+    )
+    assert _selected_order_paths(panel) == ()
+    _mouse_order_item(panel, 0)
+    _mouse_order_item(panel, 1, qt.Qt.KeyboardModifier.ControlModifier)
+    panel.remove_button.click()
+    _events()
+    assert panel.draft.paths("joint") == ("orderD",)
+    assert panel.draft.paths("transform") == ("other",)
+    assert path.read_bytes() == source
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    panel.save_button.click()
+    _events()
+    assert json.loads(path.read_text(encoding="utf-8"))["node_types"] == {
+        "joint": ["orderD"],
+        "transform": ["other"],
+    }
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_setup_splitter_and_bulk_actions_use_filtered_candidates(

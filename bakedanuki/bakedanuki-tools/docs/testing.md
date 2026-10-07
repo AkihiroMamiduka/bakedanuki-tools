@@ -90,6 +90,10 @@ JSON登録、保存後のCustom表示、sceneとUndo履歴の不変を確認し�
 適用範囲、すでにONのラジオによる一括適用を確認します。スクロール外の選択保持と
 検索・標準フィルターで隠れた選択の解除、未定義型で同じ状態を再選択した際の
 無変更、JSON保存前のscene・Undo不変も確認します。
+上段の表示順一覧ではCtrlクリックとShiftによる範囲選択、連続・非連続選択の同時移動、
+端での操作禁止、
+移動後の選択保持と選択全件の除外を確認します。ノードにないpath、別ノード型の保持、
+保存前後のJSONとscene・Undo履歴も確認します。
 JSONの新規作成、型・属性順の保持、空定義と未定義型、外部更新時の上書き防止は
 `tests/unit/test_bd_channel_box_custom_filter_editor.py`で確認します。
 
@@ -184,6 +188,7 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 - `46-custom-filter-setup.png`: 設定モードの編集対象、属性2択、表示順、保存操作。
 - `47-custom-filter-batch.png`: 分割バー調整後の設定画面と、検索候補の一括操作。
 - `48-custom-filter-selection.png`: 属性名の縦ドラッグによる複数選択と、選択行の所属操作。
+- `49-custom-filter-order-selection.png`: 上段の複数選択と、選択属性の一段移動。
 - `result-restart.json`、`clipboard-original.json`: 別Maya processでのOSクリップボード読取り結果と、
   検証後に復元する元のMIME data。
 - `progress.json`: 実行中の段階と完了済みの操作。

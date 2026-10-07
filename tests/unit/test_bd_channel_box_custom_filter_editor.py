@@ -106,6 +106,88 @@ def test_draft_preserves_other_types_and_json_order(tmp_path: Path) -> None:
     assert not draft.is_dirty
 
 
+def test_move_many_keeps_selected_order_and_stops_at_edges(
+    tmp_path: Path,
+) -> None:
+    """連続・非連続選択を一段動かし、端を含む操作は全件止める。"""
+    path = tmp_path / "rig.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "Rig",
+                "node_types": {
+                    "joint": ["a", "b", "c", "d", "e"],
+                    "transform": ["other"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    draft = CustomFilterDraft(path)
+    assert not draft.move_many("joint", ("a", "c"), -1)
+    assert not draft.move_many("joint", ("b", "e"), 1)
+    assert not draft.move_many("joint", ("missing",), -1)
+    assert draft.paths("joint") == ("a", "b", "c", "d", "e")
+    assert not draft.is_dirty
+
+    assert draft.move_many("joint", (".d", "b", "b"), -1)
+    assert draft.paths("joint") == ("b", "a", "d", "c", "e")
+    assert draft.move_many("joint", ("b", "d"), 1)
+    assert draft.paths("joint") == ("a", "b", "c", "d", "e")
+    assert draft.move_many("joint", ("b", "c"), -1)
+    assert draft.paths("joint") == ("b", "c", "a", "d", "e")
+    assert draft.move_many("joint", ("b", "c"), 1)
+    assert draft.paths("joint") == ("a", "b", "c", "d", "e")
+    assert not draft.is_dirty
+
+    assert draft.move_many("joint", ("a", "c"), 1)
+    draft.save()
+    assert load_custom_filter(path).node_types["joint"] == (
+        "b",
+        "a",
+        "d",
+        "c",
+        "e",
+    )
+    assert load_custom_filter(path).node_types["transform"] == ("other",)
+
+
+def test_remove_many_keeps_explicit_empty_and_restores_new_type(
+    tmp_path: Path,
+) -> None:
+    """一括除外は明示型の空配列と未確定型の取消を区別する。"""
+    path = tmp_path / "rig.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "Rig",
+                "node_types": {
+                    "joint": [".visibility", "rigMode"],
+                    "transform": ["other"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    draft = CustomFilterDraft(path)
+    draft.remove_many("joint", ("visibility", "rigMode", "missing"))
+    assert draft.has_node_type("joint")
+    assert draft.paths("joint") == ()
+    assert draft.paths("transform") == ("other",)
+    draft.save()
+    assert load_custom_filter(path).node_types["joint"] == ()
+
+    fresh = tmp_path / "fresh.json"
+    create_custom_filter(fresh, "Fresh")
+    uncommitted = CustomFilterDraft(fresh)
+    uncommitted.set_included("joint", "rigMode", True)
+    uncommitted.remove_many("joint", ("rigMode",))
+    assert not uncommitted.has_node_type("joint")
+    assert not uncommitted.is_dirty
+
+
 def test_empty_type_differs_from_missing_type(tmp_path: Path) -> None:
     """明示した空配列と型未定義を往復保存できる。"""
     path = tmp_path / "rig.json"

@@ -63,6 +63,8 @@ bd_tools/
 `custom_filter_registry.py`はツール固有の登録順・有効状態と個人設定を扱います。
 `custom_filter_editor.py`は共有JSONの作業中データと競合検出・原子的保存を、
 `custom_filter_setup.py`はノード型ごとの属性選択・順序・保存UIを扱います。
+表示順一覧の複数選択はsetup UIが保持し、選択全件の移動・除外は作業中データへ
+一度で適用します。移動後も正式pathで同じ属性の選択を復元します。
 汎用の属性列挙と一括編集はutilへ配置します。
 bdChannelBoxは `MayaDockableWindowController` を使い、固定workspaceControl IDと
 `bd_tools.bd_channel_box.ui.restore` を維持します。初回は右ドック、close時は完全破棄とし、

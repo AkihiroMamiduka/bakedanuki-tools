@@ -1908,6 +1908,68 @@ class _MayaSmokeSession:
             raise AssertionError("複数選択と所属変更がUndo履歴を変更しました")
         self.steps.append("select_and_toggle_custom_filter_candidates")
 
+        # 上段の複数選択を一段移動し、選択全件の除外まで確認する
+        panel.include_all_button.click()
+        panel.list_splitter.setSizes([300, 80])
+        self._flush_gui()
+        order = panel.order_list
+        if panel.draft is None or panel.draft.paths("joint") != (
+            "hiddenWeight",
+            "multiHiddenA",
+            "multiHiddenB",
+        ):
+            raise AssertionError("表示順一覧に検証用の属性が揃いません")
+        for index, modifiers in (
+            (1, qt.Qt.KeyboardModifier.NoModifier),
+            (2, qt.Qt.KeyboardModifier.ShiftModifier),
+        ):
+            item = order.item(index)
+            order.scrollToItem(item)
+            self._flush_gui()
+            position = order.visualItemRect(item).center()
+            self._mouse(
+                order.viewport(),
+                qt.QEvent.Type.MouseButtonPress,
+                position,
+                modifiers=modifiers,
+            )
+            self._mouse(
+                order.viewport(),
+                qt.QEvent.Type.MouseButtonRelease,
+                position,
+                modifiers=modifiers,
+            )
+        self._flush_gui()
+        if tuple(item.text() for item in order.selectedItems()) != (
+            "multiHiddenA",
+            "multiHiddenB",
+        ):
+            raise AssertionError("表示順一覧の複数選択が反映されません")
+        panel.up_button.click()
+        self._flush_gui()
+        if panel.draft.paths("joint") != (
+            "multiHiddenA",
+            "multiHiddenB",
+            "hiddenWeight",
+        ):
+            raise AssertionError("選択した属性をまとめて上へ移動できません")
+        self._capture("49-custom-filter-order-selection.png")
+        panel.down_button.click()
+        self._flush_gui()
+        if panel.draft.paths("joint") != (
+            "hiddenWeight",
+            "multiHiddenA",
+            "multiHiddenB",
+        ):
+            raise AssertionError("選択した属性をまとめて下へ戻せません")
+        panel.remove_button.click()
+        self._flush_gui()
+        if panel.draft.paths("joint") != ("hiddenWeight",):
+            raise AssertionError("選択した属性をまとめて除外できません")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("表示順と除外がUndo履歴を変更しました")
+        self.steps.append("move_and_remove_selected_custom_filter_order")
+
         panel.save_button.click()
         self._flush_gui()
         if not cmds.undoInfo(query=True, undoQueueEmpty=True):
@@ -3681,11 +3743,17 @@ class _MayaSmokeSession:
 
     @staticmethod
     def _mouse(
-        widget: qt.QWidget, event_type: qt.QEvent.Type, position: qt.QPoint
+        widget: qt.QWidget,
+        event_type: qt.QEvent.Type,
+        position: qt.QPoint,
+        *,
+        modifiers: qt.Qt.KeyboardModifier | None = None,
     ) -> None:
         """Widget内の位置へマウス操作を送り、連続編集の開始と終了を通す。"""
         from bd_util.ui import qt
 
+        if modifiers is None:
+            modifiers = qt.Qt.KeyboardModifier.NoModifier
         button = qt.Qt.MouseButton.LeftButton
         buttons = qt.Qt.MouseButton.LeftButton
         if event_type == qt.QEvent.Type.MouseMove:
@@ -3698,7 +3766,7 @@ class _MayaSmokeSession:
             qt.QPointF(widget.mapToGlobal(position)),
             button,
             buttons,
-            qt.Qt.KeyboardModifier.NoModifier,
+            modifiers,
         )
         qt.QApplication.sendEvent(widget, event)
 

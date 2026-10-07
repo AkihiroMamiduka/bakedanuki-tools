@@ -179,13 +179,19 @@ class CustomFilterDraft:
             if not self.is_included(node_type, path):
                 paths.append(_attribute_key(path))
             return
+        self.remove_many(node_type, (path,))
+
+    def remove_many(self, node_type: str, paths: Iterable[str]) -> None:
+        """指定型の属性をまとめて除外し、未確定の型は元へ戻す。"""
         if node_type not in self.node_types:
             return
-        key = _attribute_key(path)
+        keys = {_attribute_key(path) for path in paths}
+        if not keys:
+            return
         self.node_types[node_type] = [
             item
             for item in self.node_types[node_type]
-            if _attribute_key(item) != key
+            if _attribute_key(item) not in keys
         ]
         if (
             not self.node_types[node_type]
@@ -235,23 +241,32 @@ class CustomFilterDraft:
 
     def move(self, node_type: str, path: str, offset: int) -> bool:
         """指定型の既存属性をJSON内で一段上下へ移動する。"""
+        return self.move_many(node_type, (path,), offset)
+
+    def move_many(
+        self, node_type: str, selected_paths: Iterable[str], offset: int
+    ) -> bool:
+        """選択属性の相対順を保ち、全件を同時に一段移動する。"""
         if offset not in (-1, 1):
             raise ValueError("移動量には-1または1を指定してください")
         paths = self.node_types.get(node_type)
         if paths is None:
             return False
-        index = next(
-            (
-                index
-                for index, item in enumerate(paths)
-                if _attribute_key(item) == _attribute_key(path)
-            ),
-            -1,
+        keys = {_attribute_key(path) for path in selected_paths}
+        indices = tuple(
+            index
+            for index, path in enumerate(paths)
+            if _attribute_key(path) in keys
         )
-        target = index + offset
-        if index < 0 or not 0 <= target < len(paths):
+        if not indices or not 0 <= indices[
+            0 if offset < 0 else -1
+        ] + offset < len(paths):
             return False
-        paths[index], paths[target] = paths[target], paths[index]
+
+        # 上方向は前から、下方向は後ろから入れ替えて選択間の順序を保つ
+        for index in indices if offset < 0 else reversed(indices):
+            target = index + offset
+            paths[index], paths[target] = paths[target], paths[index]
         return True
 
     def save(self) -> None:
