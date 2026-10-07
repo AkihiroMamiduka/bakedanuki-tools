@@ -33,6 +33,7 @@ from bd_util.maya.ui import (
     MayaEditSession,
     MayaFloatPlugsBinding,
     MayaFloatOffsetEdit,
+    MayaFloatRoundEdit,
     MayaFloatValueEdit,
     MayaPlugsValueEdit,
     MayaScalarValueClipboard,
@@ -1629,6 +1630,79 @@ class ChannelBoxController(qt.QObject):
                 edits.append(MayaStringValueEdit(binding, binding.value))
             else:
                 edits.append(MayaFloatValueEdit(binding, binding.value))
+        changed = apply_plugs_values(edits)
+        self._report_excluded(excluded)
+        return changed
+
+    def round_selected_values(
+        self, keys: Sequence[tuple[str, str]], decimals: int
+    ) -> bool:
+        """表示中の選択float属性を各ノードの現在値から個別に丸める。"""
+        rows = tuple(
+            row
+            for row in self._selected_rows(keys)
+            if isinstance(row, ChannelRow)
+        )
+        return self._round_rows(rows, decimals)
+
+    def round_filtered_values(
+        self, display_filter: ChannelAttributeFilter, decimals: int
+    ) -> bool:
+        """表示ノードの属性状態で選んだ全float属性を個別に丸める。"""
+        if display_filter not in (
+            "all",
+            "visible",
+            "keyable",
+            "channel_box",
+            "hidden",
+        ):
+            raise ValueError("未対応の属性表示フィルターです")
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        if self._active_state_binding is not None:
+            raise RuntimeError(
+                "選択属性の状態変更中には別の操作を開始できません"
+            )
+        if self._mode != "values":
+            raise RuntimeError("値編集モードで操作してください")
+        if not self.node_names:
+            raise RuntimeError("表示ノードが選択されていません")
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        attributes = tuple(
+            inspect_scalar_attributes(name) for name in self.node_names
+        )
+        rows = self._create_rows(attributes, display_filter=display_filter)
+        try:
+            return self._round_rows(
+                tuple(row for row in rows if isinstance(row, ChannelRow)),
+                decimals,
+            )
+        finally:
+            for row in rows:
+                self._dispose_row(row)
+
+    def _round_rows(self, rows: Sequence[ChannelRow], decimals: int) -> bool:
+        """各plugの未丸め実値から一括計画を作り、単一Undoで適用する。"""
+        if type(decimals) is not int:
+            raise TypeError("decimalsにはintを指定してください")
+        if not 0 <= decimals <= 15:
+            raise ValueError("decimalsは0から15の範囲で指定してください")
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        edits: list[MayaPlugsValueEdit] = []
+        excluded: list[str] = []
+        for row in rows:
+            binding = row.binding
+            if not isinstance(binding, MayaFloatPlugsBinding):
+                continue
+            binding.refresh()
+            if not binding.view_model.set_value_command.can_execute:
+                excluded.append(
+                    f"{row.attribute.nice_name}: 値を編集できません"
+                )
+                continue
+            edits.append(MayaFloatRoundEdit(binding, decimals))
         changed = apply_plugs_values(edits)
         self._report_excluded(excluded)
         return changed

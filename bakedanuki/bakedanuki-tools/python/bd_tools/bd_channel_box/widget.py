@@ -7,7 +7,7 @@ from collections import Counter
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Literal, Protocol, TypeAlias, cast
 
 from maya import cmds
 
@@ -133,6 +133,8 @@ _PASTE_FILTER_OPTIONS: tuple[tuple[ChannelAttributeFilter, str, str], ...] = (
         "基準ノードでkeyableでもchannelboxでもないコピー項目を",
     ),
 )
+_RoundScope: TypeAlias = ChannelAttributeFilter | Literal["selected"]
+_ROUND_DIGIT_EXAMPLE = "123456789012345"
 _DISPLAY_OPTIONS: tuple[tuple[ChannelDisplayState, str, str], ...] = (
     ("keyable", "key", "Keyable: キー設定可能"),
     ("channel_box", "ch", "ChannelBox: キー設定不可・Channel Boxに表示"),
@@ -558,6 +560,18 @@ class AttributeRowWidget(qt.QWidget):
         paste_actions.addAction(self.paste_selected_values_action)
         for action in self.paste_copied_values_actions.values():
             paste_actions.addAction(action)
+        self.round_menu: qt.QMenu | None = None
+        self.round_scope_menus: dict[_RoundScope, qt.QMenu] = {}
+        self.round_menu_decimals: int | None = None
+        if isinstance(row.binding, MayaFloatPlugsBinding):
+            self.round_menu = qt.QMenu("小数点の四捨五入", self.context_menu)
+            for scope, label in (
+                ("selected", "選択属性"),
+                *((key, title) for key, title, _ in _PASTE_FILTER_OPTIONS),
+            ):
+                submenu = qt.QMenu(label, self.round_menu)
+                self.round_scope_menus[cast(_RoundScope, scope)] = submenu
+                self.round_menu.addMenu(submenu)
         self.freeze_menu = qt.QMenu("フリーズ", self.context_menu)
         self.freeze_translate_action = qt.QAction("移動", self)
         self.freeze_translate_action.setObjectName("freeze_translate")
@@ -591,6 +605,8 @@ class AttributeRowWidget(qt.QWidget):
         self.context_menu.addMenu(self.align_menu)
         self.context_menu.addMenu(self.copy_menu)
         self.context_menu.addMenu(self.paste_menu)
+        if self.round_menu is not None:
+            self.context_menu.addMenu(self.round_menu)
         self.context_menu.addSeparator()
         self.context_menu.addMenu(self.freeze_menu)
         self.editor = self._create_editor(
@@ -628,6 +644,14 @@ class AttributeRowWidget(qt.QWidget):
             if action == freeze_action and previous.isSeparator():
                 return previous
         raise RuntimeError("フリーズメニュー直前の区切りがありません")
+
+    def round_decimal_limit(self) -> int:
+        """この行の値欄に現在表示している小数桁数を返す。"""
+        if isinstance(
+            self.editor, (FloatSliderSpinBox, FloatValueStepSpinBox)
+        ):
+            return self.editor.spin_box.decimals()
+        raise RuntimeError("数値属性の行ではありません")
 
     def contextMenuEvent(self, event: qt.QtGui.QContextMenuEvent) -> None:
         """属性行のどこからでも共通の操作メニューを開く。"""
@@ -2366,6 +2390,48 @@ class ChannelBoxWidget(qt.QWidget):
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
+    def _prepare_round_menu(self, widget: AttributeRowWidget) -> None:
+        """開いた数値行の表示桁数まで、各対象範囲の候補を遅延生成する。"""
+        decimals = widget.round_decimal_limit()
+        if widget.round_menu_decimals == decimals:
+            return
+        for scope, submenu in widget.round_scope_menus.items():
+            submenu.clear()
+            for digits in range(decimals + 1):
+                label = (
+                    "0（整数）"
+                    if digits == 0
+                    else f"0.{_ROUND_DIGIT_EXAMPLE[:digits]}"
+                )
+                item = qt.QAction(label, submenu)
+                item.setObjectName(f"round_{scope}_{digits}")
+                item.setToolTip(
+                    f"各属性の現在の実値を小数{digits}桁へ四捨五入"
+                )
+                item.triggered.connect(
+                    partial(self._round_values, widget, scope, digits)
+                )
+                cast(_MenuActions, submenu).addAction(item)
+        widget.round_menu_decimals = decimals
+
+    def _round_values(
+        self, widget: AttributeRowWidget, scope: _RoundScope, decimals: int
+    ) -> None:
+        """選択範囲内の各数値属性を現在値から個別に四捨五入する。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            if scope == "selected":
+                key = (widget.row.attribute.path, widget.row.attribute.kind)
+                self.controller.round_selected_values(
+                    self._action_keys(key), decimals
+                )
+            else:
+                self.controller.round_filtered_values(scope, decimals)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
     def _paste_copied_values_to_selected(self) -> None:
         """OS clipboardの項目数に応じた規則で選択属性へ貼り付ける。"""
         self.state_sweep.finish()
@@ -2557,6 +2623,15 @@ class ChannelBoxWidget(qt.QWidget):
         widget.paste_selected_values_action.setEnabled(
             can_paste and has_selection
         )
+        if widget.round_menu is not None:
+            widget.round_scope_menus["selected"].setEnabled(
+                any(
+                    isinstance(row, ChannelRow)
+                    and isinstance(row.binding, MayaFloatPlugsBinding)
+                    and (row.attribute.path, row.attribute.kind) in selected
+                    for row in self.controller.rows
+                )
+            )
         self._set_paste_selected_tooltip(widget.paste_selected_values_action)
         show_freeze = self.controller.has_transform_context()
         widget.freeze_separator_action.setVisible(show_freeze)
@@ -2808,6 +2883,10 @@ class ChannelBoxWidget(qt.QWidget):
                             key,
                         )
                     )
+                    if widget.round_menu is not None:
+                        widget.round_menu.aboutToShow.connect(
+                            partial(self._prepare_round_menu, widget)
+                        )
                     widget.freeze_translate_action.triggered.connect(
                         partial(self._freeze_transforms, "translate")
                     )

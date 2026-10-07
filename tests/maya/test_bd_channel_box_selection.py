@@ -1849,6 +1849,7 @@ def test_selected_menu_lock_hide_and_alignment(
         "表示ノードの値に揃える",
         "コピー",
         "ペースト",
+        "小数点の四捨五入",
         "フリーズ",
         "Step設定",
         "ロック",
@@ -1860,7 +1861,7 @@ def test_selected_menu_lock_hide_and_alignment(
     )
     assert [
         (action.text(), action.isSeparator())
-        for action in row.context_menu.actions()[:16]
+        for action in row.context_menu.actions()[:17]
     ] == [
         ("キーフレーム", False),
         ("ブレイクダウンフレーム", False),
@@ -1878,10 +1879,11 @@ def test_selected_menu_lock_hide_and_alignment(
         ("表示ノードの値に揃える", False),
         ("コピー", False),
         ("ペースト", False),
+        ("小数点の四捨五入", False),
     ]
     assert [
         (action.text(), action.isSeparator())
-        for action in row.context_menu.actions()[16:]
+        for action in row.context_menu.actions()[17:]
     ] == [
         ("", True),
         ("フリーズ", False),
@@ -2105,6 +2107,166 @@ def test_align_menu_is_disabled_for_one_node(
     row.context_menu.close()
     cmds.flushUndo()
     assert not editor.controller.align_filtered_values("all")
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_round_menu_uses_current_row_precision_until_refresh(
+    editor: ChannelBoxWidget,
+) -> None:
+    """桁数候補は表示中の行と一致し、更新後にMaya設定へ追従する。"""
+    row = _row(editor, "translateX")
+    assert row.round_menu is not None
+    assert _row(editor, "enabled").round_menu is None
+    assert all(not menu.actions() for menu in row.round_scope_menus.values())
+    view = row.editor
+    assert isinstance(view, FloatValueStepSpinBox)
+    view.spin_box.setDecimals(3)
+    existed = cmds.optionVar(exists="channelsPrecision")
+    previous = (
+        cast(int, cmds.optionVar(query="channelsPrecision"))
+        if existed
+        else None
+    )
+    try:
+        cmds.optionVar(intValue=("channelsPrecision", 15))
+        row.round_menu.aboutToShow.emit()
+        assert [
+            action.text()
+            for action in row.round_scope_menus["selected"].actions()
+        ] == [
+            "0（整数）",
+            "0.1",
+            "0.12",
+            "0.123",
+        ]
+        editor.refresh()
+        _events()
+        refreshed = _row(editor, "translateX")
+        assert refreshed.round_menu is not None
+        assert refreshed.round_decimal_limit() == 15
+        refreshed.round_menu.aboutToShow.emit()
+        actions = refreshed.round_scope_menus["selected"].actions()
+        assert len(actions) == 16
+        assert actions[-1].text() == "0.123456789012345"
+    finally:
+        if existed:
+            assert previous is not None
+            cmds.optionVar(intValue=("channelsPrecision", previous))
+        else:
+            cmds.optionVar(remove="channelsPrecision")
+
+
+def test_round_selected_values_preserves_each_node_and_one_undo(
+    editor: ChannelBoxWidget,
+) -> None:
+    """混在した非数値行を除き、選択数値の各実値を独立に丸める。"""
+    before = (1.245, -1.245, 2.345, 3.456)
+    for path, value in zip(
+        (
+            "multiA.translateX",
+            "multiB.translateX",
+            "multiA.translateY",
+            "multiB.translateY",
+        ),
+        before,
+    ):
+        _set_value(path, value)
+    _events()
+    selected = _keys(editor, "translateX", "translateY", "enabled")
+    editor.table_view.select_keys(selected)
+    row = _row(editor, "translateX")
+    view = row.editor
+    assert isinstance(view, FloatValueStepSpinBox)
+    view.spin_box.setDecimals(3)
+    _open_row_menu(row)
+    assert editor.table_view.selected_keys() == selected
+    row.context_menu.close()
+    assert row.round_menu is not None
+    row.round_menu.aboutToShow.emit()
+    cmds.flushUndo()
+    row.round_scope_menus["selected"].actions()[2].trigger()
+    _events()
+    assert tuple(
+        cmds.getAttr(path)
+        for path in (
+            "multiA.translateX",
+            "multiB.translateX",
+            "multiA.translateY",
+            "multiB.translateY",
+        )
+    ) == (1.25, -1.25, 2.35, 3.46)
+    cmds.undo()
+    _events()
+    assert (
+        tuple(
+            cmds.getAttr(path)
+            for path in (
+                "multiA.translateX",
+                "multiB.translateX",
+                "multiA.translateY",
+                "multiB.translateY",
+            )
+        )
+        == before
+    )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize(
+    "scope, rounded",
+    (
+        ("all", (True, True, True)),
+        ("visible", (True, True, False)),
+        ("keyable", (True, False, False)),
+        ("channel_box", (False, True, False)),
+        ("hidden", (False, False, True)),
+    ),
+)
+def test_round_filter_uses_display_node_flags_outside_current_rows(
+    editor: ChannelBoxWidget,
+    scope: ChannelAttributeFilter,
+    rounded: tuple[bool, bool, bool],
+) -> None:
+    """表示ノードで範囲を選び、隠れた属性も各ノードの値から丸める。"""
+    names = ("translateX", "gain", "limited")
+    for name, values in zip(
+        names, ((1.245, 2.345), (3.245, 4.345), (1.245, 2.345))
+    ):
+        for node, value in zip(("multiA", "multiB"), values):
+            _set_value(f"{node}.{name}", value)
+    cmds.setAttr("multiA.gain", keyable=False)
+    cmds.setAttr("multiA.gain", channelBox=True)
+    cmds.setAttr("multiA.limited", keyable=False)
+    cmds.setAttr("multiA.limited", channelBox=False)
+    cmds.setAttr("multiB.gain", keyable=False)
+    cmds.setAttr("multiB.gain", channelBox=False)
+    editor.controller.set_attribute_filter("keyable")
+    _events()
+    assert "gain" not in {row.row.attribute.name for row in editor.row_widgets}
+    row = _row(editor, "translateX")
+    assert row.round_menu is not None
+    view = row.editor
+    assert isinstance(view, FloatValueStepSpinBox)
+    view.spin_box.setDecimals(3)
+    row.round_menu.aboutToShow.emit()
+    cmds.flushUndo()
+    row.round_scope_menus[scope].actions()[2].trigger()
+    _events()
+    for name, original, after, should_round in zip(
+        names,
+        ((1.245, 2.345), (3.245, 4.345), (1.245, 2.345)),
+        ((1.25, 2.35), (3.25, 4.35), (1.25, 2.35)),
+        rounded,
+    ):
+        expected = after if should_round else original
+        assert (
+            tuple(
+                cmds.getAttr(f"{node}.{name}") for node in ("multiA", "multiB")
+            )
+            == expected
+        )
+    cmds.undo()
+    _events()
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
