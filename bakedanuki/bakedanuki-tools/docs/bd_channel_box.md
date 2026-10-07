@@ -2022,3 +2022,18 @@ Maya本体の`--custom-filters-only`結果は
 利用者による動作確認とpushの完了は2026-10-06に報告されました。
 利用者が確認したMaya versionは未申告です。
 toolsのみの変更で、既存設定の移行は不要です。
+
+### 大量選択時の表示・編集休止（2026-10-07）
+
+50ノード以上を選択したときの属性取得・表示・編集を休止し、全モードに案内を表示します。
+49ノード以下に戻すと自動で再開します。選択の件数取得にはutilの上限付きAPIを使用します。
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsのBlack・Pyright・unit test | 成功 |
+| Maya 2025 / 2026のtools runtime test | 各338件成功 |
+| Maya 2027のtools runtime test | 337件成功。既知の数値欄幅testが1件失敗 |
+| utilの`verify.cmd` | Black、3 versionのPyright、Maya 2025 runtime test、3 versionのUI互換性testに成功 |
+| 選択上限のruntime test | 49→50→51→49ノード、全3モードの案内、上限時の属性取得停止・旧監視解放・復帰を確認 |
+
+利用者がMaya本体で動作を確認し、pushの完了を報告しました。確認したMaya versionは未申告です。
