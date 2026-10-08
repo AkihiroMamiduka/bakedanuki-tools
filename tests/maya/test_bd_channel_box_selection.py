@@ -88,6 +88,30 @@ def _set_value(path: str, value: float) -> None:
     cast(Callable[[str, float], None], cmds.setAttr)(path, value)
 
 
+def _rotation_triplet(path: str) -> tuple[float, float, float]:
+    """Mayaのcompound回転値を型付き三成分で読む。"""
+    return cast(tuple[float, float, float], cmds.getAttr(path)[0])
+
+
+def _local_matrix(name: str) -> tuple[float, ...]:
+    """ローカル行列を型付き数列で読む。"""
+    return cast(
+        tuple[float, ...],
+        cmds.xform(name, query=True, matrix=True, objectSpace=True),
+    )
+
+
+def _assert_local_matrix_close(
+    actual: tuple[float, ...], expected: tuple[float, ...]
+) -> None:
+    """回転の集約前後でローカル行列が保たれることを確認する。"""
+    assert len(actual) == len(expected)
+    assert all(
+        isclose(left, right, rel_tol=1.0e-9, abs_tol=1.0e-9)
+        for left, right in zip(actual, expected)
+    )
+
+
 @pytest.fixture
 def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     """複数行と複数ノードの元値が異なる検証sceneを作る。"""
@@ -2267,6 +2291,126 @@ def test_round_filter_uses_display_node_flags_outside_current_rows(
         )
     cmds.undo()
     _events()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_rotation_menu_consolidates_transform_nodes_with_one_undo(
+    editor: ChannelBoxWidget,
+) -> None:
+    """対応する回転行だけに表示し、複数ノードを姿勢維持で一度に集約する。"""
+    for node in ("multiA", "multiB"):
+        cast(Callable[..., None], cmds.setAttr)(
+            f"{node}.rotateAxis", 11.0, 22.0, 33.0, type="double3"
+        )
+        cast(Callable[..., None], cmds.setAttr)(
+            f"{node}.rotate", 5.0, 15.0, 25.0, type="double3"
+        )
+    editor.refresh()
+    editor.controller.set_attribute_filter("all")
+    _events()
+    assert _row(editor, "translateX").rotation_menu is None
+    row = _row(editor, "rotateX")
+    assert _row(editor, "rotateAxisX").rotation_menu is not None
+    assert row.rotation_menu is not None
+    assert [action.text() for action in row.rotation_menu.actions()] == [
+        "rotate に集約",
+        "rotateAxis に集約",
+        "jointOrient に集約",
+    ]
+    menu_actions = row.context_menu.actions()
+    assert row.round_menu is not None
+    round_index = menu_actions.index(row.round_menu.menuAction())
+    assert menu_actions[round_index + 1] == row.rotation_menu.menuAction()
+    assert menu_actions[round_index + 2].isSeparator()
+    _open_row_menu(row)
+    assert not row.rotation_actions["jointOrient"].isVisible()
+    row.context_menu.close()
+    before = {
+        node: (
+            _rotation_triplet(f"{node}.rotateAxis"),
+            _rotation_triplet(f"{node}.rotate"),
+            _local_matrix(node),
+        )
+        for node in ("multiA", "multiB")
+    }
+    cmds.flushUndo()
+    row.rotation_actions["rotate"].trigger()
+    _events()
+    for node in ("multiA", "multiB"):
+        assert _rotation_triplet(f"{node}.rotateAxis") == (0.0,) * 3
+        _assert_local_matrix_close(_local_matrix(node), before[node][2])
+    cmds.undo()
+    _events()
+    for node in ("multiA", "multiB"):
+        assert _rotation_triplet(f"{node}.rotateAxis") == before[node][0]
+        assert _rotation_triplet(f"{node}.rotate") == before[node][1]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_rotation_menu_joint_target_skips_transform_and_noop(
+    editor: ChannelBoxWidget,
+) -> None:
+    """Jointだけの集約先はTransformを除外し、再実行ではUndoを増やさない。"""
+    cmds.createNode("joint", name="jointC")
+    cast(Callable[..., None], cmds.setAttr)(
+        "jointC.rotateAxis", 10.0, 20.0, 30.0, type="double3"
+    )
+    cast(Callable[..., None], cmds.setAttr)(
+        "jointC.rotate", 5.0, 15.0, 25.0, type="double3"
+    )
+    cast(Callable[..., None], cmds.setAttr)(
+        "jointC.jointOrient", 7.0, 17.0, 27.0, type="double3"
+    )
+    cmds.select("multiB", "multiA", "jointC", replace=True)
+    editor.refresh()
+    editor.controller.set_attribute_filter("all")
+    _events()
+    row = _row(editor, "jointOrientX")
+    assert row.rotation_menu is not None
+    _open_row_menu(row)
+    assert row.rotation_actions["jointOrient"].isVisible()
+    row.context_menu.close()
+    before_matrix = _local_matrix("jointC")
+    cmds.flushUndo()
+    row.rotation_actions["jointOrient"].trigger()
+    _events()
+    assert _rotation_triplet("jointC.rotate") == (0.0,) * 3
+    assert _rotation_triplet("jointC.rotateAxis") == (0.0,) * 3
+    _assert_local_matrix_close(_local_matrix("jointC"), before_matrix)
+    assert "multiA" in editor.message_label.text()
+    cmds.flushUndo()
+    row.rotation_actions["jointOrient"].trigger()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_rotation_menu_rotate_axis_skips_locked_node_in_radian_unit(
+    editor: ChannelBoxWidget,
+) -> None:
+    """ロックしたノードを除外し、ラジアン表示でも集約とUndoを正しく行う。"""
+    for node in ("multiA", "multiB"):
+        cast(Callable[..., None], cmds.setAttr)(
+            f"{node}.rotateAxis", 11.0, 22.0, 33.0, type="double3"
+        )
+        cast(Callable[..., None], cmds.setAttr)(
+            f"{node}.rotate", 5.0, 15.0, 25.0, type="double3"
+        )
+    cmds.setAttr("multiB.rotateX", lock=True)
+    cmds.currentUnit(angle="rad")
+    editor.refresh()
+    _events()
+    row = _row(editor, "rotateX")
+    matrix = _local_matrix("multiA")
+    blocked = _rotation_triplet("multiB.rotateAxis")
+    cmds.flushUndo()
+    row.rotation_actions["rotateAxis"].trigger()
+    _events()
+    assert _rotation_triplet("multiA.rotate") == (0.0,) * 3
+    _assert_local_matrix_close(_local_matrix("multiA"), matrix)
+    assert _rotation_triplet("multiB.rotateAxis") == blocked
+    assert "multiB" in editor.message_label.text()
+    cmds.undo()
+    _events()
+    _assert_local_matrix_close(_local_matrix("multiA"), matrix)
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 

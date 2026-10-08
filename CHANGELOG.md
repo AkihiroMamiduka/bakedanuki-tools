@@ -9,6 +9,9 @@
 
 ### Added
 
+- bdChannelBoxの回転属性行へ「回転を集約」を追加。選択したTransform／Jointの現在回転を
+  `rotate`、`rotateAxis`、Jointでは`jointOrient`へ集約し、local matrixを維持する。
+  lock・入力接続の対象外処理、1回Undo、同値時の無Undoに対応する。scene・設定の移行は不要。
 - bdChannelBoxの値編集行へfloat系属性用「小数点の四捨五入」を追加。
   選択属性または表示状態別の全属性について、各選択ノードの実値を表示単位で個別に丸める。
   桁数候補の上限はその行の現在の表示桁数とし、Maya設定の変更は表示更新後に反映する。

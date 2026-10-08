@@ -43,6 +43,8 @@ from .controller import (
     ChannelBoxController,
     ChannelRow,
     ChannelStateRow,
+    ROTATION_ATTRIBUTE_PATHS,
+    RotationDestination,
 )
 from .custom_filter_registry import CustomFilterRegistry
 from .custom_filter_editor import create_custom_filter
@@ -572,6 +574,21 @@ class AttributeRowWidget(qt.QWidget):
                 submenu = qt.QMenu(label, self.round_menu)
                 self.round_scope_menus[cast(_RoundScope, scope)] = submenu
                 self.round_menu.addMenu(submenu)
+        self.rotation_menu: qt.QMenu | None = None
+        self.rotation_actions: dict[RotationDestination, qt.QAction] = {}
+        if row.attribute.path in ROTATION_ATTRIBUTE_PATHS:
+            self.rotation_menu = qt.QMenu("回転を集約", self.context_menu)
+            for destination in ("rotate", "rotateAxis", "jointOrient"):
+                action = qt.QAction(
+                    f"{destination} に集約", self.rotation_menu
+                )
+                action.setObjectName(f"consolidate_rotation_{destination}")
+                action.setToolTip(
+                    "選択中の各ノードの現在回転を"
+                    f"{destination}へ集約し、ほかの回転属性をゼロにする"
+                )
+                self.rotation_actions[destination] = action
+                cast(_MenuActions, self.rotation_menu).addAction(action)
         self.freeze_menu = qt.QMenu("フリーズ", self.context_menu)
         self.freeze_translate_action = qt.QAction("移動", self)
         self.freeze_translate_action.setObjectName("freeze_translate")
@@ -607,6 +624,8 @@ class AttributeRowWidget(qt.QWidget):
         self.context_menu.addMenu(self.paste_menu)
         if self.round_menu is not None:
             self.context_menu.addMenu(self.round_menu)
+        if self.rotation_menu is not None:
+            self.context_menu.addMenu(self.rotation_menu)
         self.context_menu.addSeparator()
         self.context_menu.addMenu(self.freeze_menu)
         self.editor = self._create_editor(
@@ -2456,6 +2475,16 @@ class ChannelBoxWidget(qt.QWidget):
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
+    def _consolidate_rotation(self, destination: RotationDestination) -> None:
+        """選択中の各ノードの現在回転を指定属性へ集約する。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.consolidate_rotation(destination)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
     def _prepare_edit_menu(self) -> None:
         """現在のnode・行選択・clipboardに合わせて編集メニューを準備する。"""
         if self.controller.mode == "custom_filter_setup":
@@ -2630,6 +2659,17 @@ class ChannelBoxWidget(qt.QWidget):
                     and isinstance(row.binding, MayaFloatPlugsBinding)
                     and (row.attribute.path, row.attribute.kind) in selected
                     for row in self.controller.rows
+                )
+            )
+        if widget.rotation_menu is not None:
+            widget.rotation_menu.menuAction().setVisible(
+                self.controller.can_consolidate_rotation()
+            )
+            widget.rotation_actions["jointOrient"].setVisible(
+                bool(
+                    self.controller.representative_node_name
+                    and cmds.nodeType(self.controller.representative_node_name)
+                    == "joint"
                 )
             )
         self._set_paste_selected_tooltip(widget.paste_selected_values_action)
@@ -2886,6 +2926,10 @@ class ChannelBoxWidget(qt.QWidget):
                     if widget.round_menu is not None:
                         widget.round_menu.aboutToShow.connect(
                             partial(self._prepare_round_menu, widget)
+                        )
+                    for destination, action in widget.rotation_actions.items():
+                        action.triggered.connect(
+                            partial(self._consolidate_rotation, destination)
                         )
                     widget.freeze_translate_action.triggered.connect(
                         partial(self._freeze_transforms, "translate")

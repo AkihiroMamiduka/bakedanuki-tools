@@ -12,6 +12,7 @@ from maya import cmds
 from maya.api import OpenMaya as om
 from maya.api import OpenMayaAnim as oma
 
+from bd_util import ModifierManager, Nodes, node_types
 from bd_util.maya.node.inspection import (
     ScalarAttributeDisplayFilter,
     ScalarAttributeInfo,
@@ -70,6 +71,12 @@ ChannelAttributeFilter: TypeAlias = ScalarAttributeDisplayFilter
 ChannelDisplayFilter: TypeAlias = (
     ChannelAttributeFilter | CustomFilterSelection
 )
+RotationDestination: TypeAlias = Literal["rotate", "rotateAxis", "jointOrient"]
+ROTATION_ATTRIBUTE_PATHS = frozenset(
+    f"{group}.{group}{axis}"
+    for group in ("rotate", "rotateAxis", "jointOrient")
+    for axis in ("X", "Y", "Z")
+)
 _DEFAULT_FILTERS: dict[ChannelBoxMode, ChannelAttributeFilter] = {
     "values": "visible",
     "states": "all",
@@ -82,6 +89,8 @@ __all__ = [
     "ChannelBoxMode",
     "ChannelAttributeFilter",
     "ChannelDisplayFilter",
+    "RotationDestination",
+    "ROTATION_ATTRIBUTE_PATHS",
     "ChannelRow",
     "ChannelStateRow",
     "ChannelBoxController",
@@ -1896,6 +1905,113 @@ class ChannelBoxController(qt.QObject):
         return self.has_transform_context() and bool(
             self._freeze_targets(translate_only=True)
         )
+
+    def can_consolidate_rotation(self) -> bool:
+        """基準ノードが回転の集約に対応するか返す。"""
+        return self.has_transform_context()
+
+    def consolidate_rotation(self, destination: RotationDestination) -> int:
+        """選択中の各Transform／Jointの現在回転を一属性群へ集約する。"""
+        if destination not in ("rotate", "rotateAxis", "jointOrient"):
+            raise ValueError("未対応の回転集約先です")
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        if self._mode != "values":
+            raise RuntimeError("値編集モードで操作してください")
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        if not self.can_consolidate_rotation():
+            return 0
+
+        nodes = Nodes(modifier_manager=ModifierManager())
+        plans: list[
+            tuple[
+                str,
+                str,
+                tuple[float, float, float],
+                tuple[float, float, float],
+            ]
+        ] = []
+        excluded: list[str] = []
+        for name in dict.fromkeys(self.node_names):
+            operator = nodes.existing(name)
+            if not isinstance(operator, node_types.Transform):
+                continue
+            if destination == "jointOrient" and not isinstance(
+                operator, node_types.Joint
+            ):
+                excluded.append(
+                    f"{name}: jointOrientを持つJointではありません"
+                )
+                continue
+            try:
+                rotation = operator.consolidated_rotation_values(destination)
+            except RuntimeError as error:
+                excluded.append(f"{name}: {error}")
+                continue
+            groups = (
+                ("rotate", "rotateAxis", "jointOrient")
+                if isinstance(operator, node_types.Joint)
+                else ("rotate", "rotateAxis")
+            )
+            current = {
+                group: tuple(getattr(operator, group).get())
+                for group in groups
+            }
+            if all(
+                current[group] == (0.0, 0.0, 0.0)
+                for group in groups
+                if group != destination
+            ):
+                continue
+            for group in groups:
+                desired = rotation if group == destination else (0.0, 0.0, 0.0)
+                if current[group] != desired:
+                    plans.append((name, group, desired, current[group]))
+        if not plans:
+            self._report_excluded(excluded)
+            return 0
+
+        # NodeOperatorと同じ集約値をMaya標準のUndoへ一操作で記録する
+        written: list[tuple[str, str, tuple[float, float, float]]] = []
+        undo_enabled = bool(cmds.undoInfo(query=True, state=True))
+        cmds.undoInfo(openChunk=True, chunkName="ConsolidateRotation")
+        try:
+            for name, group, values, before in plans:
+                display_values = tuple(
+                    om.MAngle(value, om.MAngle.kDegrees).asUnits(
+                        om.MAngle.uiUnit()
+                    )
+                    for value in values
+                )
+                cmds.setAttr(
+                    f"{name}.{group}", *display_values, type="double3"
+                )
+                written.append((name, group, before))
+        except Exception as error:
+            cmds.undoInfo(closeChunk=True)
+            if written:
+                try:
+                    if undo_enabled:
+                        cmds.undo()
+                    else:
+                        for name, group, before in reversed(written):
+                            restore = tuple(
+                                om.MAngle(value, om.MAngle.kDegrees).asUnits(
+                                    om.MAngle.uiUnit()
+                                )
+                                for value in before
+                            )
+                            cmds.setAttr(
+                                f"{name}.{group}", *restore, type="double3"
+                            )
+                except Exception as restore_error:
+                    error.add_note(f"回転値の復旧にも失敗: {restore_error}")
+            raise
+        else:
+            cmds.undoInfo(closeChunk=True)
+        self._report_excluded(excluded)
+        return len({name for name, _, _, _ in plans})
 
     def freeze_transforms(
         self, component: Literal["translate", "rotate", "scale", "all"]
