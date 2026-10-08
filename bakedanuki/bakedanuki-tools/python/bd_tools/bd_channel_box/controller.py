@@ -22,6 +22,12 @@ from bd_util.maya.node.inspection import (
     matches_scalar_attribute_display_filter,
     selected_node_names,
 )
+from bd_util.maya.mpx_cmd.round_transform import (
+    round_joint_orient,
+    round_rotate,
+    round_rotate_axis,
+    round_translate,
+)
 from bd_util.maya.ui import (
     ChannelDisplayState,
     MayaBoolValueEdit,
@@ -72,6 +78,9 @@ ChannelDisplayFilter: TypeAlias = (
     ChannelAttributeFilter | CustomFilterSelection
 )
 RotationDestination: TypeAlias = Literal["rotate", "rotateAxis", "jointOrient"]
+RoundTransformKind: TypeAlias = Literal[
+    "translate", "rotate", "rotateAxis", "jointOrient"
+]
 ROTATION_ATTRIBUTE_PATHS = frozenset(
     f"{group}.{group}{axis}"
     for group in ("rotate", "rotateAxis", "jointOrient")
@@ -90,6 +99,7 @@ __all__ = [
     "ChannelAttributeFilter",
     "ChannelDisplayFilter",
     "RotationDestination",
+    "RoundTransformKind",
     "ROTATION_ATTRIBUTE_PATHS",
     "ChannelRow",
     "ChannelStateRow",
@@ -1909,6 +1919,87 @@ class ChannelBoxController(qt.QObject):
     def can_consolidate_rotation(self) -> bool:
         """基準ノードが回転の集約に対応するか返す。"""
         return self.has_transform_context()
+
+    def round_transform_xyz(
+        self,
+        kind: RoundTransformKind,
+        decimals: int,
+        *,
+        compensate_child_translate: bool = False,
+        joint_child_compensation_attr: Literal[
+            "rotate", "jointOrient"
+        ] = "rotate",
+    ) -> int:
+        """選択ノードの指定XYZを子補償付きで表示単位の桁数へ丸める。
+
+        対応するノードを一度のMaya Undoで処理し、対象外の選択を報告する。
+
+        Args:
+            kind: 丸める属性群。`jointOrient`はJointだけを対象とする。
+            decimals: 小数点以下の桁数。0～15を指定する。
+            compensate_child_translate: 回転時に子のworld位置も保持するか。
+            joint_child_compensation_attr: 子Jointの姿勢補償先。
+
+        Returns:
+            値を変更したノード数。対象外や変更なしなら0。
+        """
+        if kind not in ("translate", "rotate", "rotateAxis", "jointOrient"):
+            raise ValueError("未対応の丸め対象です")
+        if type(decimals) is not int:
+            raise TypeError("decimalsにはintを指定してください")
+        if not 0 <= decimals <= 15:
+            raise ValueError("decimalsは0から15の範囲で指定してください")
+        if kind == "translate" and compensate_child_translate:
+            raise ValueError("移動の丸めでは子の移動補償は常に有効です")
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        if self._mode != "values":
+            raise RuntimeError("値編集モードで操作してください")
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        if not self.has_transform_context():
+            return 0
+
+        # 混合選択ではプラグインが扱える型だけを渡し、対象外を個別に報告する
+        targets: list[str] = []
+        excluded: list[str] = []
+        for name in dict.fromkeys(self.node_names):
+            node_type = cmds.nodeType(name)
+            if node_type not in ("transform", "joint"):
+                excluded.append(f"{name}: Transform／Jointではありません")
+            elif kind == "jointOrient" and node_type != "joint":
+                excluded.append(
+                    f"{name}: jointOrientを持つJointではありません"
+                )
+            else:
+                targets.append(name)
+        if not targets:
+            self._report_excluded(excluded)
+            return 0
+
+        if kind == "translate":
+            changed = round_translate(
+                targets,
+                decimals,
+                rounding_unit="display",
+                compensate_children=True,
+            )
+        else:
+            round_command = {
+                "rotate": round_rotate,
+                "rotateAxis": round_rotate_axis,
+                "jointOrient": round_joint_orient,
+            }[kind]
+            changed = round_command(
+                targets,
+                decimals,
+                rounding_unit="display",
+                compensate_children=True,
+                compensate_child_translate=compensate_child_translate,
+                joint_child_compensation_attr=joint_child_compensation_attr,
+            )
+        self._report_excluded(excluded)
+        return len(changed)
 
     def consolidate_rotation(self, destination: RotationDestination) -> int:
         """選択中の各Transform／Jointの現在回転を一属性群へ集約する。"""

@@ -9,6 +9,11 @@
 
 ### Added
 
+- bdChannelBoxの値編集行へ、`translate`、`rotate`、`rotateAxis`、`jointOrient`の
+  XYZを子のworld座標・姿勢を保持して丸めるメニューを追加。表示単位で丸め、
+  桁数候補は右クリックした行の表示桁数までとする。`bdUtilCommands`で
+  選択ノードを一度のUndoにまとめ、`jointOrient`はJointだけを対象にする。
+  scene・保存設定の移行は不要。
 - bdChannelBoxの回転属性行へ「回転を集約」を追加。選択したTransform／Jointの現在回転を
   `rotate`、`rotateAxis`、Jointでは`jointOrient`へ集約し、local matrixを維持する。
   lock・入力接続の対象外処理、1回Undo、同値時の無Undoに対応する。scene・設定の移行は不要。

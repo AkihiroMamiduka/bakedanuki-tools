@@ -44,6 +44,7 @@ from .controller import (
     ChannelRow,
     ChannelStateRow,
     ROTATION_ATTRIBUTE_PATHS,
+    RoundTransformKind,
     RotationDestination,
 )
 from .custom_filter_registry import CustomFilterRegistry
@@ -137,6 +138,18 @@ _PASTE_FILTER_OPTIONS: tuple[tuple[ChannelAttributeFilter, str, str], ...] = (
 )
 _RoundScope: TypeAlias = ChannelAttributeFilter | Literal["selected"]
 _ROUND_DIGIT_EXAMPLE = "123456789012345"
+_XYZ_ROUND_GROUPS: tuple[RoundTransformKind, ...] = (
+    "translate",
+    "rotate",
+    "rotateAxis",
+    "jointOrient",
+)
+_XYZ_ROUND_ATTRIBUTE_KINDS: dict[str, RoundTransformKind] = {
+    f"{group}.{group}{axis}": group
+    for group in _XYZ_ROUND_GROUPS
+    for axis in "XYZ"
+}
+_JointChildCompensationAttr: TypeAlias = Literal["rotate", "jointOrient"]
 _DISPLAY_OPTIONS: tuple[tuple[ChannelDisplayState, str, str], ...] = (
     ("keyable", "key", "Keyable: キー設定可能"),
     ("channel_box", "ch", "ChannelBox: キー設定不可・Channel Boxに表示"),
@@ -574,6 +587,41 @@ class AttributeRowWidget(qt.QWidget):
                 submenu = qt.QMenu(label, self.round_menu)
                 self.round_scope_menus[cast(_RoundScope, scope)] = submenu
                 self.round_menu.addMenu(submenu)
+        self.xyz_round_kind: RoundTransformKind | None = (
+            _XYZ_ROUND_ATTRIBUTE_KINDS.get(row.attribute.path)
+            if isinstance(row.binding, MayaFloatPlugsBinding)
+            else None
+        )
+        self.xyz_round_menus: dict[bool, qt.QMenu] = {}
+        self.xyz_round_leaf_menus: dict[
+            tuple[bool, _JointChildCompensationAttr], qt.QMenu
+        ] = {}
+        self.xyz_round_menu_decimals: int | None = None
+        if self.xyz_round_kind == "translate":
+            menu = qt.QMenu(
+                "translateXYZ 小数点の四捨五入（子の座標を保持）",
+                self.context_menu,
+            )
+            self.xyz_round_menus[False] = menu
+            self.xyz_round_leaf_menus[(False, "rotate")] = menu
+        elif self.xyz_round_kind is not None:
+            for preserve_translation, label in (
+                (False, "子の姿勢を保持"),
+                (True, "子の座標/姿勢を保持"),
+            ):
+                menu = qt.QMenu(
+                    f"{self.xyz_round_kind}XYZ 小数点の四捨五入（{label}）",
+                    self.context_menu,
+                )
+                self.xyz_round_menus[preserve_translation] = menu
+                for child_attr in ("rotate", "jointOrient"):
+                    child_menu = qt.QMenu(
+                        f"子 joint は、{child_attr} で調整", menu
+                    )
+                    self.xyz_round_leaf_menus[
+                        (preserve_translation, child_attr)
+                    ] = child_menu
+                    menu.addMenu(child_menu)
         self.rotation_menu: qt.QMenu | None = None
         self.rotation_actions: dict[RotationDestination, qt.QAction] = {}
         if row.attribute.path in ROTATION_ATTRIBUTE_PATHS:
@@ -624,6 +672,8 @@ class AttributeRowWidget(qt.QWidget):
         self.context_menu.addMenu(self.paste_menu)
         if self.round_menu is not None:
             self.context_menu.addMenu(self.round_menu)
+        for xyz_menu in self.xyz_round_menus.values():
+            self.context_menu.addMenu(xyz_menu)
         if self.rotation_menu is not None:
             self.context_menu.addMenu(self.rotation_menu)
         self.context_menu.addSeparator()
@@ -2451,6 +2501,69 @@ class ChannelBoxWidget(qt.QWidget):
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
+    def _prepare_xyz_round_menu(self, widget: AttributeRowWidget) -> None:
+        """開いた行の表示桁数に合わせてXYZ丸め候補を遅延生成する。"""
+        decimals = widget.round_decimal_limit()
+        if widget.xyz_round_menu_decimals == decimals:
+            return
+        kind = widget.xyz_round_kind
+        if kind is None:
+            return
+
+        # 各子補償方法へ同じ桁数候補を設ける
+        for (
+            preserve_translation,
+            child_attr,
+        ), submenu in widget.xyz_round_leaf_menus.items():
+            submenu.clear()
+            for digits in range(decimals + 1):
+                label = (
+                    "0（整数）"
+                    if digits == 0
+                    else f"0.{_ROUND_DIGIT_EXAMPLE[:digits]}"
+                )
+                item = qt.QAction(label, submenu)
+                item.setObjectName(
+                    f"round_{kind}_xyz_"
+                    f"{'position_pose' if preserve_translation else 'pose'}_"
+                    f"{child_attr}_{digits}"
+                )
+                item.setToolTip(
+                    f"選択ノードの{kind}XYZを小数{digits}桁へ四捨五入"
+                )
+                item.triggered.connect(
+                    partial(
+                        self._round_transform_xyz,
+                        kind,
+                        digits,
+                        preserve_translation,
+                        child_attr,
+                    )
+                )
+                cast(_MenuActions, submenu).addAction(item)
+        widget.xyz_round_menu_decimals = decimals
+
+    def _round_transform_xyz(
+        self,
+        kind: RoundTransformKind,
+        decimals: int,
+        preserve_translation: bool,
+        joint_child_compensation_attr: _JointChildCompensationAttr,
+    ) -> None:
+        """選択中の各Transform／Jointの指定XYZを子補償付きで丸める。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.round_transform_xyz(
+                kind,
+                decimals,
+                compensate_child_translate=preserve_translation,
+                joint_child_compensation_attr=joint_child_compensation_attr,
+            )
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
     def _paste_copied_values_to_selected(self) -> None:
         """OS clipboardの項目数に応じた規則で選択属性へ貼り付ける。"""
         self.state_sweep.finish()
@@ -2660,6 +2773,10 @@ class ChannelBoxWidget(qt.QWidget):
                     and (row.attribute.path, row.attribute.kind) in selected
                     for row in self.controller.rows
                 )
+            )
+        for xyz_menu in widget.xyz_round_menus.values():
+            xyz_menu.menuAction().setVisible(
+                self.controller.has_transform_context()
             )
         if widget.rotation_menu is not None:
             widget.rotation_menu.menuAction().setVisible(
@@ -2926,6 +3043,10 @@ class ChannelBoxWidget(qt.QWidget):
                     if widget.round_menu is not None:
                         widget.round_menu.aboutToShow.connect(
                             partial(self._prepare_round_menu, widget)
+                        )
+                    for xyz_menu in widget.xyz_round_menus.values():
+                        xyz_menu.aboutToShow.connect(
+                            partial(self._prepare_xyz_round_menu, widget)
                         )
                     for destination, action in widget.rotation_actions.items():
                         action.triggered.connect(

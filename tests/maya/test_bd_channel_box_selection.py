@@ -22,7 +22,10 @@ from bd_util.ui import (
     qt,
 )
 import bd_tools.bd_channel_box.controller as controller_module
-from bd_tools.bd_channel_box.controller import ChannelAttributeFilter
+from bd_tools.bd_channel_box.controller import (
+    ChannelAttributeFilter,
+    RoundTransformKind,
+)
 from bd_tools.bd_channel_box.widget import AttributeRowWidget, ChannelBoxWidget
 
 
@@ -1874,6 +1877,7 @@ def test_selected_menu_lock_hide_and_alignment(
         "コピー",
         "ペースト",
         "小数点の四捨五入",
+        "translateXYZ 小数点の四捨五入（子の座標を保持）",
         "フリーズ",
         "Step設定",
         "ロック",
@@ -1885,7 +1889,7 @@ def test_selected_menu_lock_hide_and_alignment(
     )
     assert [
         (action.text(), action.isSeparator())
-        for action in row.context_menu.actions()[:17]
+        for action in row.context_menu.actions()[:18]
     ] == [
         ("キーフレーム", False),
         ("ブレイクダウンフレーム", False),
@@ -1904,10 +1908,11 @@ def test_selected_menu_lock_hide_and_alignment(
         ("コピー", False),
         ("ペースト", False),
         ("小数点の四捨五入", False),
+        ("translateXYZ 小数点の四捨五入（子の座標を保持）", False),
     ]
     assert [
         (action.text(), action.isSeparator())
-        for action in row.context_menu.actions()[17:]
+        for action in row.context_menu.actions()[18:]
     ] == [
         ("", True),
         ("フリーズ", False),
@@ -2180,6 +2185,177 @@ def test_round_menu_uses_current_row_precision_until_refresh(
             cmds.optionVar(remove="channelsPrecision")
 
 
+def test_xyz_round_menus_follow_axis_rows_and_menu_order(
+    editor: ChannelBoxWidget,
+) -> None:
+    """XYZ専用丸めは対象軸だけに現れ、通常丸めと回転集約の間に並ぶ。"""
+    editor.controller.set_attribute_filter("all")
+    _events()
+    for kind in ("translate", "rotate", "rotateAxis"):
+        for axis in "XYZ":
+            row = _row(editor, f"{kind}{axis}")
+            assert row.xyz_round_kind == kind
+            assert row.round_menu is not None
+            actions = row.context_menu.actions()
+            round_index = actions.index(row.round_menu.menuAction())
+            assert (
+                actions[round_index + 1]
+                == row.xyz_round_menus[False].menuAction()
+            )
+            if kind == "translate":
+                assert list(row.xyz_round_menus) == [False]
+                assert actions[round_index + 2].isSeparator()
+            else:
+                assert list(row.xyz_round_menus) == [False, True]
+                assert (
+                    actions[round_index + 2]
+                    == row.xyz_round_menus[True].menuAction()
+                )
+                assert row.rotation_menu is not None
+                assert (
+                    actions[round_index + 3] == row.rotation_menu.menuAction()
+                )
+                assert actions[round_index + 4].isSeparator()
+                for menu in row.xyz_round_menus.values():
+                    assert [action.text() for action in menu.actions()] == [
+                        "子 joint は、rotate で調整",
+                        "子 joint は、jointOrient で調整",
+                    ]
+    for name in ("scaleX", "gain", "enabled"):
+        assert _row(editor, name).xyz_round_kind is None
+        assert not _row(editor, name).xyz_round_menus
+
+    joint = cmds.createNode("joint", name="roundMenuJoint")
+    cmds.select(joint, replace=True)
+    editor.refresh()
+    _events()
+    for axis in "XYZ":
+        row = _row(editor, f"jointOrient{axis}")
+        assert row.xyz_round_kind == "jointOrient"
+        assert list(row.xyz_round_menus) == [False, True]
+        assert row.rotation_menu is not None
+        actions = row.context_menu.actions()
+        assert row.round_menu is not None
+        round_index = actions.index(row.round_menu.menuAction())
+        assert (
+            actions[round_index + 1] == row.xyz_round_menus[False].menuAction()
+        )
+        assert (
+            actions[round_index + 2] == row.xyz_round_menus[True].menuAction()
+        )
+        assert actions[round_index + 3] == row.rotation_menu.menuAction()
+
+
+def test_xyz_round_menu_uses_current_row_precision_until_refresh(
+    editor: ChannelBoxWidget,
+) -> None:
+    """XYZ丸め候補も表示行の桁数で上限を決め、更新後に設定を反映する。"""
+    existed = cmds.optionVar(exists="channelsPrecision")
+    previous = (
+        cast(int, cmds.optionVar(query="channelsPrecision"))
+        if existed
+        else None
+    )
+    try:
+        cmds.optionVar(intValue=("channelsPrecision", 15))
+        for name in ("translateX", "rotateX"):
+            row = _row(editor, name)
+            view = row.editor
+            assert isinstance(view, FloatValueStepSpinBox)
+            view.spin_box.setDecimals(3)
+            assert not row.xyz_round_leaf_menus[(False, "rotate")].actions()
+            row.xyz_round_menus[False].aboutToShow.emit()
+            assert [
+                action.text()
+                for action in row.xyz_round_leaf_menus[
+                    (False, "rotate")
+                ].actions()
+            ] == ["0（整数）", "0.1", "0.12", "0.123"]
+            if name == "rotateX":
+                assert all(
+                    len(menu.actions()) == 4
+                    for menu in row.xyz_round_leaf_menus.values()
+                )
+        editor.refresh()
+        _events()
+        for name in ("translateX", "rotateX"):
+            row = _row(editor, name)
+            assert row.round_decimal_limit() == 15
+            row.xyz_round_menus[False].aboutToShow.emit()
+            assert all(
+                len(menu.actions()) == 16
+                and menu.actions()[-1].text() == "0.123456789012345"
+                for menu in row.xyz_round_leaf_menus.values()
+            )
+    finally:
+        if existed:
+            assert previous is not None
+            cmds.optionVar(intValue=("channelsPrecision", previous))
+        else:
+            cmds.optionVar(remove="channelsPrecision")
+
+
+def test_xyz_round_actions_dispatch_child_compensation_options(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """各専用メニューは軸群・桁数・子Joint補償方法を制御層へ渡す。"""
+    calls: list[tuple[RoundTransformKind, int, bool, str]] = []
+
+    def record_round(
+        kind: RoundTransformKind,
+        decimals: int,
+        *,
+        compensate_child_translate: bool = False,
+        joint_child_compensation_attr: Literal["rotate", "jointOrient"] = (
+            "rotate"
+        ),
+    ) -> int:
+        """メニューから制御層へ渡る引数だけを記録する。"""
+        calls.append(
+            (
+                kind,
+                decimals,
+                compensate_child_translate,
+                joint_child_compensation_attr,
+            )
+        )
+        return 1
+
+    monkeypatch.setattr(editor.controller, "round_transform_xyz", record_round)
+    editor.controller.set_attribute_filter("all")
+    _events()
+    cases: tuple[tuple[str, bool, Literal["rotate", "jointOrient"]], ...] = (
+        ("translateX", False, "rotate"),
+        ("rotateY", False, "rotate"),
+        ("rotateZ", True, "jointOrient"),
+        ("rotateAxisX", True, "rotate"),
+    )
+    for name, preserve, child_attr in cases:
+        row = _row(editor, name)
+        view = row.editor
+        assert isinstance(view, FloatValueStepSpinBox)
+        view.spin_box.setDecimals(3)
+        row.xyz_round_menus[preserve].aboutToShow.emit()
+        row.xyz_round_leaf_menus[(preserve, child_attr)].actions()[2].trigger()
+    joint = cmds.createNode("joint", name="roundActionJoint")
+    cmds.select(joint, replace=True)
+    editor.refresh()
+    _events()
+    row = _row(editor, "jointOrientZ")
+    view = row.editor
+    assert isinstance(view, FloatValueStepSpinBox)
+    view.spin_box.setDecimals(3)
+    row.xyz_round_menus[False].aboutToShow.emit()
+    row.xyz_round_leaf_menus[(False, "jointOrient")].actions()[2].trigger()
+    assert calls == [
+        ("translate", 2, False, "rotate"),
+        ("rotate", 2, False, "rotate"),
+        ("rotate", 2, True, "jointOrient"),
+        ("rotateAxis", 2, True, "rotate"),
+        ("jointOrient", 2, False, "jointOrient"),
+    ]
+
+
 def test_round_selected_values_preserves_each_node_and_one_undo(
     editor: ChannelBoxWidget,
 ) -> None:
@@ -2320,8 +2496,15 @@ def test_rotation_menu_consolidates_transform_nodes_with_one_undo(
     menu_actions = row.context_menu.actions()
     assert row.round_menu is not None
     round_index = menu_actions.index(row.round_menu.menuAction())
-    assert menu_actions[round_index + 1] == row.rotation_menu.menuAction()
-    assert menu_actions[round_index + 2].isSeparator()
+    assert (
+        menu_actions[round_index + 1]
+        == row.xyz_round_menus[False].menuAction()
+    )
+    assert (
+        menu_actions[round_index + 2] == row.xyz_round_menus[True].menuAction()
+    )
+    assert menu_actions[round_index + 3] == row.rotation_menu.menuAction()
+    assert menu_actions[round_index + 4].isSeparator()
     _open_row_menu(row)
     assert not row.rotation_actions["jointOrient"].isVisible()
     row.context_menu.close()

@@ -28,6 +28,7 @@ from bd_tools.bd_channel_box.controller import (
     ChannelDisplayFilter,
     ChannelRow,
     ChannelStateRow,
+    RoundTransformKind,
 )
 from bd_tools.bd_channel_box.custom_filters import (
     CustomFilterDefinition,
@@ -234,6 +235,16 @@ assert_type(controller.finish_value_edit(), None)
 assert_type(controller.align_selected_values(keys), bool)
 assert_type(controller.round_selected_values(keys, 2), bool)
 assert_type(controller.round_filtered_values("visible", 2), bool)
+round_kind: RoundTransformKind = "rotate"
+assert_type(
+    controller.round_transform_xyz(
+        round_kind,
+        2,
+        compensate_child_translate=True,
+        joint_child_compensation_attr="jointOrient",
+    ),
+    int,
+)
 assert_type(controller.consolidate_rotation("rotate"), int)
 assert_type(controller.set_selected_locked(keys, True), bool)
 assert_type(controller.can_paste_values(), bool)
