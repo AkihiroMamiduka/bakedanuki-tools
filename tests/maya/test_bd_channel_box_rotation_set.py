@@ -10,7 +10,7 @@ from typing import cast
 import pytest
 from maya import cmds
 
-from bd_util.ui import qt
+from bd_util.ui import MouseFocusSelectAllDoubleSpinBox, qt
 from bd_tools.bd_channel_box.controller import ChannelBoxController
 from bd_tools.bd_channel_box.rotation_set_dialog import RotationSetDialog
 
@@ -189,3 +189,66 @@ def test_controller_sets_joint_rotate_with_one_undo_and_reports_excluded(
     cmds.undo()
     _assert_close(_xyz(joint, "rotate"), original_rotate)
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_dialog_layout_position_and_first_click_selection(
+    controller: ChannelBoxController,
+) -> None:
+    """選択欄を横に並べ、画面端に収めてXYZの初回クリックを全選択する。"""
+    transform = cmds.createNode("transform")
+    controller.node_names = (transform,)
+    context = controller.capture_rotation_set_context()
+    dialog = RotationSetDialog(
+        "rotate",
+        context.representative_name,
+        context.representative_type,
+        dict(context.values_degrees),
+        context.node_types,
+    )
+    application = qt.QApplication.instance()
+    assert isinstance(application, qt.QApplication)
+    screen = application.primaryScreen()
+    assert screen is not None
+    available = screen.availableGeometry()
+    try:
+        dialog.set_anchor_position(available.bottomRight())
+        dialog.show()
+        dialog.activateWindow()
+        application.processEvents()
+        assert available.contains(dialog.frameGeometry())
+        center = available.center()
+        dialog.set_anchor_position(center)
+        application.processEvents()
+        frame_center = dialog.frameGeometry().center()
+        assert abs(frame_center.x() - center.x()) <= 1
+        assert abs(frame_center.y() - center.y()) <= 1
+        assert dialog.target_combo.y() == dialog.compensation_combo.y()
+        assert dialog.target_combo.x() < dialog.compensation_combo.x()
+
+        spin = dialog.value_spins[0]
+        assert isinstance(spin, MouseFocusSelectAllDoubleSpinBox)
+        assert spin.select_all_on_mouse_focus()
+        dialog.target_combo.setFocus()
+        application.processEvents()
+        spin.setFocus(qt.Qt.FocusReason.MouseFocusReason)
+        application.processEvents()
+        line_edit = spin.lineEdit()
+        position = line_edit.rect().center()
+        for kind, held in (
+            (qt.QEvent.Type.MouseButtonPress, qt.Qt.MouseButton.LeftButton),
+            (qt.QEvent.Type.MouseButtonRelease, qt.Qt.MouseButton.NoButton),
+        ):
+            event = qt.QtGui.QMouseEvent(
+                kind,
+                qt.QPointF(position),
+                qt.QPointF(line_edit.mapToGlobal(position)),
+                qt.Qt.MouseButton.LeftButton,
+                held,
+                qt.Qt.KeyboardModifier.NoModifier,
+            )
+            application.sendEvent(line_edit, event)
+        application.processEvents()
+        assert line_edit.selectedText() == line_edit.text()
+    finally:
+        dialog.close()
+        dialog.deleteLater()

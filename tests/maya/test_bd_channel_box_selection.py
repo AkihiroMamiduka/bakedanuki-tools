@@ -2189,7 +2189,7 @@ def test_round_menu_uses_current_row_precision_until_refresh(
 def test_xyz_round_menus_follow_axis_rows_and_menu_order(
     editor: ChannelBoxWidget,
 ) -> None:
-    """XYZ専用丸めは対象軸だけに現れ、通常丸めと回転集約の間に並ぶ。"""
+    """回転操作を丸めより前に置き、XYZ専用丸めは対象軸だけに出す。"""
     editor.controller.set_attribute_filter("all")
     _events()
     for kind in ("translate", "rotate", "rotateAxis"):
@@ -2209,17 +2209,18 @@ def test_xyz_round_menus_follow_axis_rows_and_menu_order(
                 assert actions[round_index + 2].isSeparator()
             else:
                 assert list(row.xyz_round_menus) == [False, True]
+                assert row.rotation_menu is not None
+                assert row.rotation_set_action is not None
+                assert actions[round_index - 3] == row.paste_menu.menuAction()
+                assert actions[round_index - 2] == row.rotation_set_action
+                assert (
+                    actions[round_index - 1] == row.rotation_menu.menuAction()
+                )
                 assert (
                     actions[round_index + 2]
                     == row.xyz_round_menus[True].menuAction()
                 )
-                assert row.rotation_menu is not None
-                assert row.rotation_set_action is not None
-                assert actions[round_index + 3] == row.rotation_set_action
-                assert (
-                    actions[round_index + 4] == row.rotation_menu.menuAction()
-                )
-                assert actions[round_index + 5].isSeparator()
+                assert actions[round_index + 3].isSeparator()
                 for menu in row.xyz_round_menus.values():
                     assert [action.text() for action in menu.actions()] == [
                         "子 joint は、rotate で調整",
@@ -2249,8 +2250,9 @@ def test_xyz_round_menus_follow_axis_rows_and_menu_order(
             actions[round_index + 2] == row.xyz_round_menus[True].menuAction()
         )
         assert row.rotation_set_action is not None
-        assert actions[round_index + 3] == row.rotation_set_action
-        assert actions[round_index + 4] == row.rotation_menu.menuAction()
+        assert actions[round_index - 3] == row.paste_menu.menuAction()
+        assert actions[round_index - 2] == row.rotation_set_action
+        assert actions[round_index - 1] == row.rotation_menu.menuAction()
 
 
 def test_xyz_round_menu_uses_current_row_precision_until_refresh(
@@ -2539,9 +2541,10 @@ def test_rotation_menu_consolidates_transform_nodes_with_one_undo(
         menu_actions[round_index + 2] == row.xyz_round_menus[True].menuAction()
     )
     assert row.rotation_set_action is not None
-    assert menu_actions[round_index + 3] == row.rotation_set_action
-    assert menu_actions[round_index + 4] == row.rotation_menu.menuAction()
-    assert menu_actions[round_index + 5].isSeparator()
+    assert menu_actions[round_index - 3] == row.paste_menu.menuAction()
+    assert menu_actions[round_index - 2] == row.rotation_set_action
+    assert menu_actions[round_index - 1] == row.rotation_menu.menuAction()
+    assert menu_actions[round_index + 3].isSeparator()
     _open_row_menu(row)
     assert not row.rotation_actions["jointOrient"].isVisible()
     row.context_menu.close()

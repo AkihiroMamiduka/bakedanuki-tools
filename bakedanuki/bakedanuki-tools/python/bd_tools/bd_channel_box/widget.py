@@ -687,16 +687,16 @@ class AttributeRowWidget(qt.QWidget):
         self.context_menu.addMenu(self.align_menu)
         self.context_menu.addMenu(self.copy_menu)
         self.context_menu.addMenu(self.paste_menu)
-        if self.round_menu is not None:
-            self.context_menu.addMenu(self.round_menu)
-        for xyz_menu in self.xyz_round_menus.values():
-            self.context_menu.addMenu(xyz_menu)
         if self.rotation_set_action is not None:
             cast(_MenuActions, self.context_menu).addAction(
                 self.rotation_set_action
             )
         if self.rotation_menu is not None:
             self.context_menu.addMenu(self.rotation_menu)
+        if self.round_menu is not None:
+            self.context_menu.addMenu(self.round_menu)
+        for xyz_menu in self.xyz_round_menus.values():
+            self.context_menu.addMenu(xyz_menu)
         self.context_menu.addSeparator()
         self.context_menu.addMenu(self.freeze_menu)
         self.editor = self._create_editor(
@@ -2623,6 +2623,7 @@ class ChannelBoxWidget(qt.QWidget):
         self, initial_target: RotationDestination
     ) -> None:
         """右クリックした属性を初期設定先にして姿勢維持ダイアログを開く。"""
+        click_position = qt.QCursor.pos()
         self.state_sweep.finish()
         self.lock_sweep.finish()
         self._clear_message()
@@ -2636,6 +2637,7 @@ class ChannelBoxWidget(qt.QWidget):
                 context.node_types,
                 self,
             )
+            dialog.set_anchor_position(click_position)
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
             return

@@ -10,11 +10,33 @@ from typing import cast
 from maya import cmds
 from maya.api import OpenMaya as om
 
-from bd_util.ui import qt
+from bd_util.ui import MouseFocusSelectAllDoubleSpinBox, qt
 
 from .controller import RotationDestination
 
 __all__ = ["RotationSetDialog"]
+
+
+def _centered_position_within_screen(
+    anchor: qt.QPoint, frame_size: qt.QSize, available: qt.QRect
+) -> qt.QPoint:
+    """クリック位置を中心にし、画面の作業領域へ収まる左上座標を返す。"""
+    maximum_x = max(
+        available.left(), available.right() - frame_size.width() + 1
+    )
+    maximum_y = max(
+        available.top(), available.bottom() - frame_size.height() + 1
+    )
+    return qt.QPoint(
+        min(
+            max(anchor.x() - frame_size.width() // 2, available.left()),
+            maximum_x,
+        ),
+        min(
+            max(anchor.y() - frame_size.height() // 2, available.top()),
+            maximum_y,
+        ),
+    )
 
 
 class RotationSetDialog(qt.QDialog):
@@ -50,6 +72,7 @@ class RotationSetDialog(qt.QDialog):
         ] = {}
         self._active_target = initial_target
         self._rendering_values = False
+        self._anchor_position: qt.QPoint | None = None
 
         # 設定先と補償先の候補をノード種別に合わせる
         self.target_combo = qt.QComboBox(self)
@@ -78,9 +101,15 @@ class RotationSetDialog(qt.QDialog):
 
         self.target_count_label = qt.QLabel(self)
         self.target_count_label.setWordWrap(True)
+        # 設定先と補償先を同じ高さの二列に配置する
+        attribute_layout = qt.QGridLayout()
+        attribute_layout.addWidget(qt.QLabel("値をセットする属性", self), 0, 0)
+        attribute_layout.addWidget(qt.QLabel("値を吸収する属性", self), 0, 1)
+        attribute_layout.addWidget(self.target_combo, 1, 0)
+        attribute_layout.addWidget(self.compensation_combo, 1, 1)
+        attribute_layout.setColumnStretch(0, 1)
+        attribute_layout.setColumnStretch(1, 1)
         form = qt.QFormLayout()
-        form.addRow("値をセットする属性", self.target_combo)
-        form.addRow("値を吸収する属性", self.compensation_combo)
         form.addRow(f"XYZ（{unit_label}）", values_row)
         self.buttons = qt.QDialogButtonBox(
             qt.QDialogButtonBox.StandardButton.Ok
@@ -90,6 +119,7 @@ class RotationSetDialog(qt.QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         layout = qt.QVBoxLayout(self)
+        layout.addLayout(attribute_layout)
         layout.addLayout(form)
         layout.addWidget(self.target_count_label)
         layout.addWidget(self.buttons)
@@ -98,12 +128,51 @@ class RotationSetDialog(qt.QDialog):
 
     def _create_value_spin(self, axis: int) -> qt.QDoubleSpinBox:
         """単位を固定した入力欄を作り、編集した成分だけを記録する。"""
-        spin = qt.QDoubleSpinBox(self)
+        spin = MouseFocusSelectAllDoubleSpinBox(
+            self, select_all_on_mouse_focus=True
+        )
         spin.setDecimals(15)
         spin.setRange(-1.0e100, 1.0e100)
         spin.setKeyboardTracking(False)
         spin.valueChanged.connect(partial(self._value_changed, axis))
         return spin
+
+    def set_anchor_position(self, position: qt.QPoint) -> None:
+        """ダイアログの中心にしたいメニュークリック位置を保存する。"""
+        self._anchor_position = qt.QPoint(position.x(), position.y())
+        self.adjustSize()
+        self._position_near_anchor()
+
+    def showEvent(self, arg__1: qt.QtGui.QShowEvent) -> None:
+        """表示時に確定したウィンドウ枠寸法で配置を補正する。"""
+        super().showEvent(arg__1)
+        self._position_near_anchor()
+
+    def _position_near_anchor(self) -> None:
+        """クリック位置のモニターを選び、枠ごと画面内へ移動する。"""
+        anchor = self._anchor_position
+        if anchor is None:
+            return
+        application = qt.QtGui.QGuiApplication.instance()
+        if not isinstance(application, qt.QtGui.QGuiApplication):
+            return
+        screen = cast(
+            qt.QtGui.QScreen | None,
+            qt.QtGui.QGuiApplication.screenAt(anchor),
+        )
+        if screen is None:
+            screen = cast(qt.QtGui.QScreen | None, self.screen())
+        if screen is None:
+            screen = cast(qt.QtGui.QScreen | None, application.primaryScreen())
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        if available.isEmpty():
+            return
+        frame_size = self.frameGeometry().size()
+        self.move(
+            _centered_position_within_screen(anchor, frame_size, available)
+        )
 
     def _compensation_options(
         self, target: RotationDestination
