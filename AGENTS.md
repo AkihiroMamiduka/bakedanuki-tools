@@ -56,8 +56,9 @@
 module path を手動設定します。リポジトリ内のスクリプトは `Maya.env` を変更しません。
 
 配布時は tools と util の `bakedanuki/` を共通ルートへ重ねます。rig を同梱する場合も
-同じルートへ重ねます。共通の `installer.py`、launchers、`modules` フォルダは配布ルート側の
-責務です。tools リポジトリへ installer を複製しないでください。
+同じルートへ重ねます。共通の `installer.py`、`uninstaller.py`、launchers、`modules`
+フォルダは配布ルート側の責務です。tools リポジトリへ installer / uninstaller を
+複製しないでください。
 
 ## Development Commands
 

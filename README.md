@@ -169,6 +169,7 @@ Maya runtime test も含める場合です。
 ```text
 bakedanuki/
   installer.py
+  uninstaller.py
   launchers/
   modules/
     bd_tools.mod
@@ -180,7 +181,9 @@ bakedanuki/
 ```
 
 共通の `installer.py` は、この `bakedanuki/modules` を `MAYA_MODULE_PATH` に登録します。
-tools リポジトリでは installer を複製しません。
+共通の `uninstaller.py` は、現在の Maya の `Maya.env` から同じパスだけを解除します。
+同梱した tools・util は次回起動からまとめて無効になります。tools リポジトリでは
+これらのスクリプトを複製しません。
 
 ## Documentation
 

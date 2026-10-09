@@ -18,6 +18,7 @@ Python package 名は `bd_tools` です。
 ```text
 bakedanuki/
   installer.py
+  uninstaller.py
   modules/
     bd_tools.mod
     bd_util.mod
@@ -56,6 +57,11 @@ bd_tools.install_menu()
 `bd_tools.bd_channel_box.show()`も使用できます。メニュー基盤を利用するには、
 対応する`bakedanuki-util`を同時に配置してください。
 自動表示をOFFにした状態でも、`install_menu()`による明示的な登録は使用できます。
+
+解除するときは、共通の `uninstaller.py` を Maya のビューポートへドロップし、
+対象の `Maya.env` とパスを確認してください。同じ `modules` に同梱した tools・util は
+Maya の再起動後にまとめて読み込まれなくなります。配布ファイルと個人設定は残ります。
+`uninstall_menu()` は現在のセッションの tools メニュー項目だけを外す API です。
 
 ## Import Check
 
