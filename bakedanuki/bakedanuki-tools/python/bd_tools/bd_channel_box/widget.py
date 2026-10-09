@@ -51,6 +51,7 @@ from .custom_filter_registry import CustomFilterRegistry
 from .custom_filter_editor import create_custom_filter
 from .custom_filter_setup import CustomFilterSetupPanel
 from .custom_filters import CustomFilterError, CustomFilterSelection
+from .rotation_set_dialog import RotationSetDialog
 from .table import ChannelTableView, TableRow
 
 __all__ = [
@@ -622,6 +623,22 @@ class AttributeRowWidget(qt.QWidget):
                         (preserve_translation, child_attr)
                     ] = child_menu
                     menu.addMenu(child_menu)
+        self.rotation_set_target: RotationDestination | None = (
+            cast(RotationDestination, row.attribute.path.split(".", 1)[0])
+            if row.attribute.path in ROTATION_ATTRIBUTE_PATHS
+            else None
+        )
+        self.rotation_set_action: qt.QAction | None = None
+        if self.rotation_set_target is not None:
+            self.rotation_set_action = qt.QAction(
+                "回転をセット（姿勢を維持）", self
+            )
+            self.rotation_set_action.setObjectName(
+                "set_rotation_preserving_pose"
+            )
+            self.rotation_set_action.setToolTip(
+                "設定先と補償先を選び、選択ノードの姿勢を保ってXYZを設定"
+            )
         self.rotation_menu: qt.QMenu | None = None
         self.rotation_actions: dict[RotationDestination, qt.QAction] = {}
         if row.attribute.path in ROTATION_ATTRIBUTE_PATHS:
@@ -674,6 +691,10 @@ class AttributeRowWidget(qt.QWidget):
             self.context_menu.addMenu(self.round_menu)
         for xyz_menu in self.xyz_round_menus.values():
             self.context_menu.addMenu(xyz_menu)
+        if self.rotation_set_action is not None:
+            cast(_MenuActions, self.context_menu).addAction(
+                self.rotation_set_action
+            )
         if self.rotation_menu is not None:
             self.context_menu.addMenu(self.rotation_menu)
         self.context_menu.addSeparator()
@@ -2598,6 +2619,40 @@ class ChannelBoxWidget(qt.QWidget):
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
+    def _open_rotation_set_dialog(
+        self, initial_target: RotationDestination
+    ) -> None:
+        """右クリックした属性を初期設定先にして姿勢維持ダイアログを開く。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            context = self.controller.capture_rotation_set_context()
+            dialog = RotationSetDialog(
+                initial_target,
+                context.representative_name,
+                context.representative_type,
+                dict(context.values_degrees),
+                context.node_types,
+                self,
+            )
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+            return
+        try:
+            if dialog.exec() != qt.QDialog.DialogCode.Accepted:
+                return
+            self.controller.set_rotation_preserving_pose(
+                context,
+                dialog.values_degrees(),
+                target=dialog.target(),
+                compensate_with=dialog.compensate_with(),
+            )
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+        finally:
+            dialog.deleteLater()
+
     def _prepare_edit_menu(self) -> None:
         """現在のnode・行選択・clipboardに合わせて編集メニューを準備する。"""
         if self.controller.mode == "custom_filter_setup":
@@ -2777,6 +2832,10 @@ class ChannelBoxWidget(qt.QWidget):
         for xyz_menu in widget.xyz_round_menus.values():
             xyz_menu.menuAction().setVisible(
                 self.controller.has_transform_context()
+            )
+        if widget.rotation_set_action is not None:
+            widget.rotation_set_action.setVisible(
+                self.controller.can_set_rotation_preserving_pose()
             )
         if widget.rotation_menu is not None:
             widget.rotation_menu.menuAction().setVisible(
@@ -3047,6 +3106,16 @@ class ChannelBoxWidget(qt.QWidget):
                     for xyz_menu in widget.xyz_round_menus.values():
                         xyz_menu.aboutToShow.connect(
                             partial(self._prepare_xyz_round_menu, widget)
+                        )
+                    if (
+                        widget.rotation_set_action is not None
+                        and widget.rotation_set_target is not None
+                    ):
+                        widget.rotation_set_action.triggered.connect(
+                            partial(
+                                self._open_rotation_set_dialog,
+                                widget.rotation_set_target,
+                            )
                         )
                     for destination, action in widget.rotation_actions.items():
                         action.triggered.connect(

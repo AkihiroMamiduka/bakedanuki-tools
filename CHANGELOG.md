@@ -9,6 +9,10 @@
 
 ### Added
 
+- bdChannelBoxの回転属性行へ「回転をセット（姿勢を維持）」を追加。ダイアログで
+  設定先・補償先・共通のXYZ目標値を指定し、`bdUtilCommands`で選択ノードの
+  現在姿勢を保ったまま変更する。Jointでは各設定先に二つの補償先を用意し、
+  複数ノードの1回Undoと対象外の通知に対応。scene・保存設定の移行は不要。
 - bdChannelBoxの値編集行へ、`translate`、`rotate`、`rotateAxis`、`jointOrient`の
   XYZを子のworld座標・姿勢を保持して丸めるメニューを追加。表示単位で丸め、
   桁数候補は右クリックした行の表示桁数までとする。`bdUtilCommands`で

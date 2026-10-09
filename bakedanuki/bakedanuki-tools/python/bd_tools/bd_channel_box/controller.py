@@ -28,6 +28,9 @@ from bd_util.maya.mpx_cmd.round_transform import (
     round_rotate_axis,
     round_translate,
 )
+from bd_util.maya.mpx_cmd import (
+    set_rotation_preserving_pose as set_rotation_preserving_pose_command,
+)
 from bd_util.maya.ui import (
     ChannelDisplayState,
     MayaBoolValueEdit,
@@ -99,12 +102,26 @@ __all__ = [
     "ChannelAttributeFilter",
     "ChannelDisplayFilter",
     "RotationDestination",
+    "RotationSetContext",
     "RoundTransformKind",
     "ROTATION_ATTRIBUTE_PATHS",
     "ChannelRow",
     "ChannelStateRow",
     "ChannelBoxController",
 ]
+
+
+@dataclass(frozen=True)
+class RotationSetContext:
+    """ダイアログを開いた時点の対象と代表ノードの回転実値。"""
+
+    representative_name: str
+    representative_type: Literal["transform", "joint"]
+    node_names: tuple[str, ...]
+    node_types: tuple[str, ...]
+    values_degrees: tuple[
+        tuple[RotationDestination, tuple[float, float, float]], ...
+    ]
 
 
 def _attribute_display_priority(
@@ -1919,6 +1936,100 @@ class ChannelBoxController(qt.QObject):
     def can_consolidate_rotation(self) -> bool:
         """基準ノードが回転の集約に対応するか返す。"""
         return self.has_transform_context()
+
+    def can_set_rotation_preserving_pose(self) -> bool:
+        """基準ノードが姿勢維持付き回転設定の対象か返す。"""
+        representative = self.representative_node_name
+        return (
+            self._mode == "values"
+            and self.has_transform_context()
+            and representative is not None
+            and cmds.nodeType(representative) in ("transform", "joint")
+        )
+
+    def capture_rotation_set_context(self) -> RotationSetContext:
+        """代表ノードの未丸めXYZと現在の選択をダイアログ用に固定する。"""
+        if not self.can_set_rotation_preserving_pose():
+            raise RuntimeError("TransformまたはJointを選択してください")
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        representative = self.representative_node_name
+        assert representative is not None
+        representative_type = cast(
+            Literal["transform", "joint"], cmds.nodeType(representative)
+        )
+        operator = Nodes().existing(representative)
+        groups: tuple[RotationDestination, ...] = (
+            ("rotate", "rotateAxis", "jointOrient")
+            if representative_type == "joint"
+            else ("rotate", "rotateAxis")
+        )
+        values_degrees: tuple[
+            tuple[RotationDestination, tuple[float, float, float]], ...
+        ] = tuple(
+            (
+                group,
+                cast(
+                    tuple[float, float, float],
+                    tuple(getattr(operator, group).get()),
+                ),
+            )
+            for group in groups
+        )
+        names = tuple(dict.fromkeys(self.node_names))
+        return RotationSetContext(
+            representative_name=representative,
+            representative_type=representative_type,
+            node_names=names,
+            node_types=tuple(cast(str, cmds.nodeType(name)) for name in names),
+            values_degrees=values_degrees,
+        )
+
+    def set_rotation_preserving_pose(
+        self,
+        context: RotationSetContext,
+        values_degrees: tuple[float, float, float],
+        *,
+        target: RotationDestination,
+        compensate_with: RotationDestination,
+    ) -> int:
+        """固定した選択へ共通のXYZを設定し、別属性で現在姿勢を保つ。"""
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        if self._mode != "values":
+            raise RuntimeError("値編集モードで操作してください")
+        if target == compensate_with:
+            raise ValueError("設定先と補償先は異なる属性にしてください")
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+
+        # Joint専用の組み合わせではTransformを対象から外す
+        requires_joint = "jointOrient" in (target, compensate_with)
+        targets: list[str] = []
+        excluded: list[str] = []
+        for name in context.node_names:
+            node_type = cast(str, cmds.nodeType(name))
+            if node_type not in ("transform", "joint"):
+                excluded.append(f"{name}: Transform／Jointではありません")
+            elif requires_joint and node_type != "joint":
+                excluded.append(
+                    f"{name}: jointOrientを持つJointではありません"
+                )
+            else:
+                targets.append(name)
+        if not targets:
+            self._report_excluded(excluded)
+            return 0
+
+        changed = set_rotation_preserving_pose_command(
+            targets,
+            values_degrees,
+            target=target,
+            compensate_with=compensate_with,
+            angle_unit="degrees",
+        )
+        self._report_excluded(excluded)
+        return len(changed)
 
     def round_transform_xyz(
         self,
