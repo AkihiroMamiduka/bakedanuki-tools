@@ -22,8 +22,12 @@ from bd_util.ui import (
     qt,
 )
 import bd_tools.bd_channel_box.controller as controller_module
+from bd_tools.bd_channel_box.child_compensated_set_dialog import (
+    ChildCompensatedSetDialog,
+)
 from bd_tools.bd_channel_box.controller import (
     ChannelAttributeFilter,
+    ChildSetContext,
     RoundTransformKind,
 )
 from bd_tools.bd_channel_box.rotation_set_dialog import RotationSetDialog
@@ -1890,7 +1894,7 @@ def test_selected_menu_lock_hide_and_alignment(
     )
     assert [
         (action.text(), action.isSeparator())
-        for action in row.context_menu.actions()[:18]
+        for action in row.context_menu.actions()[:19]
     ] == [
         ("キーフレーム", False),
         ("ブレイクダウンフレーム", False),
@@ -1908,12 +1912,13 @@ def test_selected_menu_lock_hide_and_alignment(
         ("表示ノードの値に揃える", False),
         ("コピー", False),
         ("ペースト", False),
+        ("移動をセット（子を維持）", False),
         ("小数点の四捨五入", False),
         ("translateXYZ 小数点の四捨五入（子の座標を保持）", False),
     ]
     assert [
         (action.text(), action.isSeparator())
-        for action in row.context_menu.actions()[18:]
+        for action in row.context_menu.actions()[19:]
     ] == [
         ("", True),
         ("フリーズ", False),
@@ -2189,7 +2194,7 @@ def test_round_menu_uses_current_row_precision_until_refresh(
 def test_xyz_round_menus_follow_axis_rows_and_menu_order(
     editor: ChannelBoxWidget,
 ) -> None:
-    """回転操作を丸めより前に置き、XYZ専用丸めは対象軸だけに出す。"""
+    """子を維持する設定と回転操作を丸めより前に置く。"""
     editor.controller.set_attribute_filter("all")
     _events()
     for kind in ("translate", "rotate", "rotateAxis"):
@@ -2197,6 +2202,10 @@ def test_xyz_round_menus_follow_axis_rows_and_menu_order(
             row = _row(editor, f"{kind}{axis}")
             assert row.xyz_round_kind == kind
             assert row.round_menu is not None
+            assert row.child_set_action is not None
+            assert row.child_set_action.objectName() == (
+                "set_transform_compensate_children"
+            )
             actions = row.context_menu.actions()
             round_index = actions.index(row.round_menu.menuAction())
             assert (
@@ -2206,12 +2215,15 @@ def test_xyz_round_menus_follow_axis_rows_and_menu_order(
             if kind == "translate":
                 assert list(row.xyz_round_menus) == [False]
                 assert row.rotation_set_action is None
+                assert actions[round_index - 2] == row.paste_menu.menuAction()
+                assert actions[round_index - 1] == row.child_set_action
                 assert actions[round_index + 2].isSeparator()
             else:
                 assert list(row.xyz_round_menus) == [False, True]
                 assert row.rotation_menu is not None
                 assert row.rotation_set_action is not None
-                assert actions[round_index - 3] == row.paste_menu.menuAction()
+                assert actions[round_index - 4] == row.paste_menu.menuAction()
+                assert actions[round_index - 3] == row.child_set_action
                 assert actions[round_index - 2] == row.rotation_set_action
                 assert (
                     actions[round_index - 1] == row.rotation_menu.menuAction()
@@ -2229,6 +2241,7 @@ def test_xyz_round_menus_follow_axis_rows_and_menu_order(
     for name in ("scaleX", "gain", "enabled"):
         assert _row(editor, name).xyz_round_kind is None
         assert not _row(editor, name).xyz_round_menus
+        assert _row(editor, name).child_set_action is None
         assert _row(editor, name).rotation_set_action is None
 
     joint = cmds.createNode("joint", name="roundMenuJoint")
@@ -2250,7 +2263,9 @@ def test_xyz_round_menus_follow_axis_rows_and_menu_order(
             actions[round_index + 2] == row.xyz_round_menus[True].menuAction()
         )
         assert row.rotation_set_action is not None
-        assert actions[round_index - 3] == row.paste_menu.menuAction()
+        assert row.child_set_action is not None
+        assert actions[round_index - 4] == row.paste_menu.menuAction()
+        assert actions[round_index - 3] == row.child_set_action
         assert actions[round_index - 2] == row.rotation_set_action
         assert actions[round_index - 1] == row.rotation_menu.menuAction()
 
@@ -2330,6 +2345,127 @@ def test_rotation_set_action_opens_dialog_with_clicked_group(
     assert row.rotation_set_action is not None
     row.rotation_set_action.trigger()
     assert opened == ["rotate", "rotateAxis", "jointOrient"]
+
+
+def test_child_set_action_opens_dialog_with_clicked_group(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """子を維持する設定は入口の属性群と基準ノード名をダイアログへ渡す。"""
+    opened: list[tuple[str, str]] = []
+
+    def record_dialog(
+        dialog: ChildCompensatedSetDialog,
+    ) -> qt.QDialog.DialogCode:
+        """表示対象を記録し、sceneを変更せず閉じる。"""
+        opened.append((dialog.target(), dialog.target_label.text()))
+        return qt.QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(ChildCompensatedSetDialog, "exec", record_dialog)
+    editor.controller.set_attribute_filter("all")
+    _events()
+    for attribute in ("translateX", "rotateY", "rotateAxisZ"):
+        row = _row(editor, attribute)
+        assert row.child_set_action is not None
+        row.child_set_action.trigger()
+    joint = cmds.createNode("joint", name="childSetActionJoint")
+    cmds.select(joint, replace=True)
+    editor.refresh()
+    _events()
+    row = _row(editor, "jointOrientZ")
+    assert row.child_set_action is not None
+    row.child_set_action.trigger()
+    assert [target for target, _ in opened] == [
+        "translate",
+        "rotate",
+        "rotateAxis",
+        "jointOrient",
+    ]
+    assert all("基準ノードのみ" in label for _, label in opened)
+    assert all("multiA" in label for _, label in opened[:3])
+    assert joint in opened[3][1]
+
+
+def test_child_set_dialog_dispatches_world_joint_options(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """入口から設定先を変えてもworld値と子Joint補償の指定を渡す。"""
+    joint = cmds.createNode("joint", name="worldSetActionJoint")
+    cmds.select(joint, replace=True)
+    editor.refresh()
+    _events()
+    original_matrix = _local_matrix(joint)
+    calls: list[
+        tuple[
+            ChildSetContext,
+            tuple[float, float, float],
+            RoundTransformKind,
+            str,
+            bool,
+            str,
+        ]
+    ] = []
+
+    def accept_dialog(
+        dialog: ChildCompensatedSetDialog,
+    ) -> qt.QDialog.DialogCode:
+        """設定先と補償方法を変更してworld入力を受理する。"""
+        assert dialog.target() == "rotate"
+        assert dialog.target_combo is not None
+        assert dialog.preservation_combo is not None
+        assert dialog.joint_child_combo is not None
+        dialog.target_combo.setCurrentIndex(
+            dialog.target_combo.findData("jointOrient")
+        )
+        dialog.space_combo.setCurrentIndex(
+            dialog.space_combo.findData("world")
+        )
+        dialog.value_spins[0].setValue(42.0)
+        dialog.preservation_combo.setCurrentIndex(
+            dialog.preservation_combo.findData(False)
+        )
+        dialog.joint_child_combo.setCurrentIndex(
+            dialog.joint_child_combo.findData("jointOrient")
+        )
+        return qt.QDialog.DialogCode.Accepted
+
+    def record_set(
+        context: ChildSetContext,
+        values_canonical: tuple[float, float, float],
+        *,
+        target: RoundTransformKind,
+        space: Literal["local", "world"],
+        compensate_child_translate: bool,
+        joint_child_compensation_attr: Literal["rotate", "jointOrient"],
+    ) -> int:
+        """コマンドへの引数を確認しsceneを変更しない。"""
+        calls.append(
+            (
+                context,
+                values_canonical,
+                target,
+                space,
+                compensate_child_translate,
+                joint_child_compensation_attr,
+            )
+        )
+        return 1
+
+    monkeypatch.setattr(ChildCompensatedSetDialog, "exec", accept_dialog)
+    monkeypatch.setattr(
+        editor.controller, "set_child_compensated_value", record_set
+    )
+    row = _row(editor, "rotateX")
+    assert row.child_set_action is not None
+    row.child_set_action.trigger()
+    assert len(calls) == 1
+    context, values, target, space, preserve_position, child_attr = calls[0]
+    assert context.representative_name == cmds.ls(joint, long=True)[0]
+    assert target == "jointOrient"
+    assert space == "world"
+    assert values[0] == 42.0
+    assert preserve_position is False
+    assert child_attr == "jointOrient"
+    _assert_local_matrix_close(_local_matrix(joint), original_matrix)
 
 
 def test_xyz_round_actions_dispatch_child_compensation_options(
@@ -2541,7 +2677,9 @@ def test_rotation_menu_consolidates_transform_nodes_with_one_undo(
         menu_actions[round_index + 2] == row.xyz_round_menus[True].menuAction()
     )
     assert row.rotation_set_action is not None
-    assert menu_actions[round_index - 3] == row.paste_menu.menuAction()
+    assert row.child_set_action is not None
+    assert menu_actions[round_index - 4] == row.paste_menu.menuAction()
+    assert menu_actions[round_index - 3] == row.child_set_action
     assert menu_actions[round_index - 2] == row.rotation_set_action
     assert menu_actions[round_index - 1] == row.rotation_menu.menuAction()
     assert menu_actions[round_index + 3].isSeparator()

@@ -89,19 +89,17 @@ def test_dialog_defaults_and_preserves_values_when_target_changes(
         context.representative_name,
         context.representative_type,
         original,
-        ("transform", "joint"),
     )
     try:
         assert dialog.target() == "rotate"
         assert dialog.compensate_with() == "jointOrient"
-        assert joint in dialog.target_count_label.text()
-        assert "対象外 1 ノード" in dialog.target_count_label.text()
+        assert joint in dialog.target_label.text()
+        assert "基準ノードのみ" in dialog.target_label.text()
         assert dialog.values_degrees() == original["rotate"]
         dialog.value_spins[0].setValue(37.0)
         dialog.compensation_combo.setCurrentIndex(
             dialog.compensation_combo.findData("rotateAxis")
         )
-        assert "対象 2 ノード" in dialog.target_count_label.text()
         dialog.target_combo.setCurrentIndex(
             dialog.target_combo.findData("rotateAxis")
         )
@@ -135,7 +133,6 @@ def test_dialog_transform_options_and_display_unit_conversion(
         context.representative_name,
         context.representative_type,
         dict(context.values_degrees),
-        context.node_types,
     )
     try:
         assert dialog.target_combo.count() == 2
@@ -151,10 +148,10 @@ def test_dialog_transform_options_and_display_unit_conversion(
         dialog.deleteLater()
 
 
-def test_controller_sets_joint_rotate_with_one_undo_and_reports_excluded(
+def test_controller_sets_representative_joint_only_with_one_undo(
     controller: ChannelBoxController,
 ) -> None:
-    """混合選択でJointのみ変更し、localと子world行列を保つ。"""
+    """混合選択でも基準Jointのみ変更し、現在姿勢と子world行列を保つ。"""
     transform = cmds.createNode("transform", name="otherTransform")
     joint = cmds.createNode("joint", name="targetJoint")
     child = cmds.createNode("joint", name="childJoint", parent=joint)
@@ -167,8 +164,6 @@ def test_controller_sets_joint_rotate_with_one_undo_and_reports_excluded(
     original_child_world = _matrix(child, world=True)
     controller.node_names = (transform, joint)
     context = controller.capture_rotation_set_context()
-    reports: list[str] = []
-    controller.operation_reported.connect(reports.append)
     cmds.flushUndo()
 
     assert (
@@ -176,7 +171,7 @@ def test_controller_sets_joint_rotate_with_one_undo_and_reports_excluded(
             context,
             (30.0, 40.0, 50.0),
             target="rotate",
-            compensate_with="jointOrient",
+            compensate_with="rotateAxis",
         )
         == 1
     )
@@ -184,7 +179,6 @@ def test_controller_sets_joint_rotate_with_one_undo_and_reports_excluded(
     _assert_close(_xyz(transform, "rotate"), (1.0, 2.0, 3.0))
     _assert_close(_matrix(joint), original_local)
     _assert_close(_matrix(child, world=True), original_child_world)
-    assert reports and transform in reports[-1]
 
     cmds.undo()
     _assert_close(_xyz(joint, "rotate"), original_rotate)
@@ -203,7 +197,6 @@ def test_dialog_layout_position_and_first_click_selection(
         context.representative_name,
         context.representative_type,
         dict(context.values_degrees),
-        context.node_types,
     )
     application = qt.QApplication.instance()
     assert isinstance(application, qt.QApplication)

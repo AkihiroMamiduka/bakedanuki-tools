@@ -29,7 +29,11 @@ from bd_util.maya.mpx_cmd.round_transform import (
     round_translate,
 )
 from bd_util.maya.mpx_cmd import (
+    set_joint_orient_compensate_children,
+    set_rotate_axis_compensate_children,
+    set_rotate_compensate_children,
     set_rotation_preserving_pose as set_rotation_preserving_pose_command,
+    set_translate_compensate_children,
 )
 from bd_util.maya.ui import (
     ChannelDisplayState,
@@ -103,6 +107,7 @@ __all__ = [
     "ChannelDisplayFilter",
     "RotationDestination",
     "RotationSetContext",
+    "ChildSetContext",
     "RoundTransformKind",
     "ROTATION_ATTRIBUTE_PATHS",
     "ChannelRow",
@@ -113,14 +118,23 @@ __all__ = [
 
 @dataclass(frozen=True)
 class RotationSetContext:
-    """ダイアログを開いた時点の対象と代表ノードの回転実値。"""
+    """ダイアログを開いた時点の基準ノードと回転実値。"""
 
     representative_name: str
     representative_type: Literal["transform", "joint"]
-    node_names: tuple[str, ...]
-    node_types: tuple[str, ...]
     values_degrees: tuple[
         tuple[RotationDestination, tuple[float, float, float]], ...
+    ]
+
+
+@dataclass(frozen=True)
+class ChildSetContext:
+    """ダイアログを開いた時点の基準ノードと移動・回転の実値。"""
+
+    representative_name: str
+    representative_type: Literal["transform", "joint"]
+    values_canonical: tuple[
+        tuple[RoundTransformKind, tuple[float, float, float]], ...
     ]
 
 
@@ -1947,8 +1961,47 @@ class ChannelBoxController(qt.QObject):
             and cmds.nodeType(representative) in ("transform", "joint")
         )
 
+    def can_set_child_compensated_value(self) -> bool:
+        """基準ノードが子の補償付き移動・回転設定の対象か返す。"""
+        return self.can_set_rotation_preserving_pose()
+
+    def capture_child_set_context(self) -> ChildSetContext:
+        """基準ノードの未丸めXYZを子補償付き設定用に固定する。"""
+        if not self.can_set_child_compensated_value():
+            raise RuntimeError("TransformまたはJointを選択してください")
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+        representative = self.representative_node_name
+        assert representative is not None
+        representative_type = cast(
+            Literal["transform", "joint"], cmds.nodeType(representative)
+        )
+        operator = Nodes().existing(representative)
+        groups: tuple[RoundTransformKind, ...] = (
+            ("translate", "rotate", "rotateAxis", "jointOrient")
+            if representative_type == "joint"
+            else ("translate", "rotate", "rotateAxis")
+        )
+        values_canonical: tuple[
+            tuple[RoundTransformKind, tuple[float, float, float]], ...
+        ] = tuple(
+            (
+                group,
+                cast(
+                    tuple[float, float, float],
+                    tuple(getattr(operator, group).get()),
+                ),
+            )
+            for group in groups
+        )
+        return ChildSetContext(
+            representative_name=representative,
+            representative_type=representative_type,
+            values_canonical=values_canonical,
+        )
+
     def capture_rotation_set_context(self) -> RotationSetContext:
-        """代表ノードの未丸めXYZと現在の選択をダイアログ用に固定する。"""
+        """基準ノードの未丸めXYZをダイアログ用に固定する。"""
         if not self.can_set_rotation_preserving_pose():
             raise RuntimeError("TransformまたはJointを選択してください")
         self.state_edit_session.finish()
@@ -1976,12 +2029,9 @@ class ChannelBoxController(qt.QObject):
             )
             for group in groups
         )
-        names = tuple(dict.fromkeys(self.node_names))
         return RotationSetContext(
             representative_name=representative,
             representative_type=representative_type,
-            node_names=names,
-            node_types=tuple(cast(str, cmds.nodeType(name)) for name in names),
             values_degrees=values_degrees,
         )
 
@@ -1993,7 +2043,7 @@ class ChannelBoxController(qt.QObject):
         target: RotationDestination,
         compensate_with: RotationDestination,
     ) -> int:
-        """固定した選択へ共通のXYZを設定し、別属性で現在姿勢を保つ。"""
+        """固定した基準ノードへXYZを設定し、別属性で現在姿勢を保つ。"""
         if self._disposed:
             raise RuntimeError("終了済みの画面には入力できません")
         if self._mode != "values":
@@ -2003,32 +2053,56 @@ class ChannelBoxController(qt.QObject):
         self.state_edit_session.finish()
         self._finish_value_edit()
 
-        # Joint専用の組み合わせではTransformを対象から外す
-        requires_joint = "jointOrient" in (target, compensate_with)
-        targets: list[str] = []
-        excluded: list[str] = []
-        for name in context.node_names:
-            node_type = cast(str, cmds.nodeType(name))
-            if node_type not in ("transform", "joint"):
-                excluded.append(f"{name}: Transform／Jointではありません")
-            elif requires_joint and node_type != "joint":
-                excluded.append(
-                    f"{name}: jointOrientを持つJointではありません"
-                )
-            else:
-                targets.append(name)
-        if not targets:
-            self._report_excluded(excluded)
-            return 0
-
         changed = set_rotation_preserving_pose_command(
-            targets,
+            (context.representative_name,),
             values_degrees,
             target=target,
             compensate_with=compensate_with,
             angle_unit="degrees",
         )
-        self._report_excluded(excluded)
+        return len(changed)
+
+    def set_child_compensated_value(
+        self,
+        context: ChildSetContext,
+        values_canonical: tuple[float, float, float],
+        *,
+        target: RoundTransformKind,
+        space: Literal["local", "world"],
+        compensate_child_translate: bool = True,
+        joint_child_compensation_attr: Literal[
+            "rotate", "jointOrient"
+        ] = "rotate",
+    ) -> int:
+        """固定した基準ノードへXYZを設定し、直接の子を補償する。"""
+        if self._disposed:
+            raise RuntimeError("終了済みの画面には入力できません")
+        if self._mode != "values":
+            raise RuntimeError("値編集モードで操作してください")
+        if target not in dict(context.values_canonical):
+            raise ValueError("基準ノードに設定先の属性がありません")
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+
+        targets = (context.representative_name,)
+        if target == "translate":
+            changed = set_translate_compensate_children(
+                targets, values_canonical, space=space, input_unit="canonical"
+            )
+        else:
+            command = {
+                "rotate": set_rotate_compensate_children,
+                "rotateAxis": set_rotate_axis_compensate_children,
+                "jointOrient": set_joint_orient_compensate_children,
+            }[target]
+            changed = command(
+                targets,
+                values_canonical,
+                space=space,
+                input_unit="canonical",
+                compensate_child_translate=compensate_child_translate,
+                joint_child_compensation_attr=joint_child_compensation_attr,
+            )
         return len(changed)
 
     def round_transform_xyz(

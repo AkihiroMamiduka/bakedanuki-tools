@@ -28,6 +28,7 @@ from bd_tools.bd_channel_box.controller import (
     ChannelDisplayFilter,
     ChannelRow,
     ChannelStateRow,
+    ChildSetContext,
     RotationSetContext,
     RoundTransformKind,
 )
@@ -104,6 +105,7 @@ if isinstance(row, AttributeRowWidget):
     assert_type(row.paste_copied_values_action, qt.QAction)
     assert_type(row.paste_selected_values_action, qt.QAction)
     assert_type(row.round_menu, qt.QMenu | None)
+    assert_type(row.child_set_action, qt.QAction | None)
     assert_type(row.round_decimal_limit(), int)
     assert_type(row.rotation_menu, qt.QMenu | None)
     assert_type(row.freeze_menu, qt.QMenu)
@@ -248,6 +250,18 @@ assert_type(
 )
 assert_type(controller.consolidate_rotation("rotate"), int)
 assert_type(controller.can_set_rotation_preserving_pose(), bool)
+assert_type(controller.can_set_child_compensated_value(), bool)
+child_context = controller.capture_child_set_context()
+assert_type(child_context, ChildSetContext)
+assert_type(
+    controller.set_child_compensated_value(
+        child_context,
+        (1.0, 2.0, 3.0),
+        target="translate",
+        space="local",
+    ),
+    int,
+)
 rotation_context = controller.capture_rotation_set_context()
 assert_type(rotation_context, RotationSetContext)
 assert_type(

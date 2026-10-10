@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from functools import partial
 from typing import cast
 
@@ -12,34 +12,13 @@ from maya.api import OpenMaya as om
 
 from bd_util.ui import MouseFocusSelectAllDoubleSpinBox, qt
 
+from .anchored_dialog import AnchoredDialog
 from .controller import RotationDestination
 
 __all__ = ["RotationSetDialog"]
 
 
-def _centered_position_within_screen(
-    anchor: qt.QPoint, frame_size: qt.QSize, available: qt.QRect
-) -> qt.QPoint:
-    """クリック位置を中心にし、画面の作業領域へ収まる左上座標を返す。"""
-    maximum_x = max(
-        available.left(), available.right() - frame_size.width() + 1
-    )
-    maximum_y = max(
-        available.top(), available.bottom() - frame_size.height() + 1
-    )
-    return qt.QPoint(
-        min(
-            max(anchor.x() - frame_size.width() // 2, available.left()),
-            maximum_x,
-        ),
-        min(
-            max(anchor.y() - frame_size.height() // 2, available.top()),
-            maximum_y,
-        ),
-    )
-
-
-class RotationSetDialog(qt.QDialog):
+class RotationSetDialog(AnchoredDialog):
     """設定先・補償先・共通のXYZ目標値を編集する。"""
 
     def __init__(
@@ -50,7 +29,6 @@ class RotationSetDialog(qt.QDialog):
         values_degrees: Mapping[
             RotationDestination, tuple[float, float, float]
         ],
-        selected_node_types: Sequence[str],
         parent: qt.QWidget | None = None,
     ) -> None:
         """代表ノードの未丸め値を保持し、Maya表示角度単位で入力する。"""
@@ -60,9 +38,7 @@ class RotationSetDialog(qt.QDialog):
         if initial_target not in values_degrees:
             raise ValueError("右クリックした回転属性が見つかりません")
         self.setWindowTitle("回転をセット（姿勢を維持）")
-        self._representative_name = representative_name
         self._is_joint = representative_type == "joint"
-        self._selected_node_types = tuple(selected_node_types)
         self._ui_angle_unit = om.MAngle.uiUnit()
         self._draft_degrees = {
             target: list(values) for target, values in values_degrees.items()
@@ -72,7 +48,6 @@ class RotationSetDialog(qt.QDialog):
         ] = {}
         self._active_target = initial_target
         self._rendering_values = False
-        self._anchor_position: qt.QPoint | None = None
 
         # 設定先と補償先の候補をノード種別に合わせる
         self.target_combo = qt.QComboBox(self)
@@ -99,8 +74,10 @@ class RotationSetDialog(qt.QDialog):
             values_layout.addWidget(qt.QLabel(axis, values_row))
             values_layout.addWidget(spin)
 
-        self.target_count_label = qt.QLabel(self)
-        self.target_count_label.setWordWrap(True)
+        self.target_label = qt.QLabel(
+            f"設定対象（基準ノードのみ）：{representative_name}", self
+        )
+        self.target_label.setWordWrap(True)
         # 設定先と補償先を同じ高さの二列に配置する
         attribute_layout = qt.QGridLayout()
         attribute_layout.addWidget(qt.QLabel("値をセットする属性", self), 0, 0)
@@ -119,9 +96,9 @@ class RotationSetDialog(qt.QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         layout = qt.QVBoxLayout(self)
+        layout.addWidget(self.target_label)
         layout.addLayout(attribute_layout)
         layout.addLayout(form)
-        layout.addWidget(self.target_count_label)
         layout.addWidget(self.buttons)
         self._populate_compensation()
         self._render_values()
@@ -136,43 +113,6 @@ class RotationSetDialog(qt.QDialog):
         spin.setKeyboardTracking(False)
         spin.valueChanged.connect(partial(self._value_changed, axis))
         return spin
-
-    def set_anchor_position(self, position: qt.QPoint) -> None:
-        """ダイアログの中心にしたいメニュークリック位置を保存する。"""
-        self._anchor_position = qt.QPoint(position.x(), position.y())
-        self.adjustSize()
-        self._position_near_anchor()
-
-    def showEvent(self, arg__1: qt.QtGui.QShowEvent) -> None:
-        """表示時に確定したウィンドウ枠寸法で配置を補正する。"""
-        super().showEvent(arg__1)
-        self._position_near_anchor()
-
-    def _position_near_anchor(self) -> None:
-        """クリック位置のモニターを選び、枠ごと画面内へ移動する。"""
-        anchor = self._anchor_position
-        if anchor is None:
-            return
-        application = qt.QtGui.QGuiApplication.instance()
-        if not isinstance(application, qt.QtGui.QGuiApplication):
-            return
-        screen = cast(
-            qt.QtGui.QScreen | None,
-            qt.QtGui.QGuiApplication.screenAt(anchor),
-        )
-        if screen is None:
-            screen = cast(qt.QtGui.QScreen | None, self.screen())
-        if screen is None:
-            screen = cast(qt.QtGui.QScreen | None, application.primaryScreen())
-        if screen is None:
-            return
-        available = screen.availableGeometry()
-        if available.isEmpty():
-            return
-        frame_size = self.frameGeometry().size()
-        self.move(
-            _centered_position_within_screen(anchor, frame_size, available)
-        )
 
     def _compensation_options(
         self, target: RotationDestination
@@ -189,7 +129,7 @@ class RotationSetDialog(qt.QDialog):
         return ("rotate", "rotateAxis")
 
     def _populate_compensation(self) -> None:
-        """設定先の変更後に補償先と適用ノード数を更新する。"""
+        """設定先の変更後に補償先を更新する。"""
         target = self.target()
         options = self._compensation_options(target)
         selected = self._compensation_by_target.get(target, options[0])
@@ -204,7 +144,6 @@ class RotationSetDialog(qt.QDialog):
         finally:
             self.compensation_combo.blockSignals(False)
         self._compensation_by_target[target] = self.compensate_with()
-        self._update_target_count()
 
     def _target_changed(self, index: int) -> None:
         """設定先の切替時に編集中の値を保持して表示を更新する。"""
@@ -219,7 +158,6 @@ class RotationSetDialog(qt.QDialog):
         """選択した補償先を設定先ごとに記憶する。"""
         del index
         self._compensation_by_target[self.target()] = self.compensate_with()
-        self._update_target_count()
 
     def _render_values(self) -> None:
         """現在の設定先のXYZ値を固定した表示単位へ変換して描画する。"""
@@ -243,26 +181,6 @@ class RotationSetDialog(qt.QDialog):
         self._draft_degrees[self._active_target][axis] = om.MAngle(
             value, self._ui_angle_unit
         ).asDegrees()
-
-    def _update_target_count(self) -> None:
-        """補償先を扱える選択ノード数をダイアログに示す。"""
-        requires_joint = (
-            self.target() == "jointOrient"
-            or self.compensate_with() == "jointOrient"
-        )
-        applicable = sum(
-            node_type == "joint"
-            or (node_type == "transform" and not requires_joint)
-            for node_type in self._selected_node_types
-        )
-        excluded = len(self._selected_node_types) - applicable
-        self.target_count_label.setText(
-            f"基準: {self._representative_name}／同じXYZを設定："
-            f"対象 {applicable} ノード"
-            + (f"、対象外 {excluded} ノード" if excluded else "")
-        )
-        ok_button = self.buttons.button(qt.QDialogButtonBox.StandardButton.Ok)
-        ok_button.setEnabled(applicable > 0)
 
     def target(self) -> RotationDestination:
         """現在選択した設定先を返す。"""

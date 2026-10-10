@@ -51,6 +51,7 @@ from .custom_filter_registry import CustomFilterRegistry
 from .custom_filter_editor import create_custom_filter
 from .custom_filter_setup import CustomFilterSetupPanel
 from .custom_filters import CustomFilterError, CustomFilterSelection
+from .child_compensated_set_dialog import ChildCompensatedSetDialog
 from .rotation_set_dialog import RotationSetDialog
 from .table import ChannelTableView, TableRow
 
@@ -628,6 +629,22 @@ class AttributeRowWidget(qt.QWidget):
             if row.attribute.path in ROTATION_ATTRIBUTE_PATHS
             else None
         )
+        self.child_set_action: qt.QAction | None = None
+        if self.xyz_round_kind is not None:
+            self.child_set_action = qt.QAction(
+                (
+                    "移動をセット（子を維持）"
+                    if self.xyz_round_kind == "translate"
+                    else "回転をセット（子を維持）"
+                ),
+                self,
+            )
+            self.child_set_action.setObjectName(
+                "set_transform_compensate_children"
+            )
+            self.child_set_action.setToolTip(
+                "基準ノードのみのXYZを設定し、直接の子の維持範囲を指定"
+            )
         self.rotation_set_action: qt.QAction | None = None
         if self.rotation_set_target is not None:
             self.rotation_set_action = qt.QAction(
@@ -637,7 +654,7 @@ class AttributeRowWidget(qt.QWidget):
                 "set_rotation_preserving_pose"
             )
             self.rotation_set_action.setToolTip(
-                "設定先と補償先を選び、選択ノードの姿勢を保ってXYZを設定"
+                "設定先と補償先を選び、基準ノードのみの姿勢を保ってXYZを設定"
             )
         self.rotation_menu: qt.QMenu | None = None
         self.rotation_actions: dict[RotationDestination, qt.QAction] = {}
@@ -687,6 +704,10 @@ class AttributeRowWidget(qt.QWidget):
         self.context_menu.addMenu(self.align_menu)
         self.context_menu.addMenu(self.copy_menu)
         self.context_menu.addMenu(self.paste_menu)
+        if self.child_set_action is not None:
+            cast(_MenuActions, self.context_menu).addAction(
+                self.child_set_action
+            )
         if self.rotation_set_action is not None:
             cast(_MenuActions, self.context_menu).addAction(
                 self.rotation_set_action
@@ -2634,7 +2655,6 @@ class ChannelBoxWidget(qt.QWidget):
                 context.representative_name,
                 context.representative_type,
                 dict(context.values_degrees),
-                context.node_types,
                 self,
             )
             dialog.set_anchor_position(click_position)
@@ -2649,6 +2669,45 @@ class ChannelBoxWidget(qt.QWidget):
                 dialog.values_degrees(),
                 target=dialog.target(),
                 compensate_with=dialog.compensate_with(),
+            )
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+        finally:
+            dialog.deleteLater()
+
+    def _open_child_compensated_set_dialog(
+        self, initial_target: RoundTransformKind
+    ) -> None:
+        """右クリックした属性を初期設定先にして子補償ダイアログを開く。"""
+        click_position = qt.QCursor.pos()
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            context = self.controller.capture_child_set_context()
+            dialog = ChildCompensatedSetDialog(
+                initial_target,
+                context.representative_name,
+                context.representative_type,
+                dict(context.values_canonical),
+                self,
+            )
+            dialog.set_anchor_position(click_position)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+            return
+        try:
+            if dialog.exec() != qt.QDialog.DialogCode.Accepted:
+                return
+            self.controller.set_child_compensated_value(
+                context,
+                dialog.values_canonical(),
+                target=dialog.target(),
+                space=dialog.space(),
+                compensate_child_translate=dialog.compensate_child_translate(),
+                joint_child_compensation_attr=(
+                    dialog.joint_child_compensation_attr()
+                ),
             )
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
@@ -2834,6 +2893,10 @@ class ChannelBoxWidget(qt.QWidget):
         for xyz_menu in widget.xyz_round_menus.values():
             xyz_menu.menuAction().setVisible(
                 self.controller.has_transform_context()
+            )
+        if widget.child_set_action is not None:
+            widget.child_set_action.setVisible(
+                self.controller.can_set_child_compensated_value()
             )
         if widget.rotation_set_action is not None:
             widget.rotation_set_action.setVisible(
@@ -3108,6 +3171,16 @@ class ChannelBoxWidget(qt.QWidget):
                     for xyz_menu in widget.xyz_round_menus.values():
                         xyz_menu.aboutToShow.connect(
                             partial(self._prepare_xyz_round_menu, widget)
+                        )
+                    if (
+                        widget.child_set_action is not None
+                        and widget.xyz_round_kind is not None
+                    ):
+                        widget.child_set_action.triggered.connect(
+                            partial(
+                                self._open_child_compensated_set_dialog,
+                                widget.xyz_round_kind,
+                            )
                         )
                     if (
                         widget.rotation_set_action is not None
