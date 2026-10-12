@@ -13,15 +13,8 @@ from maya import cmds
 from bd_util.ui import qt
 from bd_tools.bd_channel_box.child_compensated_set_dialog import (
     ChildCompensatedSetDialog,
-    ROTATION_INITIAL_HEIGHT,
-    ROTATION_INITIAL_WIDTH,
-    TRANSLATE_INITIAL_HEIGHT,
-    TRANSLATE_INITIAL_WIDTH,
 )
-from bd_tools.bd_channel_box.controller import (
-    ChannelBoxController,
-    RoundTransformKind,
-)
+from bd_tools.bd_channel_box.controller import ChannelBoxController
 
 
 @pytest.fixture
@@ -211,74 +204,6 @@ def test_rotation_dialog_keeps_target_drafts_and_default_compensation(
     finally:
         dialog.close()
         dialog.deleteLater()
-
-
-def test_child_set_dialog_opens_at_configured_size(
-    qt_application: qt.QApplication,
-    controller: ChannelBoxController,
-) -> None:
-    """移動と回転のダイアログを指定寸法でクリック位置付近へ開く。"""
-    target = cmds.createNode("transform", name="compactDialogTarget")
-    controller.node_names = (target,)
-    context = controller.capture_child_set_context()
-    screen = qt_application.primaryScreen()
-    assert screen is not None
-    available = screen.availableGeometry()
-    initial_targets: tuple[tuple[RoundTransformKind, qt.QSize], ...] = (
-        (
-            "translate",
-            qt.QSize(TRANSLATE_INITIAL_WIDTH, TRANSLATE_INITIAL_HEIGHT),
-        ),
-        (
-            "rotate",
-            qt.QSize(ROTATION_INITIAL_WIDTH, ROTATION_INITIAL_HEIGHT),
-        ),
-    )
-    for initial_target, expected_size in initial_targets:
-        parent = qt.QWidget()
-        parent.show()
-        dialog = ChildCompensatedSetDialog(
-            initial_target,
-            context.representative_name,
-            context.representative_type,
-            dict(context.values_canonical),
-            parent,
-        )
-        observed_sizes: list[qt.QSize] = []
-        observed_frames: list[qt.QRect] = []
-        observed_bottom_gaps: list[int] = []
-
-        def inspect_and_reject() -> None:
-            """表示中の寸法・位置・下部余白を記録して閉じる。"""
-            observed_sizes.append(dialog.size())
-            observed_frames.append(dialog.frameGeometry())
-            observed_bottom_gaps.append(
-                dialog.height() - dialog.buttons.geometry().bottom() - 1
-            )
-            dialog.reject()
-
-        try:
-            dialog.set_anchor_position(available.center())
-            inspection_timer = qt.QTimer(dialog)
-            inspection_timer.setSingleShot(True)
-            inspection_timer.timeout.connect(inspect_and_reject)
-            inspection_timer.start(100)
-            assert dialog.exec() == qt.QDialog.DialogCode.Rejected
-            assert observed_sizes == [expected_size]
-            dialog_layout = dialog.layout()
-            assert dialog_layout is not None
-            assert observed_bottom_gaps[0] <= (
-                dialog_layout.contentsMargins().bottom() + 2
-            )
-            assert available.contains(observed_frames[0])
-            frame_center = observed_frames[0].center()
-            assert abs(frame_center.x() - available.center().x()) <= 1
-            assert abs(frame_center.y() - available.center().y()) <= 1
-        finally:
-            dialog.close()
-            dialog.deleteLater()
-            parent.close()
-            parent.deleteLater()
 
 
 def test_translation_dialog_shows_meters_without_rounding_cm_source(

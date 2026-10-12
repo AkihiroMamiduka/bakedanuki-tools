@@ -22,15 +22,16 @@ from bd_util.ui import (
     qt,
 )
 import bd_tools.bd_channel_box.controller as controller_module
-from bd_tools.bd_channel_box.child_compensated_set_dialog import (
-    ChildCompensatedSetDialog,
+from bd_tools.bd_channel_box import (
+    child_rotation_ui,
+    child_translate_ui,
+    rotation_set_ui,
 )
 from bd_tools.bd_channel_box.controller import (
     ChannelAttributeFilter,
-    ChildSetContext,
     RoundTransformKind,
+    RotationDestination,
 )
-from bd_tools.bd_channel_box.rotation_set_dialog import RotationSetDialog
 from bd_tools.bd_channel_box.widget import AttributeRowWidget, ChannelBoxWidget
 
 
@@ -2319,58 +2320,96 @@ def test_xyz_round_menu_uses_current_row_precision_until_refresh(
             cmds.optionVar(remove="channelsPrecision")
 
 
-def test_rotation_set_action_opens_dialog_with_clicked_group(
+def test_rotation_set_action_opens_window_with_clicked_group(
     editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """回転属性行の単一アクションはクリック元を設定先の初期値にする。"""
-    opened: list[str] = []
+    """回転属性行はクリック元をWindowへ渡し、表示だけでは値を変えない。"""
+    opened: list[tuple[RotationDestination, qt.QPoint | None]] = []
 
-    def record_dialog(dialog: RotationSetDialog) -> qt.QDialog.DialogCode:
-        """表示時の設定先を記録し、sceneを変更せず閉じる。"""
-        opened.append(dialog.target())
-        return qt.QDialog.DialogCode.Rejected
+    def record_show(
+        target: RotationDestination, anchor: qt.QPoint | None = None
+    ) -> None:
+        """Windowの初期設定先と表示位置を記録する。"""
+        opened.append((target, anchor))
 
-    monkeypatch.setattr(RotationSetDialog, "exec", record_dialog)
+    monkeypatch.setattr(rotation_set_ui, "show", record_show)
     editor.controller.set_attribute_filter("all")
     _events()
+    before_transform = {
+        target: _rotation_triplet("multiA." + target)
+        for target in ("rotate", "rotateAxis")
+    }
     for attribute in ("rotateX", "rotateAxisY"):
         row = _row(editor, attribute)
         assert row.rotation_set_action is not None
         row.rotation_set_action.trigger()
+    assert before_transform == {
+        target: _rotation_triplet("multiA." + target)
+        for target in ("rotate", "rotateAxis")
+    }
     joint = cmds.createNode("joint", name="setActionJoint")
     cmds.select(joint, replace=True)
     editor.refresh()
     _events()
+    before_joint = {
+        target: _rotation_triplet(joint + "." + target)
+        for target in ("rotate", "rotateAxis", "jointOrient")
+    }
     row = _row(editor, "jointOrientZ")
     assert row.rotation_set_action is not None
     row.rotation_set_action.trigger()
-    assert opened == ["rotate", "rotateAxis", "jointOrient"]
+    assert [target for target, _ in opened] == [
+        "rotate",
+        "rotateAxis",
+        "jointOrient",
+    ]
+    assert all(isinstance(anchor, qt.QPoint) for _, anchor in opened)
+    assert before_joint == {
+        target: _rotation_triplet(joint + "." + target)
+        for target in ("rotate", "rotateAxis", "jointOrient")
+    }
 
 
-def test_child_set_action_opens_dialog_with_clicked_group(
+def test_child_set_action_opens_window_with_clicked_group(
     editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """子を維持する設定は入口の属性群と基準ノード名をダイアログへ渡す。"""
-    opened: list[tuple[str, str]] = []
+    """子を維持する設定は入口の属性群をWindowへ渡し、表示だけでは値を変えない。"""
+    opened: list[tuple[str, qt.QPoint | None]] = []
 
-    def record_dialog(
-        dialog: ChildCompensatedSetDialog,
-    ) -> qt.QDialog.DialogCode:
-        """表示対象を記録し、sceneを変更せず閉じる。"""
-        opened.append((dialog.target(), dialog.target_label.text()))
-        return qt.QDialog.DialogCode.Rejected
+    def record_translate_show(anchor: qt.QPoint | None = None) -> None:
+        """移動Windowの表示位置を記録する。"""
+        opened.append(("translate", anchor))
 
-    monkeypatch.setattr(ChildCompensatedSetDialog, "exec", record_dialog)
+    def record_rotation_show(
+        target: RoundTransformKind, anchor: qt.QPoint | None = None
+    ) -> None:
+        """回転Windowの初期設定先と表示位置を記録する。"""
+        opened.append((target, anchor))
+
+    monkeypatch.setattr(child_translate_ui, "show", record_translate_show)
+    monkeypatch.setattr(child_rotation_ui, "show", record_rotation_show)
     editor.controller.set_attribute_filter("all")
     _events()
+    before_transform = {
+        target: _rotation_triplet("multiA." + target)
+        for target in ("translate", "rotate", "rotateAxis")
+    }
     for attribute in ("translateX", "rotateY", "rotateAxisZ"):
         row = _row(editor, attribute)
         assert row.child_set_action is not None
         row.child_set_action.trigger()
+    assert before_transform == {
+        target: _rotation_triplet("multiA." + target)
+        for target in ("translate", "rotate", "rotateAxis")
+    }
     joint = cmds.createNode("joint", name="childSetActionJoint")
     cmds.select(joint, replace=True)
     editor.refresh()
     _events()
+    before_joint = {
+        target: _rotation_triplet(joint + "." + target)
+        for target in ("translate", "rotate", "rotateAxis", "jointOrient")
+    }
     row = _row(editor, "jointOrientZ")
     assert row.child_set_action is not None
     row.child_set_action.trigger()
@@ -2380,92 +2419,11 @@ def test_child_set_action_opens_dialog_with_clicked_group(
         "rotateAxis",
         "jointOrient",
     ]
-    assert all("基準ノードのみ" in label for _, label in opened)
-    assert all("multiA" in label for _, label in opened[:3])
-    assert joint in opened[3][1]
-
-
-def test_child_set_dialog_dispatches_world_joint_options(
-    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """入口から設定先を変えてもworld値と子Joint補償の指定を渡す。"""
-    joint = cmds.createNode("joint", name="worldSetActionJoint")
-    cmds.select(joint, replace=True)
-    editor.refresh()
-    _events()
-    original_matrix = _local_matrix(joint)
-    calls: list[
-        tuple[
-            ChildSetContext,
-            tuple[float, float, float],
-            RoundTransformKind,
-            str,
-            bool,
-            str,
-        ]
-    ] = []
-
-    def accept_dialog(
-        dialog: ChildCompensatedSetDialog,
-    ) -> qt.QDialog.DialogCode:
-        """設定先と補償方法を変更してworld入力を受理する。"""
-        assert dialog.target() == "rotate"
-        assert dialog.target_combo is not None
-        assert dialog.preservation_combo is not None
-        assert dialog.joint_child_combo is not None
-        dialog.target_combo.setCurrentIndex(
-            dialog.target_combo.findData("jointOrient")
-        )
-        dialog.space_combo.setCurrentIndex(
-            dialog.space_combo.findData("world")
-        )
-        dialog.value_spins[0].setValue(42.0)
-        dialog.preservation_combo.setCurrentIndex(
-            dialog.preservation_combo.findData(False)
-        )
-        dialog.joint_child_combo.setCurrentIndex(
-            dialog.joint_child_combo.findData("jointOrient")
-        )
-        return qt.QDialog.DialogCode.Accepted
-
-    def record_set(
-        context: ChildSetContext,
-        values_canonical: tuple[float, float, float],
-        *,
-        target: RoundTransformKind,
-        space: Literal["local", "world"],
-        compensate_child_translate: bool,
-        joint_child_compensation_attr: Literal["rotate", "jointOrient"],
-    ) -> int:
-        """コマンドへの引数を確認しsceneを変更しない。"""
-        calls.append(
-            (
-                context,
-                values_canonical,
-                target,
-                space,
-                compensate_child_translate,
-                joint_child_compensation_attr,
-            )
-        )
-        return 1
-
-    monkeypatch.setattr(ChildCompensatedSetDialog, "exec", accept_dialog)
-    monkeypatch.setattr(
-        editor.controller, "set_child_compensated_value", record_set
-    )
-    row = _row(editor, "rotateX")
-    assert row.child_set_action is not None
-    row.child_set_action.trigger()
-    assert len(calls) == 1
-    context, values, target, space, preserve_position, child_attr = calls[0]
-    assert context.representative_name == cmds.ls(joint, long=True)[0]
-    assert target == "jointOrient"
-    assert space == "world"
-    assert values[0] == 42.0
-    assert preserve_position is False
-    assert child_attr == "jointOrient"
-    _assert_local_matrix_close(_local_matrix(joint), original_matrix)
+    assert all(isinstance(anchor, qt.QPoint) for _, anchor in opened)
+    assert before_joint == {
+        target: _rotation_triplet(joint + "." + target)
+        for target in ("translate", "rotate", "rotateAxis", "jointOrient")
+    }
 
 
 def test_xyz_round_actions_dispatch_child_compensation_options(

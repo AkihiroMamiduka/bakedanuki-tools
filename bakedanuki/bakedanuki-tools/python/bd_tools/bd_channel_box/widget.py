@@ -51,8 +51,7 @@ from .custom_filter_registry import CustomFilterRegistry
 from .custom_filter_editor import create_custom_filter
 from .custom_filter_setup import CustomFilterSetupPanel
 from .custom_filters import CustomFilterError, CustomFilterSelection
-from .child_compensated_set_dialog import ChildCompensatedSetDialog
-from .rotation_set_dialog import RotationSetDialog
+from . import child_rotation_ui, child_translate_ui, rotation_set_ui
 from .table import ChannelTableView, TableRow
 
 __all__ = [
@@ -2640,79 +2639,38 @@ class ChannelBoxWidget(qt.QWidget):
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
-    def _open_rotation_set_dialog(
+    def _open_rotation_set_window(
         self, initial_target: RotationDestination
     ) -> None:
-        """右クリックした属性を初期設定先にして姿勢維持ダイアログを開く。"""
+        """右クリックした属性を初期設定先にして姿勢維持Windowを開く。"""
         click_position = qt.QCursor.pos()
         self.state_sweep.finish()
         self.lock_sweep.finish()
         self._clear_message()
+        self.controller.state_edit_session.finish()
+        self.controller.finish_value_edit()
         try:
-            context = self.controller.capture_rotation_set_context()
-            dialog = RotationSetDialog(
-                initial_target,
-                context.representative_name,
-                context.representative_type,
-                dict(context.values_degrees),
-                self,
-            )
-            dialog.set_anchor_position(click_position)
+            rotation_set_ui.show(initial_target, click_position)
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
-            return
-        try:
-            if dialog.exec() != qt.QDialog.DialogCode.Accepted:
-                return
-            self.controller.set_rotation_preserving_pose(
-                context,
-                dialog.values_degrees(),
-                target=dialog.target(),
-                compensate_with=dialog.compensate_with(),
-            )
-        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
-            self._show_error(str(error))
-        finally:
-            dialog.deleteLater()
 
-    def _open_child_compensated_set_dialog(
+    def _open_child_compensated_set_window(
         self, initial_target: RoundTransformKind
     ) -> None:
-        """右クリックした属性を初期設定先にして子補償ダイアログを開く。"""
+        """右クリックした属性を初期設定先にして子補償Windowを開く。"""
         click_position = qt.QCursor.pos()
         self.state_sweep.finish()
         self.lock_sweep.finish()
         self._clear_message()
+        self.controller.state_edit_session.finish()
+        self.controller.finish_value_edit()
         try:
-            context = self.controller.capture_child_set_context()
-            dialog = ChildCompensatedSetDialog(
-                initial_target,
-                context.representative_name,
-                context.representative_type,
-                dict(context.values_canonical),
-                self,
-            )
-            dialog.set_anchor_position(click_position)
+            if initial_target == "translate":
+                child_translate_ui.show(click_position)
+            else:
+                child_rotation_ui.show(initial_target, click_position)
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
-            return
-        try:
-            if dialog.exec() != qt.QDialog.DialogCode.Accepted:
-                return
-            self.controller.set_child_compensated_value(
-                context,
-                dialog.values_canonical(),
-                target=dialog.target(),
-                space=dialog.space(),
-                compensate_child_translate=dialog.compensate_child_translate(),
-                joint_child_compensation_attr=(
-                    dialog.joint_child_compensation_attr()
-                ),
-            )
-        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
-            self._show_error(str(error))
-        finally:
-            dialog.deleteLater()
 
     def _prepare_edit_menu(self) -> None:
         """現在のnode・行選択・clipboardに合わせて編集メニューを準備する。"""
@@ -3178,7 +3136,7 @@ class ChannelBoxWidget(qt.QWidget):
                     ):
                         widget.child_set_action.triggered.connect(
                             partial(
-                                self._open_child_compensated_set_dialog,
+                                self._open_child_compensated_set_window,
                                 widget.xyz_round_kind,
                             )
                         )
@@ -3188,7 +3146,7 @@ class ChannelBoxWidget(qt.QWidget):
                     ):
                         widget.rotation_set_action.triggered.connect(
                             partial(
-                                self._open_rotation_set_dialog,
+                                self._open_rotation_set_window,
                                 widget.rotation_set_target,
                             )
                         )

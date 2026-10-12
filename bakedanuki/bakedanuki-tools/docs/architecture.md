@@ -69,6 +69,11 @@ bd_tools/
 bdChannelBoxは `MayaDockableWindowController` を使い、固定workspaceControl IDと
 `bd_tools.bd_channel_box.ui.restore` を維持します。初回は右ドック、close時は完全破棄とし、
 workspace配置の復元・resetはutil、入力と選択監視の終了はtoolsが所有します。
+子を維持する移動・回転設定と姿勢を維持する回転設定は、それぞれ
+`MayaWindowController`が管理するモデルレスWindowです。選択変更・Undo／Redo・
+scene切替の監視はWindowの寿命に結び付け、現在選択の末尾にある基準ノード1個の
+実値へ同期します。XYZの確定入力とstep操作は既存の`bdUtilCommands`へ渡し、
+Windowの表示更新とStep設定はscene・Undo履歴を変更しません。
 値とstepの複合View、属性path・数値種別ごとのprofileと保存基盤はutilへ配置します。
 属性別の初期step、profileの識別子、操作対象の選別はbdChannelBoxが所有します。
 step設定はuser preferencesへ保存し、sceneの値・Undo履歴へ含めません。

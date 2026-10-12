@@ -7,10 +7,10 @@ from typing import cast
 
 from bd_util.ui import qt
 
-__all__ = ["AnchoredDialog"]
+__all__ = ["AnchoredDialog", "centered_position_within_screen"]
 
 
-def _centered_position_within_screen(
+def centered_position_within_screen(
     anchor: qt.QPoint, frame_size: qt.QSize, available: qt.QRect
 ) -> qt.QPoint:
     """クリック位置を中心にし、画面の作業領域へ収まる左上座標を返す。"""
@@ -74,5 +74,5 @@ class AnchoredDialog(qt.QDialog):
             return
         frame_size = self.frameGeometry().size()
         self.move(
-            _centered_position_within_screen(anchor, frame_size, available)
+            centered_position_within_screen(anchor, frame_size, available)
         )
