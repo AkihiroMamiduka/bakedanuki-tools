@@ -607,6 +607,60 @@ def test_child_set_rotation_first_keeps_unshown_translate_default(
     )
 
 
+def test_child_set_options_restore_after_close(
+    clean_scene: None,
+    child_set_dock_host: _ChildSetDockHost,
+    qt_application: qt.QApplication,
+) -> None:
+    """移動と回転の選択設定を保存し、再生成後も各タブへ復元する。"""
+    del clean_scene
+    node = cmds.createNode("joint", name="savedOptionsTarget")
+    cmds.select(node, replace=True)
+    cmds.flushUndo()
+    dock = child_translate_ui.show()
+    _process_events(qt_application)
+    translate = dock.translate_page
+    rotation = dock.rotation_page
+    translate.space_combo.setCurrentIndex(
+        translate.space_combo.findData("world")
+    )
+    rotation.space_combo.setCurrentIndex(
+        rotation.space_combo.findData("world")
+    )
+    assert rotation.preservation_combo is not None
+    rotation.preservation_combo.setCurrentIndex(
+        rotation.preservation_combo.findData("orientation")
+    )
+    assert rotation.joint_child_combo is not None
+    rotation.joint_child_combo.setCurrentIndex(
+        rotation.joint_child_combo.findData("jointOrient")
+    )
+    child_rotation_ui.show("jointOrient")
+    _process_events(qt_application)
+    assert rotation.target() == "jointOrient"
+    assert not rotation.compensate_child_translate()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    child_set_ui.close()
+    assert child_set_dock_host.window is None
+    reopened = child_set_ui.show()
+    _process_events(qt_application)
+    assert reopened is not dock
+    assert reopened.translate_page.space() == "world"
+    assert reopened.rotation_page.space() == "world"
+    assert reopened.rotation_page.preservation_combo is not None
+    assert (
+        reopened.rotation_page.preservation_combo.currentData()
+        == "orientation"
+    )
+    assert reopened.rotation_page.joint_child_compensation_attr() == (
+        "jointOrient"
+    )
+    assert not reopened.rotation_page.compensate_child_translate()
+    assert reopened.rotation_page.target() == "rotate"
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
 def test_pose_window_controller_reuses_and_disposes(
     clean_scene: None, qt_application: qt.QApplication
 ) -> None:

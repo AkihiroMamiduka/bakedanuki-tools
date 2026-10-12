@@ -173,6 +173,21 @@ class ChildSetDockWindow(MayaDockableWindow):
 
         self.ui_state = create_ui_state_manager(_SETTINGS_PATH)
         self.ui_state.register_tab_widget("active_tab", self.tabs)
+        self.ui_state.register_combo_box(
+            "translate_space", self.translate_page.space_combo
+        )
+        self.ui_state.register_combo_box(
+            "rotation_space", self.rotation_page.space_combo
+        )
+        assert self.rotation_page.preservation_combo is not None
+        self.ui_state.register_combo_box(
+            "rotation_preservation", self.rotation_page.preservation_combo
+        )
+        assert self.rotation_page.joint_child_combo is not None
+        self.ui_state.register_combo_box(
+            "rotation_joint_child_compensation",
+            self.rotation_page.joint_child_combo,
+        )
         self.ui_state_tracker = MayaUiStateTracker.for_dockable(
             self.ui_state, self
         )

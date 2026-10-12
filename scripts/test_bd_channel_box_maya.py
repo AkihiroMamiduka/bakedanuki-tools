@@ -3564,7 +3564,7 @@ class _MayaSmokeSession:
         self.steps.append("child_set_docked_size_is_stable")
 
     def _prepare_child_set_restart(self) -> None:
-        """タブ別サイズと現在タブを保存して実Maya再起動へ渡す。"""
+        """タブ別サイズと選択設定を保存して実Maya再起動へ渡す。"""
         from maya import cmds
 
         from bd_tools.bd_channel_box import child_rotation_ui, child_set_ui
@@ -3577,8 +3577,26 @@ class _MayaSmokeSession:
         self._flush_gui()
         if window.tabs.currentIndex() != 1:
             raise AssertionError("再起動前の回転タブが選ばれていません")
+        translate = window.translate_page
+        rotation = window.rotation_page
+        translate.space_combo.setCurrentIndex(
+            translate.space_combo.findData("world")
+        )
+        rotation.space_combo.setCurrentIndex(
+            rotation.space_combo.findData("world")
+        )
+        if rotation.preservation_combo is None:
+            raise AssertionError("子の維持範囲がありません")
+        rotation.preservation_combo.setCurrentIndex(
+            rotation.preservation_combo.findData("orientation")
+        )
+        if rotation.joint_child_combo is None:
+            raise AssertionError("子Jointの補償属性がありません")
+        rotation.joint_child_combo.setCurrentIndex(
+            rotation.joint_child_combo.findData("jointOrient")
+        )
         if not window.ui_state.save():
-            raise AssertionError("選択中のタブを保存できません")
+            raise AssertionError("選択中のタブと設定を保存できません")
         window._save_sizes()
         cmds.workspaceLayoutManager(save=True)
         cmds.savePrefs(general=True, uiLayout=True)
@@ -3589,10 +3607,10 @@ class _MayaSmokeSession:
                 "control_name": name,
             },
         )
-        self.steps.append("save_child_set_tab_and_sizes_for_restart")
+        self.steps.append("save_child_set_tabs_sizes_and_options_for_restart")
 
     def _inspect_child_set_restart(self) -> None:
-        """Mayaの自動復元で選択タブと両タブのサイズを確かめる。"""
+        """Mayaの自動復元で選択タブ・サイズ・設定を確かめる。"""
         from maya import cmds
 
         from bd_util.ui import qt
@@ -3617,6 +3635,13 @@ class _MayaSmokeSession:
         window = windows[0]
         if window.tabs.currentIndex() != 1:
             raise AssertionError("回転タブがMaya再起動後に復元されません")
+        rotation = window.rotation_page
+        if rotation.space() != "world":
+            raise AssertionError("回転の入力空間が復元されません")
+        if rotation.compensate_child_translate():
+            raise AssertionError("子の維持範囲が復元されません")
+        if rotation.joint_child_compensation_attr() != "jointOrient":
+            raise AssertionError("子Jointの補償属性が復元されません")
         width, height = self._child_set_floating_size(name, window)
         if abs(width - 420) > 1 or abs(height - 350) > 1:
             raise AssertionError(
@@ -3625,12 +3650,14 @@ class _MayaSmokeSession:
         if child_translate_ui.show() is not window:
             raise AssertionError("再起動後のメニューでWindowが重複しました")
         self._flush_gui()
+        if window.translate_page.space() != "world":
+            raise AssertionError("移動の入力空間が復元されません")
         width, height = self._child_set_floating_size(name, window)
         if abs(width - 380) > 1 or abs(height - 245) > 1:
             raise AssertionError(
                 f"移動タブの復元サイズが不正です: {width}x{height}"
             )
-        self.steps.append("maya_restart_restores_child_set_tabs_and_sizes")
+        self.steps.append("maya_restart_restores_child_set_tabs_sizes_options")
 
     def _finish(self) -> None:
         """すべての操作結果を保存し、検証専用Mayaを終了する。"""

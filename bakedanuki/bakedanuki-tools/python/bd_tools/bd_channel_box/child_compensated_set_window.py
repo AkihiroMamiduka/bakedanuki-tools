@@ -86,8 +86,10 @@ class ChildCompensatedSetWindow(LiveSetWindowBase):
             self.target_combo = qt.QComboBox(self)
             self.target_combo.currentIndexChanged.connect(self._target_changed)
             self.preservation_combo = qt.QComboBox(self)
-            self.preservation_combo.addItem("座標と姿勢", True)
-            self.preservation_combo.addItem("姿勢", False)
+            self.preservation_combo.addItem(
+                "座標と姿勢", "coordinates_and_orientation"
+            )
+            self.preservation_combo.addItem("姿勢", "orientation")
             self.joint_child_combo = qt.QComboBox(self)
             self.joint_child_combo.addItem("rotate", "rotate")
             self.joint_child_combo.addItem("jointOrient", "jointOrient")
@@ -190,7 +192,11 @@ class ChildCompensatedSetWindow(LiveSetWindowBase):
     def compensate_child_translate(self) -> bool:
         """回転設定時に子のworld座標も維持するか返す。"""
         combo = self.preservation_combo
-        return True if combo is None else cast(bool, combo.currentData())
+        return (
+            True
+            if combo is None
+            else combo.currentData() == "coordinates_and_orientation"
+        )
 
     def joint_child_compensation_attr(self) -> JointChildCompensationAttr:
         """子Jointの姿勢を補償する属性群を返す。"""
