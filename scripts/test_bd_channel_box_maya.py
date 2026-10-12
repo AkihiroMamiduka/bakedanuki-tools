@@ -33,6 +33,7 @@ _PREPARE_RESTART_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PREPARE_RESTART"
 _NAME_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_NAME_ONLY"
 _CONNECTIONS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CONNECTIONS_ONLY"
 _CUSTOM_FILTERS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CUSTOM_FILTERS_ONLY"
+_CHILD_SET_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CHILD_SET_ONLY"
 _PERSISTED_STEP = 0.5
 _STARTUP_IDLE_COMMAND = (
     "import __main__; "
@@ -145,7 +146,18 @@ class _MayaSmokeSession:
             self._inspect_connected_drag,
             self._finish,
         )
-        if self._phase == "restart":
+        if os.environ.get(_CHILD_SET_ONLY_VARIABLE) == "1":
+            self._stages = (
+                (self._inspect_child_set_restart, self._finish)
+                if self._phase == "restart"
+                else (
+                    self._setup_scene,
+                    self._inspect_child_set_tabs,
+                    self._inspect_child_set_docking,
+                    self._finish,
+                )
+            )
+        elif self._phase == "restart":
             self._stages = (
                 self._inspect_restart,
                 self._setup_scene,
@@ -3416,13 +3428,226 @@ class _MayaSmokeSession:
         cmds.autoKeyframe(state=False)
         self.steps.append("connected_drag_finishes_at_time_change")
 
+    def _inspect_child_set_tabs(self) -> None:
+        """回転からの初回起動と共通dockのタブ別浮動サイズを調べる。"""
+        from maya import cmds
+
+        from bd_tools.bd_channel_box import (
+            child_rotation_ui,
+            child_set_ui,
+            child_translate_ui,
+        )
+        from bd_tools.bd_channel_box.child_set_dock_window import (
+            ROTATION_INITIAL_HEIGHT,
+            ROTATION_INITIAL_WIDTH,
+            TRANSLATE_INITIAL_HEIGHT,
+            TRANSLATE_INITIAL_WIDTH,
+        )
+
+        name = child_set_ui.WORKSPACE_CONTROL_NAME
+        window = child_rotation_ui.show("rotateAxis")
+        self._flush_gui()
+        if not cmds.workspaceControl(name, query=True, exists=True):
+            raise AssertionError("子維持の共通workspaceControlがありません")
+        if not cmds.workspaceControl(name, query=True, floating=True):
+            raise AssertionError("子維持の初回表示が浮動状態ではありません")
+        if window.tabs.currentIndex() != 1:
+            raise AssertionError("回転メニューで回転タブが選ばれません")
+        if window.rotation_page.target() != "rotateAxis":
+            raise AssertionError("右クリックした回転属性が反映されません")
+        self._capture_child_set_window("child-set-rotation.png", window)
+        width, height = self._child_set_floating_size(name, window)
+        if (
+            abs(width - ROTATION_INITIAL_WIDTH) > 1
+            or abs(height - ROTATION_INITIAL_HEIGHT) > 1
+        ):
+            raise AssertionError(
+                f"回転タブの初回サイズが不正です: {width}x{height}"
+            )
+
+        if child_translate_ui.show() is not window:
+            raise AssertionError("移動メニューが別Windowを作成しました")
+        self._flush_gui()
+        if window.tabs.currentIndex() != 0:
+            raise AssertionError("移動メニューで移動タブが選ばれません")
+        width, height = self._child_set_floating_size(name, window)
+        if (
+            abs(width - TRANSLATE_INITIAL_WIDTH) > 1
+            or abs(height - TRANSLATE_INITIAL_HEIGHT) > 1
+        ):
+            raise AssertionError(
+                f"回転メニュー初回起動後の移動サイズが不正です: {width}x{height}"
+            )
+        self.steps.append("child_set_rotation_first_keeps_translate_default")
+        self._capture_child_set_window("child-set-translate.png", window)
+
+        cmds.workspaceControl(
+            name, edit=True, resizeWidth=380, resizeHeight=245
+        )
+        self._flush_gui()
+        translate_size = self._child_set_floating_size(name, window)
+        if child_rotation_ui.show("rotateAxis") is not window:
+            raise AssertionError("回転メニューが別Windowを作成しました")
+        self._flush_gui()
+
+        cmds.workspaceControl(
+            name, edit=True, resizeWidth=420, resizeHeight=350
+        )
+        self._flush_gui()
+        rotation_size = self._child_set_floating_size(name, window)
+        child_translate_ui.show()
+        self._flush_gui()
+        width, height = self._child_set_floating_size(name, window)
+        if (width, height) != translate_size:
+            raise AssertionError(
+                "移動タブの保存サイズが不正です: "
+                f"{translate_size} -> {(width, height)}"
+            )
+        for index in range(10):
+            window.tabs.setCurrentIndex(1)
+            self._flush_gui()
+            current_rotation = self._child_set_floating_size(name, window)
+            if current_rotation != rotation_size:
+                raise AssertionError(
+                    "回転タブが繰り返し切替で変化しました: "
+                    f"{rotation_size} -> {current_rotation} ({index + 1}回目)"
+                )
+            window.tabs.setCurrentIndex(0)
+            self._flush_gui()
+            current_translate = self._child_set_floating_size(name, window)
+            if current_translate != translate_size:
+                raise AssertionError(
+                    "移動タブが繰り返し切替で変化しました: "
+                    f"{translate_size} -> {current_translate} ({index + 1}回目)"
+                )
+        self.steps.append("child_set_tabs_restore_floating_sizes")
+        self.steps.append("child_set_tab_sizes_stable_after_ten_round_trips")
+
+    def _inspect_child_set_docking(self) -> None:
+        """ドック中のタブ切替がMayaのパネル寸法を変えないことを調べる。"""
+        from maya import cmds
+
+        from bd_tools.bd_channel_box import child_set_ui
+
+        name = child_set_ui.WORKSPACE_CONTROL_NAME
+        window = child_set_ui.show()
+        cmds.workspaceControl(
+            name, edit=True, dockToMainWindow=("right", True)
+        )
+        self._flush_gui()
+        if cmds.workspaceControl(name, query=True, floating=True):
+            raise AssertionError("Maya右側へドッキングできません")
+        before = (
+            cmds.workspaceControl(name, query=True, width=True),
+            cmds.workspaceControl(name, query=True, height=True),
+        )
+        window.tabs.setCurrentIndex(1)
+        self._flush_gui()
+        after = (
+            cmds.workspaceControl(name, query=True, width=True),
+            cmds.workspaceControl(name, query=True, height=True),
+        )
+        if any(abs(left - right) > 12 for left, right in zip(before, after)):
+            raise AssertionError(
+                "タブ切替でドックサイズが変化しました: "
+                f"{before} -> {after}; "
+                f"floating={cmds.workspaceControl(name, query=True, floating=True)}, "
+                f"window_min={window.minimumSizeHint()}, "
+                f"tabs_min={window.tabs.minimumSizeHint()}, "
+                f"scroll_min={window.rotation_scroll.minimumSizeHint()}, "
+                f"page_min={window.rotation_page.minimumSizeHint()}"
+            )
+        cmds.workspaceControl(name, edit=True, floating=True)
+        self._flush_gui()
+        window.tabs.setCurrentIndex(0)
+        self._flush_gui()
+        self.steps.append("child_set_docked_size_is_stable")
+
+    def _prepare_child_set_restart(self) -> None:
+        """タブ別サイズと現在タブを保存して実Maya再起動へ渡す。"""
+        from maya import cmds
+
+        from bd_tools.bd_channel_box import child_rotation_ui, child_set_ui
+
+        window = child_rotation_ui.show("rotateAxis")
+        name = child_set_ui.WORKSPACE_CONTROL_NAME
+        cmds.workspaceControl(
+            name, edit=True, floating=True, resizeWidth=420, resizeHeight=350
+        )
+        self._flush_gui()
+        if window.tabs.currentIndex() != 1:
+            raise AssertionError("再起動前の回転タブが選ばれていません")
+        if not window.ui_state.save():
+            raise AssertionError("選択中のタブを保存できません")
+        window._save_sizes()
+        cmds.workspaceLayoutManager(save=True)
+        cmds.savePrefs(general=True, uiLayout=True)
+        _write_json(
+            self.output / "prepared-restart.json",
+            {
+                "maya_version": str(cmds.about(version=True)),
+                "control_name": name,
+            },
+        )
+        self.steps.append("save_child_set_tab_and_sizes_for_restart")
+
+    def _inspect_child_set_restart(self) -> None:
+        """Mayaの自動復元で選択タブと両タブのサイズを確かめる。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+        from bd_tools.bd_channel_box import child_set_ui, child_translate_ui
+        from bd_tools.bd_channel_box.child_set_dock_window import (
+            ChildSetDockWindow,
+        )
+
+        self._flush_gui()
+        name = child_set_ui.WORKSPACE_CONTROL_NAME
+        if not cmds.workspaceControl(name, query=True, exists=True):
+            raise AssertionError("Maya再起動で子維持dockが復元されません")
+        windows = [
+            widget
+            for widget in qt.QApplication.allWidgets()
+            if isinstance(widget, ChildSetDockWindow)
+        ]
+        if len(windows) != 1:
+            raise AssertionError(
+                f"子維持Windowの復元数が不正です: {len(windows)}"
+            )
+        window = windows[0]
+        if window.tabs.currentIndex() != 1:
+            raise AssertionError("回転タブがMaya再起動後に復元されません")
+        width, height = self._child_set_floating_size(name, window)
+        if abs(width - 420) > 1 or abs(height - 350) > 1:
+            raise AssertionError(
+                f"回転タブの復元サイズが不正です: {width}x{height}"
+            )
+        if child_translate_ui.show() is not window:
+            raise AssertionError("再起動後のメニューでWindowが重複しました")
+        self._flush_gui()
+        width, height = self._child_set_floating_size(name, window)
+        if abs(width - 380) > 1 or abs(height - 245) > 1:
+            raise AssertionError(
+                f"移動タブの復元サイズが不正です: {width}x{height}"
+            )
+        self.steps.append("maya_restart_restores_child_set_tabs_and_sizes")
+
     def _finish(self) -> None:
         """すべての操作結果を保存し、検証専用Mayaを終了する。"""
         from bd_tools import bd_channel_box
+        from bd_tools.bd_channel_box import child_set_ui
 
         bd_channel_box.dispose()
+        if os.environ.get(_CHILD_SET_ONLY_VARIABLE) == "1":
+            if os.environ.get(_PREPARE_RESTART_VARIABLE) == "1":
+                self._prepare_child_set_restart()
+            else:
+                child_set_ui.dispose()
         self.steps.append("dispose")
-        if os.environ.get(_PREPARE_RESTART_VARIABLE) == "1":
+        if (
+            os.environ.get(_PREPARE_RESTART_VARIABLE) == "1"
+            and os.environ.get(_CHILD_SET_ONLY_VARIABLE) != "1"
+        ):
             self._prepare_restart()
         self._complete(True)
 
@@ -3835,6 +4060,38 @@ class _MayaSmokeSession:
             raise RuntimeError(f"Window画像を保存できません: {image_path}")
         self.screenshots.append(str(image_path))
 
+    def _capture_child_set_window(self, filename: str, window: object) -> None:
+        """子維持Windowのタブ内容を配置確認用PNGへ保存する。"""
+        from bd_tools.bd_channel_box.child_set_dock_window import (
+            ChildSetDockWindow,
+        )
+
+        if not isinstance(window, ChildSetDockWindow):
+            raise TypeError("子維持Windowを指定してください")
+        image_path = self.output / filename
+        if not window.grab().save(str(image_path)):
+            raise RuntimeError(
+                f"子維持Window画像を保存できません: {image_path}"
+            )
+        self.screenshots.append(str(image_path))
+
+    def _child_set_floating_size(
+        self, name: str, window: object
+    ) -> tuple[int, int]:
+        """子維持workspaceControlの浮動枠寸法を返す。"""
+        from bd_util.maya.ui.dock import workspace_control
+        from bd_tools.bd_channel_box.child_set_dock_window import (
+            ChildSetDockWindow,
+        )
+
+        if not isinstance(window, ChildSetDockWindow):
+            raise TypeError("子維持Windowを指定してください")
+        host = workspace_control.find_floating_host(name, window)
+        if host is None:
+            raise AssertionError("子維持workspaceControlの浮動枠がありません")
+        size = host.size()
+        return size.width(), size.height()
+
     def _capture_maya(self, filename: str) -> None:
         """独立したMaya main windowを描画し、ドッキング位置の確認画像を保存する。"""
         from bd_util.maya.ui import get_main_window
@@ -3935,6 +4192,7 @@ def _launch(
     name_only: bool = False,
     connections_only: bool = False,
     custom_filters_only: bool = False,
+    child_set_only: bool = False,
 ) -> int:
     """固有の設定と作業ディレクトリを使う検証Maya processを起動する。"""
     repository = Path(__file__).resolve().parents[1]
@@ -3985,6 +4243,7 @@ def _launch(
     environment[_CUSTOM_FILTERS_ONLY_VARIABLE] = (
         "1" if custom_filters_only else "0"
     )
+    environment[_CHILD_SET_ONLY_VARIABLE] = "1" if child_set_only else "0"
     environment["BAKEDANUKI_UTIL_ROOT"] = str(util_root)
     environment["PYTHONPATH"] = os.pathsep.join(
         (
@@ -4082,6 +4341,7 @@ def main() -> int:
     restart_group.add_argument("--name-only", action="store_true")
     restart_group.add_argument("--connections-only", action="store_true")
     restart_group.add_argument("--custom-filters-only", action="store_true")
+    parser.add_argument("--child-set-only", action="store_true")
     arguments = parser.parse_args()
     util_root = arguments.util_root or Path(
         os.environ.get(
@@ -4098,6 +4358,7 @@ def main() -> int:
         name_only=arguments.name_only,
         connections_only=arguments.connections_only,
         custom_filters_only=arguments.custom_filters_only,
+        child_set_only=arguments.child_set_only,
     )
 
 

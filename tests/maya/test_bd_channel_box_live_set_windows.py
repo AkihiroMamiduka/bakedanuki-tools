@@ -1,23 +1,34 @@
 # coding: utf-8
-"""子・姿勢を維持するモデルレスWindowの即時入力を検証する。"""
+"""子維持のdockable画面と姿勢維持Windowの即時入力を検証する。"""
 
 from __future__ import annotations
 
 import math
 from collections.abc import Callable, Iterator, Sequence
+from pathlib import Path
 from typing import cast
 
 import pytest
 from maya import cmds
 
+from bd_util.maya.ui import MayaDockableWindow
+from bd_util.maya.ui.dock import workspace_control
 from bd_util.ui import qt
 from bd_tools.bd_channel_box import (
     child_rotation_ui,
+    child_set_ui,
     child_translate_ui,
     rotation_set_ui,
 )
 from bd_tools.bd_channel_box.child_compensated_set_window import (
     ChildCompensatedSetWindow,
+)
+from bd_tools.bd_channel_box.child_set_dock_window import (
+    ROTATION_INITIAL_HEIGHT,
+    ROTATION_INITIAL_WIDTH,
+    TRANSLATE_INITIAL_HEIGHT,
+    TRANSLATE_INITIAL_WIDTH,
+    ChildSetDockWindow,
 )
 from bd_tools.bd_channel_box.rotation_set_window import RotationSetWindow
 
@@ -108,6 +119,122 @@ def _xyz_vertical_gaps(
         editors[1].geometry().top() - editors[0].geometry().bottom() - 1,
         editors[2].geometry().top() - editors[1].geometry().bottom() - 1,
     )
+
+
+class _ChildSetDockHost:
+    """batch Mayaにない浮動workspaceControlをQtで代替する。"""
+
+    def __init__(self) -> None:
+        """共通Windowと内側controlより4px大きい浮動枠を保持する。"""
+        self.window: MayaDockableWindow | None = None
+        self.size = qt.QSize(TRANSLATE_INITIAL_WIDTH, TRANSLATE_INITIAL_HEIGHT)
+        self.floating_host = qt.QWidget()
+        self.floating_host.resize(self.size)
+        self.floating_host.show()
+        self.floating = True
+
+    def attach(self, window: MayaDockableWindow, _pointer: int = 0) -> None:
+        """生成またはrestoreしたWindowを表示する。"""
+        self.window = window
+        qt.QWidget.setVisible(window, True)
+
+    def delete(self, _name: str) -> None:
+        """MayaがworkspaceControlを削除する動作を再現する。"""
+        window, self.window = self.window, None
+        if window is not None:
+            window.hide()
+            window.deleteLater()
+
+    def resize(self, size: qt.QSize) -> None:
+        """浮動枠と内側controlの4px差を維持して寸法を変える。"""
+        self.size = qt.QSize(size)
+        self.floating_host.resize(size)
+        window = self.window
+        if window is not None:
+            qt.QWidget.resize(
+                window, qt.QSize(size.width() - 4, size.height() - 4)
+            )
+
+
+@pytest.fixture
+def child_set_dock_host(
+    qt_application: qt.QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> Iterator[_ChildSetDockHost]:
+    """実Window・controllerを使いMayaのworkspaceControl境界を置き換える。"""
+    from bd_util.maya.ui import settings as maya_settings
+
+    host = _ChildSetDockHost()
+
+    def show_dockable(window: MayaDockableWindow, **options: object) -> None:
+        """初回のDockOptionsサイズで共通Windowを表示する。"""
+        width = options.get("width")
+        height = options.get("height")
+        if isinstance(width, int) and isinstance(height, int):
+            host.size = qt.QSize(width, height)
+        host.attach(window)
+
+    def resize_control(window: ChildSetDockWindow, size: qt.QSize) -> None:
+        """浮動枠のサイズ変更をQtの実Widgetへ反映する。"""
+        del window
+        host.resize(size)
+
+    def exists(_name: str) -> bool:
+        """代替workspaceControlの有無を返す。"""
+        return host.window is not None
+
+    def no_state(_name: str) -> bool:
+        """Mayaの保存済み配置がない初回状態を再現する。"""
+        return False
+
+    def restore(_name: str) -> None:
+        """代替workspaceControlの再表示を受け付ける。"""
+        return None
+
+    def current_parent() -> int:
+        """restore時に使う代替親pointerを返す。"""
+        return 1
+
+    def schedule_ensure_on_screen(_name: str, _window: qt.QWidget) -> None:
+        """実画面の位置補正をbatch testでは省略する。"""
+        return None
+
+    def is_floating(_window: ChildSetDockWindow) -> bool:
+        """代替workspaceControlの浮動状態を返す。"""
+        return host.floating
+
+    def find_floating_host(_name: str, _window: qt.QWidget) -> qt.QWidget:
+        """内側controlとは寸法の異なる浮動枠を返す。"""
+        return host.floating_host
+
+    monkeypatch.setattr(MayaDockableWindow, "show", show_dockable)
+    monkeypatch.setattr(workspace_control, "exists", exists)
+    monkeypatch.setattr(workspace_control, "state_exists", no_state)
+    monkeypatch.setattr(workspace_control, "restore", restore)
+    monkeypatch.setattr(workspace_control, "delete", host.delete)
+    monkeypatch.setattr(workspace_control, "current_parent", current_parent)
+    monkeypatch.setattr(workspace_control, "attach", host.attach)
+    monkeypatch.setattr(
+        workspace_control,
+        "schedule_ensure_on_screen",
+        schedule_ensure_on_screen,
+    )
+    monkeypatch.setattr(
+        maya_settings, "get_ui_settings_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(ChildSetDockWindow, "_is_floating", is_floating)
+    monkeypatch.setattr(
+        workspace_control, "find_floating_host", find_floating_host
+    )
+    monkeypatch.setattr(
+        ChildSetDockWindow, "_resize_floating_control", resize_control
+    )
+    child_set_ui.dispose()
+    yield host
+    child_set_ui.dispose()
+    _process_events(qt_application)
+    host.floating_host.deleteLater()
 
 
 def test_translation_window_follows_selection_and_steps_with_one_undo(
@@ -339,54 +466,154 @@ def test_pose_window_uses_current_maya_angle_unit(
         window.deleteLater()
 
 
-def test_modeless_window_controllers_reuse_and_dispose(
-    clean_scene: None, qt_application: qt.QApplication
+def test_child_set_tabs_reuse_and_restore_floating_sizes(
+    clean_scene: None,
+    child_set_dock_host: _ChildSetDockHost,
+    qt_application: qt.QApplication,
 ) -> None:
-    """3画面の配置と再利用を確認し、終了時に監視を解除する。"""
+    """二つのメニューが同じdockを使い、タブ別の浮動サイズを復元する。"""
     del clean_scene
     node = cmds.createNode("transform", name="liveControllerTarget")
     cmds.select(node, replace=True)
-    translate = child_translate_ui.show()
-    try:
-        _process_events(qt_application)
-        _assert_step_fields_visible(translate)
-        assert _xyz_vertical_gaps(translate) == (2, 2)
-        translate.resize(translate.width(), translate.height() + 60)
-        _process_events(qt_application)
-        assert _xyz_vertical_gaps(translate) == (2, 2)
-        assert [
-            translate.space_combo.itemText(index)
-            for index in range(translate.space_combo.count())
-        ] == ["World", "Local"]
-        assert translate.space() == "local"
-        assert child_translate_ui.show() is translate
-        assert translate.windowFlags() & qt.Qt.WindowType.Window
-        screen = qt_application.primaryScreen()
-        assert screen is not None
-        available = screen.availableGeometry()
-        translate.set_anchor_position(available.bottomRight())
-        _process_events(qt_application)
-        assert available.contains(translate.frameGeometry())
-    finally:
-        child_translate_ui.close()
-    assert translate.is_disposed
+    cmds.flushUndo()
+    dock = child_translate_ui.show()
+    _process_events(qt_application)
+    assert dock is child_set_dock_host.window
+    assert dock.tabs.currentIndex() == 0
+    assert dock.size() == qt.QSize(
+        child_set_dock_host.size.width() - 4,
+        child_set_dock_host.size.height() - 4,
+    )
+    assert dock.translate_page.parentWidget() is not None
+    assert not (dock.translate_page.windowFlags() & qt.Qt.WindowType.Window)
+    assert dock.translate_page.space() == "local"
+    assert [
+        dock.translate_page.space_combo.itemText(index)
+        for index in range(dock.translate_page.space_combo.count())
+    ] == ["World", "Local"]
+    _assert_step_fields_visible(dock.translate_page)
+    assert _xyz_vertical_gaps(dock.translate_page) == (2, 2)
+
+    child_set_dock_host.resize(qt.QSize(370, 240))
+    _process_events(qt_application)
+    assert _xyz_vertical_gaps(dock.translate_page) == (2, 2)
+    assert child_translate_ui.show() is dock
 
     rotation = child_rotation_ui.show("rotateAxis")
-    try:
-        _process_events(qt_application)
-        _assert_step_fields_visible(rotation)
-        assert _xyz_vertical_gaps(rotation) == (2, 2)
-        assert [
-            rotation.space_combo.itemText(index)
-            for index in range(rotation.space_combo.count())
-        ] == ["World", "Local"]
-        assert rotation.space() == "local"
-        assert child_rotation_ui.show("rotate") is rotation
-        assert rotation.target() == "rotate"
-    finally:
-        child_rotation_ui.close()
-    assert rotation.is_disposed
+    _process_events(qt_application)
+    assert rotation is dock
+    assert dock.tabs.currentIndex() == 1
+    assert dock.rotation_page.target() == "rotateAxis"
+    assert child_set_dock_host.size == qt.QSize(
+        ROTATION_INITIAL_WIDTH, ROTATION_INITIAL_HEIGHT
+    )
+    _assert_step_fields_visible(dock.rotation_page)
+    assert _xyz_vertical_gaps(dock.rotation_page) == (2, 2)
+    assert dock.rotation_page.space() == "local"
 
+    child_set_dock_host.resize(qt.QSize(390, 330))
+    _process_events(qt_application)
+    assert child_translate_ui.show() is dock
+    _process_events(qt_application)
+    assert dock.tabs.currentIndex() == 0
+    assert child_set_dock_host.size == qt.QSize(370, 240)
+    assert child_rotation_ui.show("rotate") is dock
+    _process_events(qt_application)
+    assert dock.rotation_page.target() == "rotate"
+    assert child_set_dock_host.size == qt.QSize(390, 330)
+
+    # 内側controlとの寸法差がタブ切替を繰り返しても累積しない
+    for _ in range(10):
+        dock.tabs.setCurrentIndex(0)
+        _process_events(qt_application)
+        assert child_set_dock_host.size == qt.QSize(370, 240)
+        dock.tabs.setCurrentIndex(1)
+        _process_events(qt_application)
+        assert child_set_dock_host.size == qt.QSize(390, 330)
+
+    # タブを変えずに手動変更した外枠の寸法もドック移動後へ引き継ぐ
+    child_set_dock_host.resize(qt.QSize(405, 345))
+    _process_events(qt_application)
+
+    # ドック中はタブを変えても周囲のMayaパネル寸法を変えない
+    child_set_dock_host.floating = False
+    dock.floating_changed.emit(False)
+    child_set_dock_host.resize(qt.QSize(480, 420))
+    dock.tabs.setCurrentIndex(0)
+    _process_events(qt_application)
+    assert child_set_dock_host.size == qt.QSize(480, 420)
+    child_set_dock_host.floating = True
+    dock.floating_changed.emit(True)
+    _process_events(qt_application)
+    assert child_set_dock_host.size == qt.QSize(370, 240)
+
+    dock.tabs.setCurrentIndex(1)
+    _process_events(qt_application)
+    assert child_set_dock_host.size == qt.QSize(405, 345)
+    next_node = cmds.createNode("transform", name="nextControllerTarget")
+    cmds.select(next_node, replace=True)
+    _process_events(qt_application)
+    assert next_node in dock.rotation_page.target_label.text()
+    cmds.flushUndo()
+    dock.tabs.setCurrentIndex(0)
+    _process_events(qt_application)
+    assert next_node in dock.translate_page.target_label.text()
+    dock.tabs.setCurrentIndex(1)
+    _process_events(qt_application)
+    assert _xyz(node, "translate") == (0.0, 0.0, 0.0)
+    assert _xyz(node, "rotate") == (0.0, 0.0, 0.0)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    child_set_ui.close()
+    assert dock.is_disposed
+    assert dock.translate_page.is_disposed
+    assert dock.rotation_page.is_disposed
+    assert child_set_dock_host.window is None
+    reopened = child_set_ui.show()
+    _process_events(qt_application)
+    assert reopened is not dock
+    assert reopened.tabs.currentIndex() == 1
+    assert child_set_dock_host.size == qt.QSize(405, 345)
+    child_translate_ui.show()
+    _process_events(qt_application)
+    assert reopened.tabs.currentIndex() == 0
+    assert child_set_dock_host.size == qt.QSize(370, 240)
+
+
+def test_child_set_rotation_first_keeps_unshown_translate_default(
+    clean_scene: None,
+    child_set_dock_host: _ChildSetDockHost,
+    qt_application: qt.QApplication,
+) -> None:
+    """回転から初回起動しても未表示の移動タブの規定値を保持する。"""
+    del clean_scene
+    node = cmds.createNode("transform", name="rotationFirstTarget")
+    cmds.select(node, replace=True)
+    dock = child_rotation_ui.show("rotate")
+
+    # 初期タブの確定前にMayaの浮動枠が回転ページの高さへ広がる
+    child_set_dock_host.resize(
+        qt.QSize(ROTATION_INITIAL_WIDTH, ROTATION_INITIAL_HEIGHT)
+    )
+    _process_events(qt_application)
+    assert dock.tabs.currentIndex() == 1
+    assert child_set_dock_host.size == qt.QSize(
+        ROTATION_INITIAL_WIDTH, ROTATION_INITIAL_HEIGHT
+    )
+
+    dock.tabs.setCurrentIndex(0)
+    _process_events(qt_application)
+    assert child_set_dock_host.size == qt.QSize(
+        TRANSLATE_INITIAL_WIDTH, TRANSLATE_INITIAL_HEIGHT
+    )
+
+
+def test_pose_window_controller_reuses_and_disposes(
+    clean_scene: None, qt_application: qt.QApplication
+) -> None:
+    """姿勢維持Windowの再利用と表示内容、監視終了を確認する。"""
+    del clean_scene
+    node = cmds.createNode("transform", name="poseControllerTarget")
+    cmds.select(node, replace=True)
     pose = rotation_set_ui.show("rotateAxis")
     try:
         _process_events(qt_application)

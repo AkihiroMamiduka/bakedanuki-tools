@@ -32,21 +32,22 @@ TransformSpace = Literal["local", "world"]
 JointChildCompensationAttr = Literal["rotate", "jointOrient"]
 _Values = tuple[float, float, float]
 
-# Step欄を含めたWindowの初期表示サイズ（Qt論理px）
-TRANSLATE_INITIAL_WIDTH = 298
-TRANSLATE_INITIAL_HEIGHT = 176
+# 単体起動時だけ使うWindowの初期表示サイズ（Qt論理px）
+TRANSLATE_INITIAL_WIDTH = 220
+TRANSLATE_INITIAL_HEIGHT = 300
 ROTATION_INITIAL_WIDTH = 300
 ROTATION_INITIAL_HEIGHT = 260
 
 
 class ChildCompensatedSetWindow(LiveSetWindowBase):
-    """操作時の基準ノード1個へXYZ値を即時設定する。"""
+    """操作時の基準ノード1個へXYZ値を即時設定する画面。"""
 
     def __init__(
         self,
         parent: qt.QWidget | None = None,
         *,
         initial_target: RoundTransformKind = "translate",
+        as_page: bool = False,
     ) -> None:
         """移動または回転用の選択欄と独立した軸Step欄を作る。"""
         if initial_target not in (
@@ -56,7 +57,7 @@ class ChildCompensatedSetWindow(LiveSetWindowBase):
             "jointOrient",
         ):
             raise ValueError("移動または回転属性を指定してください")
-        super().__init__(parent)
+        super().__init__(parent, as_page=as_page)
         self._is_translate = initial_target == "translate"
         self._requested_target: RoundTransformKind = initial_target
         self._node_name: str | None = None
@@ -146,18 +147,19 @@ class ChildCompensatedSetWindow(LiveSetWindowBase):
         layout.addLayout(selectors)
         layout.addWidget(self.xyz_editor)
         layout.addWidget(self.error_label)
-        self.resize(
-            (
-                TRANSLATE_INITIAL_WIDTH
-                if self._is_translate
-                else ROTATION_INITIAL_WIDTH
-            ),
-            (
-                TRANSLATE_INITIAL_HEIGHT
-                if self._is_translate
-                else ROTATION_INITIAL_HEIGHT
-            ),
-        )
+        if not as_page:
+            self.resize(
+                (
+                    TRANSLATE_INITIAL_WIDTH
+                    if self._is_translate
+                    else ROTATION_INITIAL_WIDTH
+                ),
+                (
+                    TRANSLATE_INITIAL_HEIGHT
+                    if self._is_translate
+                    else ROTATION_INITIAL_HEIGHT
+                ),
+            )
 
         self.selection_invalidated.connect(self._invalidate_selection)
         self.units_invalidated.connect(self.xyz_editor.discard_pending_input)

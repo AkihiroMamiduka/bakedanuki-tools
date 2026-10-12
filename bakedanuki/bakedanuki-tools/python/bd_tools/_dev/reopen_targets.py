@@ -10,8 +10,16 @@ CHANNEL_BOX_REOPEN: tuple[str, str, str, str] = (
     "show",
 )
 CHANNEL_BOX_CONTROL_ID = "bdChannelBoxWindow"
+CHILD_SET_REOPEN: tuple[str, str, str, str] = (
+    "bd_tools",
+    "bd_channel_box_child_set",
+    "bd_tools.bd_channel_box.child_set_ui",
+    "show",
+)
+CHILD_SET_CONTROL_ID = "bdChannelBoxChildSetWindow"
 
 # MayaがuiScriptをまだ実行していないdockも、control名から調べられるようにする
 KNOWN_DOCK_TOOLS: tuple[tuple[tuple[str, str, str, str], str], ...] = (
     (CHANNEL_BOX_REOPEN, f"{CHANNEL_BOX_CONTROL_ID}WorkspaceControl"),
+    (CHILD_SET_REOPEN, f"{CHILD_SET_CONTROL_ID}WorkspaceControl"),
 )

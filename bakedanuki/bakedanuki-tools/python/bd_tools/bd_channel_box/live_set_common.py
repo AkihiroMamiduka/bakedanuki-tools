@@ -137,16 +137,19 @@ class LiveXyzEditor(qt.QWidget):
 
 
 class LiveSetWindowBase(qt.QWidget):
-    """Mayaの選択・Undo・scene変更に追従する通常Window。"""
+    """Mayaの選択・Undo・scene変更に追従する入力画面の基底。"""
 
     selection_invalidated = qt.Signal()
     units_invalidated = qt.Signal()
     refresh_requested = qt.Signal()
 
-    def __init__(self, parent: qt.QWidget | None = None) -> None:
-        """選択監視とクリック位置基準の配置を初期化する。"""
+    def __init__(
+        self, parent: qt.QWidget | None = None, *, as_page: bool = False
+    ) -> None:
+        """選択監視と通常Window時のクリック位置基準配置を初期化する。"""
         super().__init__(parent)
-        self.setWindowFlag(qt.Qt.WindowType.Window, True)
+        if not as_page:
+            self.setWindowFlag(qt.Qt.WindowType.Window, True)
         self._anchor_position: qt.QPoint | None = None
         self._disposed = False
         self._refresh_timer = qt.QTimer(self)

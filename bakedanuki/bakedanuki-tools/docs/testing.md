@@ -64,6 +64,10 @@ util側の`tests/maya/ui/test_plugs_value_edits.py`で、複数Bindingをまと�
 
 名前欄の描画・Enter確定・フォーカスと終了処理だけを検証する場合は、
 同じコマンドへ`--name-only`を追加します。
+子維持の移動・回転タブと浮動・ドックのサイズを実Mayaで確認する場合は
+`--child-set-only`を追加します。Maya再起動後のタブとサイズまで検証する場合は
+同じオプションに`--prepare-restart`を付け、出力された検証ディレクトリを
+`--restart-from`へ渡してもう一度実行します。
 接続属性の入力だけを検証する場合は`--connections-only`を追加します。
 通常時間キー・SDK・Animation Layerの実画面入力とAuto Key ON／OFF、
 tooltip、constraintの入力禁止、Undo／Redo、時刻変更でのSlider終了を確認します。
@@ -308,6 +312,11 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。この段�
   ホイール・上下操作の即時反映、残りの軸の未丸め実値維持、各操作のUndo／Redo、
   同値時の無Undoを検証する。各軸のStep変更はscene・Undoへ書かず、
   bdChannelBox本体のStepと連動しないことも確認する。
+  子維持の移動・回転は同一dockable Windowの2タブを使い、メニューからのタブ・回転属性選択、
+  回転メニューからの初回起動後も未表示の移動タブが初期サイズを保つこと、
+  浮動時のタブ別サイズ変更と再起動復元、ドッキング時のドック寸法維持、reloadでの再表示と
+  callback解除を確認する。浮動枠と内側controlの寸法差がある状態でも10往復のタブ切替で
+  幅・高さが変わらず、タブ切替自体はscene・Undo履歴を変更しないこと。
 - 表示・ロック: 既存Hide属性の列挙・復帰、Keyable／ChannelBox／Hide、ロック／解除、
   各項目の混在と独立操作、1回UndoとRedo、接続済み属性・親ロックの扱い。
   表示状態の混在は3ボタンとも未選択にし、印・tooltipを確認する。
