@@ -820,7 +820,9 @@ Transform／JointそれぞれのXYZをまとめて丸め、複数行を選んで
 共通のdockable Windowの「移動」または「回転」タブにXYZの3値を表示します。
 回転では右クリックした属性群を
 「値をセットする属性」の初期値とし、Transformは`rotate`／`rotateAxis`、
-Jointはこれらに`jointOrient`を加えた中から設定先を選べます。
+Jointは`jointOrient`／`rotate`／`rotateAxis`の順に設定先を選べます。
+「子Jointの補償属性」は`jointOrient`／`rotate`の順で表示しますが、
+保存値がない場合の初期選択は`rotate`です。
 
 対象は**操作時の現在選択の末尾にある基準ノード1個だけ**です。複数選択中のほかの
 ノードの同じ属性には値を適用しません。Windowを開いたままMayaで選択を変えられ、

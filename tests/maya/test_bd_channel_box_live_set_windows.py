@@ -607,6 +607,63 @@ def test_child_set_rotation_first_keeps_unshown_translate_default(
     )
 
 
+def test_child_set_rotation_combo_order_and_selection_by_attribute(
+    clean_scene: None,
+    child_set_dock_host: _ChildSetDockHost,
+    qt_application: qt.QApplication,
+) -> None:
+    """ノード別の候補順と属性名による選択・補償先の初期値を確認する。"""
+    del clean_scene, child_set_dock_host
+    transform = cmds.createNode("transform", name="comboOrderTransform")
+    joint = cmds.createNode("joint", name="comboOrderJoint")
+    cmds.select(transform, replace=True)
+    dock = child_rotation_ui.show("rotateAxis")
+    _process_events(qt_application)
+    rotation = dock.rotation_page
+    target = rotation.target_combo
+    compensation = rotation.joint_child_combo
+    assert target is not None
+    assert compensation is not None
+    assert tuple(
+        target.itemData(index) for index in range(target.count())
+    ) == (
+        "rotate",
+        "rotateAxis",
+    )
+    assert target.currentData() == "rotateAxis"
+    assert tuple(
+        compensation.itemData(index) for index in range(compensation.count())
+    ) == ("jointOrient", "rotate")
+    assert compensation.currentData() == "rotate"
+
+    cmds.select(joint, replace=True)
+    _process_events(qt_application)
+    assert tuple(
+        target.itemData(index) for index in range(target.count())
+    ) == (
+        "jointOrient",
+        "rotate",
+        "rotateAxis",
+    )
+    assert target.currentData() == "rotateAxis"
+    assert compensation.currentData() == "rotate"
+
+    child_rotation_ui.show("jointOrient")
+    _process_events(qt_application)
+    assert target.currentData() == "jointOrient"
+    assert rotation.target() == "jointOrient"
+    cmds.select(transform, replace=True)
+    _process_events(qt_application)
+    assert tuple(
+        target.itemData(index) for index in range(target.count())
+    ) == (
+        "rotate",
+        "rotateAxis",
+    )
+    assert target.currentData() == "rotate"
+    assert rotation.target() == "rotate"
+
+
 def test_child_set_options_restore_after_close(
     clean_scene: None,
     child_set_dock_host: _ChildSetDockHost,

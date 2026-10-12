@@ -9,6 +9,10 @@
 
 ### Changed
 
+- bdChannelBoxの「回転をセット（子を維持）」で、Jointの設定先候補を
+  `jointOrient`→`rotate`→`rotateAxis`、子Jointの補償先候補を
+  `jointOrient`→`rotate`の順に変更。Transformの設定先候補と補償先の初期値
+  `rotate`は維持する。選択と保存は属性名で扱うため設定の移行は不要。
 - bdChannelBoxの「移動・回転をセット（子を維持）」で、移動・回転それぞれの入力空間、
   回転の子の維持範囲と子Jointの補償属性を`bd_channel_box/ui.ini`へ保存し、
   再表示・Maya再起動時に復元する。既存設定はそのまま使え、未保存項目には従来の

@@ -91,8 +91,11 @@ class ChildCompensatedSetWindow(LiveSetWindowBase):
             )
             self.preservation_combo.addItem("姿勢", "orientation")
             self.joint_child_combo = qt.QComboBox(self)
-            self.joint_child_combo.addItem("rotate", "rotate")
             self.joint_child_combo.addItem("jointOrient", "jointOrient")
+            self.joint_child_combo.addItem("rotate", "rotate")
+            self.joint_child_combo.setCurrentIndex(
+                self.joint_child_combo.findData("rotate")
+            )
             self.joint_child_combo.setToolTip(
                 "子Jointの姿勢補償先。Transform子はrotateで補償します"
             )
@@ -215,7 +218,7 @@ class ChildCompensatedSetWindow(LiveSetWindowBase):
         if combo is None:
             return
         available: tuple[RoundTransformKind, ...] = (
-            ("rotate", "rotateAxis", "jointOrient")
+            ("jointOrient", "rotate", "rotateAxis")
             if node_type == "joint"
             else ("rotate", "rotateAxis")
         )
