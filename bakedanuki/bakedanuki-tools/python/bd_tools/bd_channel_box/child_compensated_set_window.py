@@ -9,6 +9,7 @@ from maya import cmds
 from maya.api import OpenMaya as om
 
 from bd_util import Nodes
+from bd_util.maya.node import node_display_name
 from bd_util.maya.mpx_cmd import (
     set_joint_orient_compensate_children,
     set_rotate_axis_compensate_children,
@@ -318,7 +319,9 @@ class ChildCompensatedSetWindow(LiveSetWindowBase):
         self._node_name = node_name
         self._node_type = node_type
         self._sync_target_combo(node_type)
-        self.target_label.setText(f"設定対象（基準ノードのみ）：{node_name}")
+        self.target_label.setText(
+            f"設定対象（基準ノードのみ）：{node_display_name(node_name)}"
+        )
         try:
             values = self._values_canonical(node_name)
             self.watch_node(node_name)

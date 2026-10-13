@@ -121,6 +121,66 @@ def _xyz_vertical_gaps(
     )
 
 
+@pytest.mark.parametrize("window_kind", ("children", "orientation"))
+def test_target_label_uses_short_name_only_for_unique_dag_path(
+    clean_scene: None, qt_application: qt.QApplication, window_kind: str
+) -> None:
+    """両Windowで一意な短名と同名・instance時のフルパスを表示する。"""
+    del clean_scene
+    first_parent = cmds.createNode("transform", name="firstParent")
+    second_parent = cmds.createNode("transform", name="secondParent")
+    first = cmds.createNode(
+        "transform", name="sharedTarget", parent=first_parent
+    )
+    first_path = cmds.ls(first, long=True)[0]
+    cmds.select(first_path, replace=True)
+    window: ChildCompensatedSetWindow | RotationSetWindow = (
+        ChildCompensatedSetWindow(initial_target="translate")
+        if window_kind == "children"
+        else RotationSetWindow()
+    )
+    try:
+        window.show()
+        _process_events(qt_application)
+        assert window.target_label.text() == (
+            "設定対象（基準ノードのみ）：sharedTarget"
+        )
+        assert window.selected_node_name() == first_path
+
+        # 同名ノードは選択していなくても表示名の衝突として扱う
+        second = cmds.createNode(
+            "transform", name="sharedTarget", parent=second_parent
+        )
+        second_path = cmds.ls(second, long=True)[0]
+        cmds.select(first_path, replace=True)
+        _process_events(qt_application)
+        window.refresh()
+        assert window.target_label.text() == (
+            f"設定対象（基準ノードのみ）：{first_path}"
+        )
+        cmds.select(second_path, replace=True)
+        _process_events(qt_application)
+        assert window.target_label.text() == (
+            f"設定対象（基準ノードのみ）：{second_path}"
+        )
+        assert window.selected_node_name() == second_path
+
+        # 同一ノードの複数DAGパスも選択対象の区別にフルパスを使う
+        cmds.delete(second_path)
+        cast(Callable[..., list[str]], cmds.parent)(
+            first_path, second_parent, add=True
+        )
+        cmds.select(first_path, replace=True)
+        _process_events(qt_application)
+        assert window.target_label.text() == (
+            f"設定対象（基準ノードのみ）：{first_path}"
+        )
+        assert window.selected_node_name() == first_path
+    finally:
+        window.close()
+        window.deleteLater()
+
+
 class _ChildSetDockHost:
     """batch Mayaにない浮動workspaceControlをQtで代替する。"""
 

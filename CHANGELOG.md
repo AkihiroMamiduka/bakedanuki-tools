@@ -9,6 +9,9 @@
 
 ### Changed
 
+- bdChannelBoxの「移動・回転をセット（子を維持）」と「回転をセット（姿勢を維持）」
+  では、設定対象が一意な場合は短名を表示し、同名ノードやインスタンスの場合は
+  選択中のフルパスを表示する。操作対象のフルパスやscene・保存設定は変更しない。
 - bdChannelBoxの「回転をセット（子を維持）」で、Jointの設定先候補を
   `jointOrient`→`rotate`→`rotateAxis`、子Jointの補償先候補を
   `jointOrient`→`rotate`の順に変更。Transformの設定先候補と補償先の初期値
