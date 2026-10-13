@@ -9,6 +9,8 @@
 
 ### Changed
 
+- bdChannelBoxの数値欄を150 pxから156 px、共通入力列を216 pxから222 pxへ広げた。
+  Maya 2027でも20文字程度の数値が入力欄内に収まるようにし、sceneと保存設定は変更しない。
 - bdChannelBoxの3つの値設定メニューから開くWindowを、単独起動できる
   `bd_tools.bd_child_compensated_set`と`bd_tools.bd_rotation_preserving_pose`へ分離。
   bdChannelBoxは公開`show()`を呼ぶ入口とし、共通の選択監視・XYZ入力部品は

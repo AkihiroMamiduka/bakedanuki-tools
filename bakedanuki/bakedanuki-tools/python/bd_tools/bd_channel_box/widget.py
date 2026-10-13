@@ -61,7 +61,7 @@ __all__ = [
 ]
 
 # 小数点を含む20文字程度の値を、上下ボタンと併せて表示する
-_VALUE_FIELD_WIDTH = 150
+_VALUE_FIELD_WIDTH = 156
 _AUXILIARY_FIELD_WIDTH = 60
 _FIELD_SPACING = 6
 _NAME_EDITOR_SPACING = 0

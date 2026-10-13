@@ -302,7 +302,7 @@ def test_mode_switch_preserves_width_with_long_hidden_name(
     )
     assert editor.width() == before[0]
     assert editor.scroll_area.verticalScrollBar().isVisible()
-    # 値編集216pxから状態編集の必要幅へ切り替わり、属性名側の余白が増える
+    # 値編集222pxから状態編集の必要幅へ切り替わり、属性名側の余白が増える
     assert row.name_label.width() > before[1]
     assert row.editor.x() > before[2]
     assert editor.scroll_area.horizontalScrollBar().maximum() == 0

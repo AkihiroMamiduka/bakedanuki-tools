@@ -524,7 +524,7 @@ def test_supported_types_flags_and_view_selection(
     assert isinstance(slider, FloatSliderSpinBox)
     assert value_step.width() == slider.width()
     for spin_box in (value_step.spin_box, slider.spin_box):
-        assert spin_box.minimumWidth() == spin_box.maximumWidth() == 150
+        assert spin_box.minimumWidth() == spin_box.maximumWidth() == 156
         line_edit = spin_box.findChild(qt.QLineEdit)
         assert isinstance(line_edit, qt.QLineEdit)
         margins = line_edit.textMargins()
@@ -569,7 +569,7 @@ def test_input_columns_stay_compact_at_right_edge(
         for row in editor.row_widgets:
             assert isinstance(row, AttributeRowWidget)
             view = row.editor
-            assert view.width() == 216
+            assert view.width() == 222
             assert view.x() + view.width() == row.width()
             assert (
                 row.input_indicator.x()
@@ -599,7 +599,7 @@ def test_input_columns_stay_compact_at_right_edge(
             if isinstance(view, FloatValueStepSpinBox):
                 assert view.step_spin_box.select_all_on_mouse_focus()
             assert view.spin_box.x() == 0
-            assert view.spin_box.width() == 150
+            assert view.spin_box.width() == 156
             assert auxiliary.x() == view.spin_box.width() + 6
             assert auxiliary.width() == 60
             assert auxiliary.x() + auxiliary.width() == view.width()

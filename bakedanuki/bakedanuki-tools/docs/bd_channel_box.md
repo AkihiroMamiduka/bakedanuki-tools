@@ -360,7 +360,7 @@ Pythonから`bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS`を一時的に差�
 表示順だけを変更し、sceneの属性順・値・Undo履歴には書き込みません。
 
 属性名は共通幅の列で右揃えにし、表示中の全行で入力欄の左端を揃えます。
-入力グループは値編集が216 px、表示・ロックはボタンの必要幅に合わせます。
+入力グループは値編集が222 px、表示・ロックはボタンの必要幅に合わせます。
 モード切替ではWindow幅を保ち、各モードの操作欄とスクロールバーに応じて名前列の幅を調整します。
 初期サイズの指定は380×360、最小幅は340です。実際の寸法はMayaのドック領域に合わせて調整されます。
 属性名側の余白は`ui.py`の`_INITIAL_WIDTH`・`_MINIMUM_WIDTH`で調整できます。
@@ -380,7 +380,7 @@ boolはutilの`BoolCheckBox`を使い、属性名のすぐ右、数値入力列�
 チェックまたはSpaceキーで切り替えると、対応する編集可能なノードへ一括適用します。
 boolが混在していてもチェックは基準ノードのTrue / Falseを表示し、三状態表示にはしません。
 
-enumはutilの`EnumComboBox`で項目名を表示します。入力列全体の216 pxを使い、
+enumはutilの`EnumComboBox`で項目名を表示します。入力列全体の222 pxを使い、
 Step／Sliderは表示しません。標準属性（rotateOrderなど）も追加属性も同じ扱いですが、
 他の型と同じフィルターで表示対象を決めます。
 負数・飛び番を扱い、ComboBoxの位置ではなく定義の整数値を入力します。
@@ -401,7 +401,7 @@ Bindingへ登録した対象の定義が使用中に不一致になると、そ�
 混在した値を表示中の項目へ揃える場合は
 「表示ノードの値に揃える > 選択属性」を使います。
 
-stringはutilの`StringLineEdit`で一行入力します。入力列全体の216 pxを使い、
+stringはutilの`StringLineEdit`で一行入力します。入力列全体の222 pxを使い、
 Step／Sliderは表示しません。Enterまたは通常のフォーカス移動で確定し、
 編集中に基準または他の対象ノードのstring値が外部変更された場合は未確定入力を破棄し、
 基準ノードの最新値を表示します。表示更新からMayaへは書き戻さず、後のフォーカス移動でも
@@ -878,10 +878,10 @@ Maya標準Channel Boxの選択やメニューには連動しません。
 両側のhard min/maxが有限で最小値より最大値が大きいfloatには
 `FloatSliderSpinBox`、それ以外には`FloatValueStepSpinBox`を使用します。
 通常float行は`[Value][Step]`、Slider行は`[Value][Slider]`の順に配置します。
-値欄は150 px、Step／Sliderは共通の60 px、欄間は6 pxに固定します。
+値欄は156 px、Step／Sliderは共通の60 px、欄間は6 pxに固定します。
 値欄は`1234.123456789123456`の20文字を見渡せる幅を目安にしています。
 通常float行はutilの`value_width`・`step_width`を使い、Sliderにも同じ幅を指定します。
-数値入力グループ全体を216 pxで右寄せし、画面を広げた分は属性名側へ配分します。
+数値入力グループ全体を222 pxで右寄せし、画面を広げた分は属性名側へ配分します。
 boolも同じ幅の入力列を確保し、その中でチェックを左詰めにします。
 Sliderの有無によらず、入力欄の左端・右端とStep／Sliderの開始位置が揃います。
 片側のhard limitも数値入力では尊重します。soft limitは初版では使用しません。
@@ -1157,10 +1157,10 @@ Maya本体がviewportを交換する場合があるため、内容の親Widget�
 
 | ファイル | 定数 | 現在値 | 調整する内容 |
 | --- | --- | --- | --- |
-| `widget.py` | `_VALUE_FIELD_WIDTH` | 150 | 数値入力欄の固定幅。20文字程度を表示 |
+| `widget.py` | `_VALUE_FIELD_WIDTH` | 156 | 数値入力欄の固定幅。20文字程度を表示 |
 | `widget.py` | `_AUXILIARY_FIELD_WIDTH` | 60 | StepとSliderの共通固定幅 |
 | `widget.py` | `_FIELD_SPACING` | 6 | ValueとStep / Sliderの間隔 |
-| `widget.py` | `_EDITOR_WIDTH` | 216（上記から算出） | 値編集の入力列の幅 |
+| `widget.py` | `_EDITOR_WIDTH` | 222（上記から算出） | 値編集の入力列の幅 |
 | `widget.py` | `AttributeStateRowWidget`の操作欄 | Qtの必要幅 | 表示・ロックの各ボタンと6 px間隔の合計 |
 | `widget.py` | `_NAME_FIELD_PREFERRED_WIDTH` | 92 | 属性名列の推奨幅。長い名前は省略表示 |
 | `ui.py` | `_INITIAL_WIDTH` | 380 | Window / workspaceControlの初期幅 |
