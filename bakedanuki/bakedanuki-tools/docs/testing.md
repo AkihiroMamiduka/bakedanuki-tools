@@ -68,6 +68,8 @@ util側の`tests/maya/ui/test_plugs_value_edits.py`で、複数Bindingをまと�
 `--child-set-only`を追加します。Maya再起動後のタブとサイズまで検証する場合は
 同じオプションに`--prepare-restart`を付け、出力された検証ディレクトリを
 `--restart-from`へ渡してもう一度実行します。
+姿勢維持の回転設定Windowについては`--pose-set-only`で浮動表示、Mayaへの
+ドッキングと再利用を確認します。同じオプションで2段階の再起動検証もできます。
 接続属性の入力だけを検証する場合は`--connections-only`を追加します。
 通常時間キー・SDK・Animation Layerの実画面入力とAuto Key ON／OFF、
 tooltip、constraintの入力禁止、Undo／Redo、時刻変更でのSlider終了を確認します。

@@ -21,16 +21,18 @@ __all__ = ["RotationSetWindow", "INITIAL_WIDTH", "INITIAL_HEIGHT"]
 _Values = tuple[float, float, float]
 
 # Step欄と属性選択を含む初期サイズ（Qt論理px）
-INITIAL_WIDTH = 310
-INITIAL_HEIGHT = 164
+INITIAL_WIDTH = 306
+INITIAL_HEIGHT = 174
 
 
 class RotationSetWindow(LiveSetWindowBase):
     """回転属性の1軸を設定し、別属性へ姿勢差分を吸収させる。"""
 
-    def __init__(self, parent: qt.QWidget | None = None) -> None:
+    def __init__(
+        self, parent: qt.QWidget | None = None, *, as_page: bool = False
+    ) -> None:
         """設定先・補償先とXYZの独立したStep欄を構築する。"""
-        super().__init__(parent)
+        super().__init__(parent, as_page=as_page)
         self._node_name: str | None = None
         self._node_type: Literal["transform", "joint"] | None = None
         self._requested_target: RotationDestination = "rotate"

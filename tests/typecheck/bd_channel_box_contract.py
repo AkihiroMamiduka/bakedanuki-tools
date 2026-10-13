@@ -23,6 +23,11 @@ from bd_util.ui import (
 )
 
 from bd_tools import bd_channel_box
+from bd_tools.bd_channel_box import rotation_set_ui
+from bd_tools.bd_channel_box.rotation_set_dock_window import (
+    RotationSetDockWindow,
+)
+from bd_tools.bd_channel_box.rotation_set_window import RotationSetWindow
 from bd_tools.bd_channel_box.controller import (
     ChannelAttributeFilter,
     ChannelDisplayFilter,
@@ -46,6 +51,9 @@ from bd_tools.bd_channel_box.widget import (
 from bd_tools.bd_channel_box.table import ChannelTableView
 
 assert_type(bd_channel_box.show(), bd_channel_box.ChannelBoxWindow)
+assert_type(rotation_set_ui.show("rotate"), RotationSetDockWindow)
+assert_type(rotation_set_ui.restore(), RotationSetDockWindow)
+assert_type(rotation_set_ui.show().rotation_page, RotationSetWindow)
 assert_type(bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
 assert_type(bd_channel_box.show().widget, ChannelBoxWidget)
 assert_type(bd_channel_box.show().widget.setup_panel, CustomFilterSetupPanel)

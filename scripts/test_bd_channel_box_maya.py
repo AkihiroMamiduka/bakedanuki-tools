@@ -34,6 +34,7 @@ _NAME_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_NAME_ONLY"
 _CONNECTIONS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CONNECTIONS_ONLY"
 _CUSTOM_FILTERS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CUSTOM_FILTERS_ONLY"
 _CHILD_SET_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CHILD_SET_ONLY"
+_POSE_SET_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_POSE_SET_ONLY"
 _PERSISTED_STEP = 0.5
 _STARTUP_IDLE_COMMAND = (
     "import __main__; "
@@ -154,6 +155,16 @@ class _MayaSmokeSession:
                     self._setup_scene,
                     self._inspect_child_set_tabs,
                     self._inspect_child_set_docking,
+                    self._finish,
+                )
+            )
+        elif os.environ.get(_POSE_SET_ONLY_VARIABLE) == "1":
+            self._stages = (
+                (self._inspect_pose_set_restart, self._finish)
+                if self._phase == "restart"
+                else (
+                    self._setup_scene,
+                    self._inspect_pose_set_docking,
                     self._finish,
                 )
             )
@@ -3428,6 +3439,110 @@ class _MayaSmokeSession:
         cmds.autoKeyframe(state=False)
         self.steps.append("connected_drag_finishes_at_time_change")
 
+    def _inspect_pose_set_docking(self) -> None:
+        """姿勢維持Windowの浮動表示、ドッキング、再利用をMaya本体で調べる。"""
+        from maya import cmds
+
+        from bd_tools.bd_channel_box import rotation_set_ui
+
+        node = cmds.createNode("joint", name="poseSetDockTarget")
+        cmds.select(node, replace=True)
+        window = rotation_set_ui.show("jointOrient")
+        self._flush_gui()
+        name = rotation_set_ui.WORKSPACE_CONTROL_NAME
+        if not cmds.workspaceControl(name, query=True, exists=True):
+            raise AssertionError("姿勢維持workspaceControlがありません")
+        if not cmds.workspaceControl(name, query=True, floating=True):
+            raise AssertionError(
+                "姿勢維持Windowの初回表示が浮動状態ではありません"
+            )
+        if window.rotation_page.target() != "jointOrient":
+            raise AssertionError("メニュー指定の回転属性が反映されません")
+        self.steps.append("pose_set_floating_and_target")
+
+        cmds.workspaceControl(
+            name, edit=True, dockToMainWindow=("right", True)
+        )
+        self._flush_gui()
+        if cmds.workspaceControl(name, query=True, floating=True):
+            raise AssertionError("姿勢維持WindowをMayaへドッキングできません")
+        if rotation_set_ui.show("rotate") is not window:
+            raise AssertionError("再表示で姿勢維持Windowが重複しました")
+        self._flush_gui()
+        if window.rotation_page.target() != "rotate":
+            raise AssertionError("再表示時の回転属性が反映されません")
+        cmds.workspaceControl(name, edit=True, floating=True)
+        self._flush_gui()
+        if not cmds.workspaceControl(name, query=True, floating=True):
+            raise AssertionError("姿勢維持Windowを浮動状態へ戻せません")
+        self.steps.append("pose_set_docks_and_reuses_window")
+
+    def _prepare_pose_set_restart(self) -> None:
+        """姿勢維持dockの浮動配置を保存し、再起動検証へ渡す。"""
+        from maya import cmds
+
+        from bd_tools.bd_channel_box import rotation_set_ui
+
+        name = rotation_set_ui.WORKSPACE_CONTROL_NAME
+        cmds.workspaceControl(
+            name, edit=True, floating=True, resizeWidth=360, resizeHeight=250
+        )
+        self._flush_gui()
+        geometry = rotation_set_ui.show().window().geometry().getRect()
+        cmds.workspaceLayoutManager(save=True)
+        cmds.savePrefs(general=True, uiLayout=True)
+        _write_json(
+            self.output / "prepared-restart.json",
+            {
+                "maya_version": str(cmds.about(version=True)),
+                "control_name": name,
+                "geometry": geometry,
+            },
+        )
+        self.steps.append("save_pose_set_dock_for_restart")
+
+    def _inspect_pose_set_restart(self) -> None:
+        """MayaのuiScriptによる姿勢維持dockの復元と再利用を確かめる。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+        from bd_tools.bd_channel_box import rotation_set_ui
+        from bd_tools.bd_channel_box.rotation_set_dock_window import (
+            RotationSetDockWindow,
+        )
+
+        self._flush_gui()
+        name = rotation_set_ui.WORKSPACE_CONTROL_NAME
+        if not cmds.workspaceControl(name, query=True, exists=True):
+            raise AssertionError("Maya再起動で姿勢維持dockが復元されません")
+        windows = [
+            widget
+            for widget in qt.QApplication.allWidgets()
+            if isinstance(widget, RotationSetDockWindow)
+        ]
+        if len(windows) != 1:
+            raise AssertionError(
+                f"姿勢維持Windowの復元数が不正です: {len(windows)}"
+            )
+        window = windows[0]
+        if not cmds.workspaceControl(name, query=True, floating=True):
+            raise AssertionError("姿勢維持Windowの浮動配置が復元されません")
+        saved = json.loads(
+            (self.output / "prepared-restart.json").read_text(encoding="utf-8")
+        )
+        geometry = window.window().geometry().getRect()
+        if any(
+            abs(left - right) > 40
+            for left, right in zip(geometry, saved["geometry"])
+        ):
+            raise AssertionError(
+                "姿勢維持Windowの保存配置と復元結果が異なります: "
+                f"{saved['geometry']} -> {geometry}"
+            )
+        if rotation_set_ui.show() is not window:
+            raise AssertionError("復元後の再表示でWindowが重複しました")
+        self.steps.append("maya_restart_restores_pose_set_dock")
+
     def _inspect_child_set_tabs(self) -> None:
         """回転からの初回起動と共通dockのタブ別浮動サイズを調べる。"""
         from maya import cmds
@@ -3662,7 +3777,7 @@ class _MayaSmokeSession:
     def _finish(self) -> None:
         """すべての操作結果を保存し、検証専用Mayaを終了する。"""
         from bd_tools import bd_channel_box
-        from bd_tools.bd_channel_box import child_set_ui
+        from bd_tools.bd_channel_box import child_set_ui, rotation_set_ui
 
         bd_channel_box.dispose()
         if os.environ.get(_CHILD_SET_ONLY_VARIABLE) == "1":
@@ -3670,10 +3785,16 @@ class _MayaSmokeSession:
                 self._prepare_child_set_restart()
             else:
                 child_set_ui.dispose()
+        if os.environ.get(_POSE_SET_ONLY_VARIABLE) == "1":
+            if os.environ.get(_PREPARE_RESTART_VARIABLE) == "1":
+                self._prepare_pose_set_restart()
+            else:
+                rotation_set_ui.dispose()
         self.steps.append("dispose")
         if (
             os.environ.get(_PREPARE_RESTART_VARIABLE) == "1"
             and os.environ.get(_CHILD_SET_ONLY_VARIABLE) != "1"
+            and os.environ.get(_POSE_SET_ONLY_VARIABLE) != "1"
         ):
             self._prepare_restart()
         self._complete(True)
@@ -4220,6 +4341,7 @@ def _launch(
     connections_only: bool = False,
     custom_filters_only: bool = False,
     child_set_only: bool = False,
+    pose_set_only: bool = False,
 ) -> int:
     """固有の設定と作業ディレクトリを使う検証Maya processを起動する。"""
     repository = Path(__file__).resolve().parents[1]
@@ -4271,6 +4393,7 @@ def _launch(
         "1" if custom_filters_only else "0"
     )
     environment[_CHILD_SET_ONLY_VARIABLE] = "1" if child_set_only else "0"
+    environment[_POSE_SET_ONLY_VARIABLE] = "1" if pose_set_only else "0"
     environment["BAKEDANUKI_UTIL_ROOT"] = str(util_root)
     environment["PYTHONPATH"] = os.pathsep.join(
         (
@@ -4369,6 +4492,7 @@ def main() -> int:
     restart_group.add_argument("--connections-only", action="store_true")
     restart_group.add_argument("--custom-filters-only", action="store_true")
     parser.add_argument("--child-set-only", action="store_true")
+    parser.add_argument("--pose-set-only", action="store_true")
     arguments = parser.parse_args()
     util_root = arguments.util_root or Path(
         os.environ.get(
@@ -4386,6 +4510,7 @@ def main() -> int:
         connections_only=arguments.connections_only,
         custom_filters_only=arguments.custom_filters_only,
         child_set_only=arguments.child_set_only,
+        pose_set_only=arguments.pose_set_only,
     )
 
 

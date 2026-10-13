@@ -11,9 +11,10 @@ from typing import cast
 import pytest
 from maya import cmds
 
-from bd_util.maya.ui import MayaDockableWindow
+from bd_util.maya.ui import MayaDockableWindow, snapshot_open_tools
 from bd_util.maya.ui.dock import workspace_control
 from bd_util.ui import qt
+from bd_tools._dev.reopen_targets import KNOWN_DOCK_TOOLS, ROTATION_SET_REOPEN
 from bd_tools.bd_channel_box import (
     child_rotation_ui,
     child_set_ui,
@@ -295,6 +296,18 @@ def child_set_dock_host(
     child_set_ui.dispose()
     _process_events(qt_application)
     host.floating_host.deleteLater()
+
+
+@pytest.fixture
+def pose_set_dock_host(
+    child_set_dock_host: _ChildSetDockHost,
+) -> Iterator[_ChildSetDockHost]:
+    """共通の代替workspaceControlで姿勢維持dockの寿命を検証する。"""
+    rotation_set_ui.dispose()
+    try:
+        yield child_set_dock_host
+    finally:
+        rotation_set_ui.dispose()
 
 
 def test_translation_window_follows_selection_and_steps_with_one_undo(
@@ -779,15 +792,27 @@ def test_child_set_options_restore_after_close(
 
 
 def test_pose_window_controller_reuses_and_disposes(
-    clean_scene: None, qt_application: qt.QApplication
+    clean_scene: None,
+    pose_set_dock_host: _ChildSetDockHost,
+    qt_application: qt.QApplication,
 ) -> None:
-    """姿勢維持Windowの再利用と表示内容、監視終了を確認する。"""
+    """姿勢維持dockの再利用、画面配置、監視終了と復元を確認する。"""
     del clean_scene
     node = cmds.createNode("transform", name="poseControllerTarget")
     cmds.select(node, replace=True)
-    pose = rotation_set_ui.show("rotateAxis")
+    dock = rotation_set_ui.show("rotateAxis")
+    pose = dock.rotation_page
     try:
         _process_events(qt_application)
+        assert pose_set_dock_host.window is dock
+        assert dock.scroll_area.widget() is pose
+        assert rotation_set_ui.WORKSPACE_CONTROL_NAME == (
+            "bdChannelBoxRotationSetWindowWorkspaceControl"
+        )
+        assert ROTATION_SET_REOPEN in snapshot_open_tools(
+            "bd_tools", dock_tools=KNOWN_DOCK_TOOLS
+        )
+        assert not (pose.windowFlags() & qt.Qt.WindowType.Window)
         _assert_step_fields_visible(pose)
         assert _xyz_vertical_gaps(pose) == (2, 2)
         set_label = pose.target_attribute_label
@@ -818,9 +843,63 @@ def test_pose_window_controller_reuses_and_disposes(
             separator.geometry().center().y()
         )
         assert separator.geometry().bottom() < set_label.geometry().top()
-        assert rotation_set_ui.show("rotate") is pose
+        assert rotation_set_ui.show("rotate") is dock
         assert pose.target() == "rotate"
     finally:
         rotation_set_ui.close()
+    assert dock.is_disposed
     assert pose.is_disposed
+    assert pose_set_dock_host.window is None
+    assert ROTATION_SET_REOPEN not in snapshot_open_tools(
+        "bd_tools", dock_tools=KNOWN_DOCK_TOOLS
+    )
     _process_events(qt_application)
+
+    restored = rotation_set_ui.restore()
+    try:
+        _process_events(qt_application)
+        assert restored is not dock
+        assert pose_set_dock_host.window is restored
+        assert restored.rotation_page.target() == "rotate"
+        restored.dock_closed.emit()
+        assert restored.is_disposed
+        assert restored.rotation_page.is_disposed
+        reopened = rotation_set_ui.show("rotateAxis")
+        assert reopened is not restored
+        assert not reopened.is_disposed
+        assert reopened.rotation_page.target() == "rotateAxis"
+    finally:
+        rotation_set_ui.close()
+
+
+def test_pose_dock_uses_click_anchor_only_on_first_floating_open(
+    clean_scene: None,
+    pose_set_dock_host: _ChildSetDockHost,
+    qt_application: qt.QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """初回だけクリック位置へ置き、再表示ではMayaの浮動配置を保持する。"""
+    del clean_scene
+    node = cmds.createNode("transform", name="poseAnchorTarget")
+    cmds.select(node, replace=True)
+
+    def _is_floating(_name: str) -> bool:
+        """テスト用の浮動状態を返す。"""
+        return pose_set_dock_host.floating
+
+    monkeypatch.setattr(
+        workspace_control,
+        "is_floating",
+        _is_floating,
+    )
+    first_anchor = qt.QPoint(400, 300)
+    dock = rotation_set_ui.show("rotate", first_anchor)
+    try:
+        _process_events(qt_application)
+        first_position = qt.QPoint(pose_set_dock_host.floating_host.pos())
+        assert first_position != qt.QPoint(0, 0)
+        assert rotation_set_ui.show("rotateAxis", qt.QPoint(100, 100)) is dock
+        _process_events(qt_application)
+        assert pose_set_dock_host.floating_host.pos() == first_position
+    finally:
+        rotation_set_ui.close()

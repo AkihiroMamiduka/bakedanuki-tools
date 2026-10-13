@@ -71,8 +71,9 @@ bdChannelBoxは `MayaDockableWindowController` を使い、固定workspaceContro
 workspace配置の復元・resetはutil、入力と選択監視の終了はtoolsが所有します。
 子を維持する移動・回転設定は、1つの`MayaDockableWindowController`が管理する
 dockable Windowの2タブです。Mayaがドック配置を保持し、選択タブと浮動時のタブ別サイズは
-bdChannelBoxの`ui.ini`へ保存します。姿勢を維持する回転設定は従来どおり
-`MayaWindowController`が管理するモデルレスWindowです。選択変更・Undo／Redo・
+bdChannelBoxの`ui.ini`へ保存します。姿勢を維持する回転設定も独立した
+`MayaDockableWindowController`が管理し、Mayaがドック配置を保持します。
+選択変更・Undo／Redo・
 scene切替の監視は画面の寿命に結び付け、現在選択の末尾にある基準ノード1個の
 実値へ同期します。XYZの確定入力とstep操作は既存の`bdUtilCommands`へ渡し、
 表示更新とStep設定はscene・Undo履歴を変更しません。
