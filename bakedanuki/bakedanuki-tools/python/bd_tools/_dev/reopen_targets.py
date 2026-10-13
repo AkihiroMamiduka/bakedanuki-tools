@@ -12,18 +12,18 @@ CHANNEL_BOX_REOPEN: tuple[str, str, str, str] = (
 CHANNEL_BOX_CONTROL_ID = "bdChannelBoxWindow"
 CHILD_SET_REOPEN: tuple[str, str, str, str] = (
     "bd_tools",
-    "bd_channel_box_child_set",
-    "bd_tools.bd_channel_box.child_set_ui",
+    "bd_child_compensated_set",
+    "bd_tools.bd_child_compensated_set.ui",
     "show",
 )
-CHILD_SET_CONTROL_ID = "bdChannelBoxChildSetWindow"
+CHILD_SET_CONTROL_ID = "bdChildCompensatedSetWindow"
 ROTATION_SET_REOPEN: tuple[str, str, str, str] = (
     "bd_tools",
-    "bd_channel_box_rotation_set",
-    "bd_tools.bd_channel_box.rotation_set_ui",
+    "bd_rotation_preserving_pose",
+    "bd_tools.bd_rotation_preserving_pose.ui",
     "show",
 )
-ROTATION_SET_CONTROL_ID = "bdChannelBoxRotationSetWindow"
+ROTATION_SET_CONTROL_ID = "bdRotationPreservingPoseWindow"
 
 # MayaがuiScriptをまだ実行していないdockも、control名から調べられるようにする
 KNOWN_DOCK_TOOLS: tuple[tuple[tuple[str, str, str, str], str], ...] = (

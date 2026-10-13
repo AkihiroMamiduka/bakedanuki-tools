@@ -69,14 +69,15 @@ bd_tools/
 bdChannelBoxは `MayaDockableWindowController` を使い、固定workspaceControl IDと
 `bd_tools.bd_channel_box.ui.restore` を維持します。初回は右ドック、close時は完全破棄とし、
 workspace配置の復元・resetはutil、入力と選択監視の終了はtoolsが所有します。
-子を維持する移動・回転設定は、1つの`MayaDockableWindowController`が管理する
-dockable Windowの2タブです。Mayaがドック配置を保持し、選択タブと浮動時のタブ別サイズは
-bdChannelBoxの`ui.ini`へ保存します。姿勢を維持する回転設定も独立した
-`MayaDockableWindowController`が管理し、Mayaがドック配置を保持します。
-選択変更・Undo／Redo・
-scene切替の監視は画面の寿命に結び付け、現在選択の末尾にある基準ノード1個の
-実値へ同期します。XYZの確定入力とstep操作は既存の`bdUtilCommands`へ渡し、
-表示更新とStep設定はscene・Undo履歴を変更しません。
+`bd_child_compensated_set`は移動・回転の共通2タブWindow、
+`bd_rotation_preserving_pose`は姿勢維持の回転Windowを所有します。どちらも独立した
+`MayaDockableWindowController`と公開`show()`を持ち、bdChannelBoxは右クリックから
+起動する際にだけ各公開入口を呼びます。新ツールからbdChannelBoxをimportしません。
+共通の選択監視・XYZ入力部品と画面内配置計算は`bd_tools._shared`に置き、
+Maya操作・Undoは`bd_util`のコマンドを使います。Mayaが両Windowのドック配置を保持し、
+子維持ツールの選択タブ・入力条件・浮動タブ別サイズは同ツールの`ui.ini`へ保存します。
+選択変更・Undo／Redo・scene切替の監視は各画面の寿命に結び付け、現在選択の末尾にある
+基準ノード1個の実値へ同期します。表示更新とStep設定はscene・Undo履歴を変更しません。
 値とstepの複合View、属性path・数値種別ごとのprofileと保存基盤はutilへ配置します。
 属性別の初期step、profileの識別子、操作対象の選別はbdChannelBoxが所有します。
 step設定はuser preferencesへ保存し、sceneの値・Undo履歴へ含めません。

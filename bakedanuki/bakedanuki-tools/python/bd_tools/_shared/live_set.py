@@ -13,7 +13,7 @@ from bd_util.maya.node import selected_node_names
 from bd_util.maya.ui import MayaCallbackRegistry
 from bd_util.ui import FloatValueStepSpinBox, FloatViewModel, qt
 
-from .anchored_dialog import centered_position_within_screen
+from .window_position import centered_position_within_screen
 
 __all__ = ["LiveSetWindowBase", "LiveXyzEditor"]
 
@@ -146,7 +146,7 @@ class LiveSetWindowBase(qt.QWidget):
     def __init__(
         self, parent: qt.QWidget | None = None, *, as_page: bool = False
     ) -> None:
-        """選択監視と通常Window時のクリック位置基準配置を初期化する。"""
+        """選択監視と通常Window時の指定位置基準配置を初期化する。"""
         super().__init__(parent)
         if not as_page:
             self.setWindowFlag(qt.Qt.WindowType.Window, True)
@@ -263,7 +263,7 @@ class LiveSetWindowBase(qt.QWidget):
         self.watch_node(None)
 
     def set_anchor_position(self, position: qt.QPoint) -> None:
-        """右クリック位置を記録し、画面内へWindowを配置する。"""
+        """指定位置を記録し、画面内へWindowを配置する。"""
         self._anchor_position = qt.QPoint(position.x(), position.y())
         self._position_near_anchor()
 
@@ -279,7 +279,7 @@ class LiveSetWindowBase(qt.QWidget):
             self.queue_refresh()
 
     def _position_near_anchor(self) -> None:
-        """クリック位置を中心にし、モニター端からはみ出さないよう移動する。"""
+        """指定位置を中心にし、モニター端からはみ出さないよう移動する。"""
         anchor = self._anchor_position
         if anchor is None:
             return

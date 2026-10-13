@@ -142,19 +142,42 @@ Attribute SearchはNice Name・属性名・正式pathを、大文字小文字を
 貼り付けはコピー元と同じ正式pathを表示状態で絞るか、選択属性を明示して適用します。
 一属性だけのコピー値は互換性のある複数の選択属性へ展開でき、OSクリップボードを介して
 別のMayaへも搬送できます。行順や属性のクリック順では対応付けません。
-移動・回転属性の右クリックからは、子の座標・姿勢を維持して値をセットする
-共通のドッキング可能なWindowを開けます。「移動」「回転」タブを切り替えられ、浮動時は
-各タブで変更したサイズを復元します。現在姿勢を維持する回転設定は、独立した
-ドッキング可能なWindowで開きます。
-Windowを開いたままMayaの選択を切り替えられ、現在選択の末尾にある
-基準ノード1個の値を表示・編集します。XYZの入力確定やホイール・上下操作は即時反映し、
-各軸のStepはbdChannelBox本体とは独立して変更できます。
+移動・回転属性の右クリックから、独立した
+[bdChildCompensatedSet](bakedanuki/bakedanuki-tools/docs/bd_child_compensated_set.md)と
+[bdRotationPreservingPose](bakedanuki/bakedanuki-tools/docs/bd_rotation_preserving_pose.md)を
+起動できます。現在選択の末尾にある基準ノード1個の値を即時に編集します。
 縦スクロールバーは必要時だけ表示し、値編集のstep設定も維持します。
 状態の混在表示とMaya標準Undo／Redoへ対応します。
 
 対応する `bakedanuki-util` の値・状態の複数対象Binding、属性列挙、複合View、ドッキング基盤が必要です。
 toolsとutilは、組み合わせて動作確認した版を配置してください。
 詳細は [bdChannelBox](bakedanuki/bakedanuki-tools/docs/bd_channel_box.md) を参照してください。
+
+## bdChildCompensatedSet
+
+子の位置・姿勢を維持して移動または回転を設定する、2タブのdockableツールです。
+bdChannelBoxを開かずに単独起動できます。
+
+```python
+from bd_tools import bd_child_compensated_set
+
+bd_child_compensated_set.show("translate", "translate")
+bd_child_compensated_set.show("rotation", "rotate")
+```
+
+設定先、入力空間、子の維持範囲は[仕様](bakedanuki/bakedanuki-tools/docs/bd_child_compensated_set.md)を参照してください。
+
+## bdRotationPreservingPose
+
+現在姿勢を維持しながら回転属性の値を設定するdockableツールです。
+
+```python
+from bd_tools import bd_rotation_preserving_pose
+
+bd_rotation_preserving_pose.show("rotate")
+```
+
+設定先と補償先の仕様は[仕様](bakedanuki/bakedanuki-tools/docs/bd_rotation_preserving_pose.md)を参照してください。
 
 ## Verification
 

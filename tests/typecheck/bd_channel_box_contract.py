@@ -23,18 +23,11 @@ from bd_util.ui import (
 )
 
 from bd_tools import bd_channel_box
-from bd_tools.bd_channel_box import rotation_set_ui
-from bd_tools.bd_channel_box.rotation_set_dock_window import (
-    RotationSetDockWindow,
-)
-from bd_tools.bd_channel_box.rotation_set_window import RotationSetWindow
 from bd_tools.bd_channel_box.controller import (
     ChannelAttributeFilter,
     ChannelDisplayFilter,
     ChannelRow,
     ChannelStateRow,
-    ChildSetContext,
-    RotationSetContext,
     RoundTransformKind,
 )
 from bd_tools.bd_channel_box.custom_filters import (
@@ -51,9 +44,6 @@ from bd_tools.bd_channel_box.widget import (
 from bd_tools.bd_channel_box.table import ChannelTableView
 
 assert_type(bd_channel_box.show(), bd_channel_box.ChannelBoxWindow)
-assert_type(rotation_set_ui.show("rotate"), RotationSetDockWindow)
-assert_type(rotation_set_ui.restore(), RotationSetDockWindow)
-assert_type(rotation_set_ui.show().rotation_page, RotationSetWindow)
 assert_type(bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
 assert_type(bd_channel_box.show().widget, ChannelBoxWidget)
 assert_type(bd_channel_box.show().widget.setup_panel, CustomFilterSetupPanel)
@@ -259,28 +249,6 @@ assert_type(
 assert_type(controller.consolidate_rotation("rotate"), int)
 assert_type(controller.can_set_rotation_preserving_pose(), bool)
 assert_type(controller.can_set_child_compensated_value(), bool)
-child_context = controller.capture_child_set_context()
-assert_type(child_context, ChildSetContext)
-assert_type(
-    controller.set_child_compensated_value(
-        child_context,
-        (1.0, 2.0, 3.0),
-        target="translate",
-        space="local",
-    ),
-    int,
-)
-rotation_context = controller.capture_rotation_set_context()
-assert_type(rotation_context, RotationSetContext)
-assert_type(
-    controller.set_rotation_preserving_pose(
-        rotation_context,
-        (10.0, 20.0, 30.0),
-        target="rotate",
-        compensate_with="jointOrient",
-    ),
-    int,
-)
 assert_type(controller.set_selected_locked(keys, True), bool)
 assert_type(controller.can_paste_values(), bool)
 assert_type(controller.can_paste_single_value(), bool)

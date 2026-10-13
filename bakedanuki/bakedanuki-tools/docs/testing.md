@@ -51,7 +51,8 @@ util側の`tests/maya/ui/test_plugs_value_edits.py`で、複数Bindingをまと�
 
 `scripts/test_bd_channel_box_maya.py`は、末尾ノードを基準にする選択追従と、
 現行の揃える・ロックのサブメニュー、Step設定順を検証します。
-現行メニューの自動回帰には`tests/maya/test_bd_channel_box*.py`を使用します。
+現行メニューの自動回帰には`tests/maya/test_bd_channel_box*.py`を、独立ツールの
+選択追従・値操作・dock lifecycleには`tests/maya/test_bd_transform_set_windows.py`を使用します。
 
 リポジトリ直下から専用runnerを実行します。
 `--maya-version` は2025 / 2026 / 2027を
@@ -64,11 +65,11 @@ util側の`tests/maya/ui/test_plugs_value_edits.py`で、複数Bindingをまと�
 
 名前欄の描画・Enter確定・フォーカスと終了処理だけを検証する場合は、
 同じコマンドへ`--name-only`を追加します。
-子維持の移動・回転タブと浮動・ドックのサイズを実Mayaで確認する場合は
+bdChildCompensatedSetの移動・回転タブと浮動・ドックのサイズを実Mayaで確認する場合は
 `--child-set-only`を追加します。Maya再起動後のタブとサイズまで検証する場合は
 同じオプションに`--prepare-restart`を付け、出力された検証ディレクトリを
 `--restart-from`へ渡してもう一度実行します。
-姿勢維持の回転設定Windowについては`--pose-set-only`で浮動表示、Mayaへの
+bdRotationPreservingPoseについては`--pose-set-only`で浮動表示、Mayaへの
 ドッキングと再利用を確認します。同じオプションで2段階の再起動検証もできます。
 接続属性の入力だけを検証する場合は`--connections-only`を追加します。
 通常時間キー・SDK・Animation Layerの実画面入力とAuto Key ON／OFF、
@@ -308,7 +309,7 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。この段�
   行再構築・Window再表示・Maya再起動後の復元、配置リセット後の維持、scene・Undoへの無書込み。
   通常の値欄・Slider付きの値欄・enum欄の自動フォーカス取得防止、フォーカス後の編集、
   ONへの復帰と再度OFFにした場合の動作、一覧へのスクロール伝達をWindows入力経路で検証する。
-- 子維持の移動・回転設定と姿勢維持の回転設定: Windowを開いたままMayaの選択を変え、
+- 独立した子維持・姿勢維持ツール: Windowを開いたままMayaの選択を変え、
   末尾の基準ノード1個へ追従すること。選択変更時の未確定入力破棄、対象なし時の入力停止、
   設定先候補とXYZ実値の更新を確認する。各軸のEnter／フォーカス移動による確定、
   ホイール・上下操作の即時反映、残りの軸の未丸め実値維持、各操作のUndo／Redo、

@@ -18,8 +18,8 @@ from bd_util.maya.mpx_cmd import (
 )
 from bd_util.ui import qt
 
-from .controller import RoundTransformKind
-from .live_set_common import LiveSetWindowBase, LiveXyzEditor
+from .._shared.live_set import LiveSetWindowBase, LiveXyzEditor
+from .types import ChildSetTarget
 
 __all__ = [
     "ChildCompensatedSetWindow",
@@ -47,7 +47,7 @@ class ChildCompensatedSetWindow(LiveSetWindowBase):
         self,
         parent: qt.QWidget | None = None,
         *,
-        initial_target: RoundTransformKind = "translate",
+        initial_target: ChildSetTarget = "translate",
         as_page: bool = False,
     ) -> None:
         """移動または回転用の選択欄と独立した軸Step欄を作る。"""
@@ -60,7 +60,7 @@ class ChildCompensatedSetWindow(LiveSetWindowBase):
             raise ValueError("移動または回転属性を指定してください")
         super().__init__(parent, as_page=as_page)
         self._is_translate = initial_target == "translate"
-        self._requested_target: RoundTransformKind = initial_target
+        self._requested_target: ChildSetTarget = initial_target
         self._node_name: str | None = None
         self._node_type: Literal["transform", "joint"] | None = None
         self.setWindowTitle(
@@ -172,8 +172,8 @@ class ChildCompensatedSetWindow(LiveSetWindowBase):
         self.refresh_requested.connect(self.refresh)
         self.refresh()
 
-    def set_initial_target(self, target: RoundTransformKind) -> None:
-        """メニューで右クリックした属性群を今回の設定先にする。"""
+    def set_initial_target(self, target: ChildSetTarget) -> None:
+        """指定された属性群を今回の設定先にする。"""
         if self._is_translate:
             if target != "translate":
                 raise ValueError("移動Windowではtranslateのみ設定できます")
@@ -183,7 +183,7 @@ class ChildCompensatedSetWindow(LiveSetWindowBase):
         self.xyz_editor.discard_pending_input()
         self.refresh()
 
-    def target(self) -> RoundTransformKind:
+    def target(self) -> ChildSetTarget:
         """現在値を設定する属性群を返す。"""
         if self._is_translate:
             return "translate"
@@ -218,18 +218,18 @@ class ChildCompensatedSetWindow(LiveSetWindowBase):
         combo = self.target_combo
         if combo is None:
             return
-        available: tuple[RoundTransformKind, ...] = (
+        available: tuple[ChildSetTarget, ...] = (
             ("jointOrient", "rotate", "rotateAxis")
             if node_type == "joint"
             else ("rotate", "rotateAxis")
         )
-        desired: RoundTransformKind = (
+        desired: ChildSetTarget = (
             self._requested_target
             if self._requested_target in available
             else "rotate"
         )
         current = tuple(
-            cast(RoundTransformKind, combo.itemData(index))
+            cast(ChildSetTarget, combo.itemData(index))
             for index in range(combo.count())
         )
         blocker = qt.QtCore.QSignalBlocker(combo)
@@ -256,7 +256,7 @@ class ChildCompensatedSetWindow(LiveSetWindowBase):
         combo = self.target_combo
         if combo is None or combo.currentIndex() < 0:
             return
-        self._requested_target = cast(RoundTransformKind, combo.currentData())
+        self._requested_target = cast(ChildSetTarget, combo.currentData())
         self.xyz_editor.discard_pending_input()
         self.refresh()
 

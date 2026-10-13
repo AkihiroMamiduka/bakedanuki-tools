@@ -3443,7 +3443,7 @@ class _MayaSmokeSession:
         """姿勢維持Windowの浮動表示、ドッキング、再利用をMaya本体で調べる。"""
         from maya import cmds
 
-        from bd_tools.bd_channel_box import rotation_set_ui
+        from bd_tools import bd_rotation_preserving_pose as rotation_set_ui
 
         node = cmds.createNode("joint", name="poseSetDockTarget")
         cmds.select(node, replace=True)
@@ -3481,7 +3481,7 @@ class _MayaSmokeSession:
         """姿勢維持dockの浮動配置を保存し、再起動検証へ渡す。"""
         from maya import cmds
 
-        from bd_tools.bd_channel_box import rotation_set_ui
+        from bd_tools import bd_rotation_preserving_pose as rotation_set_ui
 
         name = rotation_set_ui.WORKSPACE_CONTROL_NAME
         cmds.workspaceControl(
@@ -3506,8 +3506,8 @@ class _MayaSmokeSession:
         from maya import cmds
 
         from bd_util.ui import qt
-        from bd_tools.bd_channel_box import rotation_set_ui
-        from bd_tools.bd_channel_box.rotation_set_dock_window import (
+        from bd_tools import bd_rotation_preserving_pose as rotation_set_ui
+        from bd_tools.bd_rotation_preserving_pose.dock_window import (
             RotationSetDockWindow,
         )
 
@@ -3547,12 +3547,8 @@ class _MayaSmokeSession:
         """回転からの初回起動と共通dockのタブ別浮動サイズを調べる。"""
         from maya import cmds
 
-        from bd_tools.bd_channel_box import (
-            child_rotation_ui,
-            child_set_ui,
-            child_translate_ui,
-        )
-        from bd_tools.bd_channel_box.child_set_dock_window import (
+        from bd_tools import bd_child_compensated_set as child_set_ui
+        from bd_tools.bd_child_compensated_set.dock_window import (
             ROTATION_INITIAL_HEIGHT,
             ROTATION_INITIAL_WIDTH,
             TRANSLATE_INITIAL_HEIGHT,
@@ -3560,7 +3556,7 @@ class _MayaSmokeSession:
         )
 
         name = child_set_ui.WORKSPACE_CONTROL_NAME
-        window = child_rotation_ui.show("rotateAxis")
+        window = child_set_ui.show("rotation", "rotateAxis")
         self._flush_gui()
         if not cmds.workspaceControl(name, query=True, exists=True):
             raise AssertionError("子維持の共通workspaceControlがありません")
@@ -3580,7 +3576,7 @@ class _MayaSmokeSession:
                 f"回転タブの初回サイズが不正です: {width}x{height}"
             )
 
-        if child_translate_ui.show() is not window:
+        if child_set_ui.show("translate", "translate") is not window:
             raise AssertionError("移動メニューが別Windowを作成しました")
         self._flush_gui()
         if window.tabs.currentIndex() != 0:
@@ -3601,7 +3597,7 @@ class _MayaSmokeSession:
         )
         self._flush_gui()
         translate_size = self._child_set_floating_size(name, window)
-        if child_rotation_ui.show("rotateAxis") is not window:
+        if child_set_ui.show("rotation", "rotateAxis") is not window:
             raise AssertionError("回転メニューが別Windowを作成しました")
         self._flush_gui()
 
@@ -3610,7 +3606,7 @@ class _MayaSmokeSession:
         )
         self._flush_gui()
         rotation_size = self._child_set_floating_size(name, window)
-        child_translate_ui.show()
+        child_set_ui.show("translate", "translate")
         self._flush_gui()
         width, height = self._child_set_floating_size(name, window)
         if (width, height) != translate_size:
@@ -3642,7 +3638,7 @@ class _MayaSmokeSession:
         """ドック中のタブ切替がMayaのパネル寸法を変えないことを調べる。"""
         from maya import cmds
 
-        from bd_tools.bd_channel_box import child_set_ui
+        from bd_tools import bd_child_compensated_set as child_set_ui
 
         name = child_set_ui.WORKSPACE_CONTROL_NAME
         window = child_set_ui.show()
@@ -3682,9 +3678,9 @@ class _MayaSmokeSession:
         """タブ別サイズと選択設定を保存して実Maya再起動へ渡す。"""
         from maya import cmds
 
-        from bd_tools.bd_channel_box import child_rotation_ui, child_set_ui
+        from bd_tools import bd_child_compensated_set as child_set_ui
 
-        window = child_rotation_ui.show("rotateAxis")
+        window = child_set_ui.show("rotation", "rotateAxis")
         name = child_set_ui.WORKSPACE_CONTROL_NAME
         cmds.workspaceControl(
             name, edit=True, floating=True, resizeWidth=420, resizeHeight=350
@@ -3729,8 +3725,8 @@ class _MayaSmokeSession:
         from maya import cmds
 
         from bd_util.ui import qt
-        from bd_tools.bd_channel_box import child_set_ui, child_translate_ui
-        from bd_tools.bd_channel_box.child_set_dock_window import (
+        from bd_tools import bd_child_compensated_set as child_set_ui
+        from bd_tools.bd_child_compensated_set.dock_window import (
             ChildSetDockWindow,
         )
 
@@ -3762,7 +3758,7 @@ class _MayaSmokeSession:
             raise AssertionError(
                 f"回転タブの復元サイズが不正です: {width}x{height}"
             )
-        if child_translate_ui.show() is not window:
+        if child_set_ui.show("translate", "translate") is not window:
             raise AssertionError("再起動後のメニューでWindowが重複しました")
         self._flush_gui()
         if window.translate_page.space() != "world":
@@ -3777,7 +3773,8 @@ class _MayaSmokeSession:
     def _finish(self) -> None:
         """すべての操作結果を保存し、検証専用Mayaを終了する。"""
         from bd_tools import bd_channel_box
-        from bd_tools.bd_channel_box import child_set_ui, rotation_set_ui
+        from bd_tools import bd_child_compensated_set as child_set_ui
+        from bd_tools import bd_rotation_preserving_pose as rotation_set_ui
 
         bd_channel_box.dispose()
         if os.environ.get(_CHILD_SET_ONLY_VARIABLE) == "1":
@@ -4210,7 +4207,7 @@ class _MayaSmokeSession:
 
     def _capture_child_set_window(self, filename: str, window: object) -> None:
         """子維持Windowのタブ内容を配置確認用PNGへ保存する。"""
-        from bd_tools.bd_channel_box.child_set_dock_window import (
+        from bd_tools.bd_child_compensated_set.dock_window import (
             ChildSetDockWindow,
         )
 
@@ -4228,7 +4225,7 @@ class _MayaSmokeSession:
     ) -> tuple[int, int]:
         """子維持workspaceControlの浮動枠寸法を返す。"""
         from bd_util.maya.ui.dock import workspace_control
-        from bd_tools.bd_channel_box.child_set_dock_window import (
+        from bd_tools.bd_child_compensated_set.dock_window import (
             ChildSetDockWindow,
         )
 

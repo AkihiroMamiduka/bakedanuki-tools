@@ -1,5 +1,5 @@
 # coding: utf-8
-"""子維持のdockable画面と姿勢維持Windowの即時入力を検証する。"""
+"""独立した変換値設定ツールの即時入力とdock lifecycleを検証する。"""
 
 from __future__ import annotations
 
@@ -15,23 +15,19 @@ from bd_util.maya.ui import MayaDockableWindow, snapshot_open_tools
 from bd_util.maya.ui.dock import workspace_control
 from bd_util.ui import qt
 from bd_tools._dev.reopen_targets import KNOWN_DOCK_TOOLS, ROTATION_SET_REOPEN
-from bd_tools.bd_channel_box import (
-    child_rotation_ui,
-    child_set_ui,
-    child_translate_ui,
-    rotation_set_ui,
-)
-from bd_tools.bd_channel_box.child_compensated_set_window import (
+from bd_tools import bd_child_compensated_set as child_set_ui
+from bd_tools import bd_rotation_preserving_pose as rotation_set_ui
+from bd_tools.bd_child_compensated_set.window import (
     ChildCompensatedSetWindow,
 )
-from bd_tools.bd_channel_box.child_set_dock_window import (
+from bd_tools.bd_child_compensated_set.dock_window import (
     ROTATION_INITIAL_HEIGHT,
     ROTATION_INITIAL_WIDTH,
     TRANSLATE_INITIAL_HEIGHT,
     TRANSLATE_INITIAL_WIDTH,
     ChildSetDockWindow,
 )
-from bd_tools.bd_channel_box.rotation_set_window import RotationSetWindow
+from bd_tools.bd_rotation_preserving_pose.window import RotationSetWindow
 
 
 @pytest.fixture
@@ -549,9 +545,12 @@ def test_child_set_tabs_reuse_and_restore_floating_sizes(
     node = cmds.createNode("transform", name="liveControllerTarget")
     cmds.select(node, replace=True)
     cmds.flushUndo()
-    dock = child_translate_ui.show()
+    dock = child_set_ui.show("translate", "translate")
     _process_events(qt_application)
     assert dock is child_set_dock_host.window
+    assert child_set_ui.WORKSPACE_CONTROL_NAME == (
+        "bdChildCompensatedSetWindowWorkspaceControl"
+    )
     assert dock.tabs.currentIndex() == 0
     assert dock.size() == qt.QSize(
         child_set_dock_host.size.width() - 4,
@@ -570,9 +569,9 @@ def test_child_set_tabs_reuse_and_restore_floating_sizes(
     child_set_dock_host.resize(qt.QSize(370, 240))
     _process_events(qt_application)
     assert _xyz_vertical_gaps(dock.translate_page) == (2, 2)
-    assert child_translate_ui.show() is dock
+    assert child_set_ui.show("translate", "translate") is dock
 
-    rotation = child_rotation_ui.show("rotateAxis")
+    rotation = child_set_ui.show("rotation", "rotateAxis")
     _process_events(qt_application)
     assert rotation is dock
     assert dock.tabs.currentIndex() == 1
@@ -586,11 +585,11 @@ def test_child_set_tabs_reuse_and_restore_floating_sizes(
 
     child_set_dock_host.resize(qt.QSize(390, 330))
     _process_events(qt_application)
-    assert child_translate_ui.show() is dock
+    assert child_set_ui.show("translate", "translate") is dock
     _process_events(qt_application)
     assert dock.tabs.currentIndex() == 0
     assert child_set_dock_host.size == qt.QSize(370, 240)
-    assert child_rotation_ui.show("rotate") is dock
+    assert child_set_ui.show("rotation", "rotate") is dock
     _process_events(qt_application)
     assert dock.rotation_page.target() == "rotate"
     assert child_set_dock_host.size == qt.QSize(390, 330)
@@ -646,7 +645,7 @@ def test_child_set_tabs_reuse_and_restore_floating_sizes(
     assert reopened is not dock
     assert reopened.tabs.currentIndex() == 1
     assert child_set_dock_host.size == qt.QSize(405, 345)
-    child_translate_ui.show()
+    child_set_ui.show("translate", "translate")
     _process_events(qt_application)
     assert reopened.tabs.currentIndex() == 0
     assert child_set_dock_host.size == qt.QSize(370, 240)
@@ -661,7 +660,7 @@ def test_child_set_rotation_first_keeps_unshown_translate_default(
     del clean_scene
     node = cmds.createNode("transform", name="rotationFirstTarget")
     cmds.select(node, replace=True)
-    dock = child_rotation_ui.show("rotate")
+    dock = child_set_ui.show("rotation", "rotate")
 
     # 初期タブの確定前にMayaの浮動枠が回転ページの高さへ広がる
     child_set_dock_host.resize(
@@ -690,7 +689,7 @@ def test_child_set_rotation_combo_order_and_selection_by_attribute(
     transform = cmds.createNode("transform", name="comboOrderTransform")
     joint = cmds.createNode("joint", name="comboOrderJoint")
     cmds.select(transform, replace=True)
-    dock = child_rotation_ui.show("rotateAxis")
+    dock = child_set_ui.show("rotation", "rotateAxis")
     _process_events(qt_application)
     rotation = dock.rotation_page
     target = rotation.target_combo
@@ -721,7 +720,7 @@ def test_child_set_rotation_combo_order_and_selection_by_attribute(
     assert target.currentData() == "rotateAxis"
     assert compensation.currentData() == "rotate"
 
-    child_rotation_ui.show("jointOrient")
+    child_set_ui.show("rotation", "jointOrient")
     _process_events(qt_application)
     assert target.currentData() == "jointOrient"
     assert rotation.target() == "jointOrient"
@@ -747,7 +746,7 @@ def test_child_set_options_restore_after_close(
     node = cmds.createNode("joint", name="savedOptionsTarget")
     cmds.select(node, replace=True)
     cmds.flushUndo()
-    dock = child_translate_ui.show()
+    dock = child_set_ui.show("translate", "translate")
     _process_events(qt_application)
     translate = dock.translate_page
     rotation = dock.rotation_page
@@ -765,7 +764,7 @@ def test_child_set_options_restore_after_close(
     rotation.joint_child_combo.setCurrentIndex(
         rotation.joint_child_combo.findData("jointOrient")
     )
-    child_rotation_ui.show("jointOrient")
+    child_set_ui.show("rotation", "jointOrient")
     _process_events(qt_application)
     assert rotation.target() == "jointOrient"
     assert not rotation.compensate_child_translate()
@@ -807,7 +806,7 @@ def test_pose_window_controller_reuses_and_disposes(
         assert pose_set_dock_host.window is dock
         assert dock.scroll_area.widget() is pose
         assert rotation_set_ui.WORKSPACE_CONTROL_NAME == (
-            "bdChannelBoxRotationSetWindowWorkspaceControl"
+            "bdRotationPreservingPoseWindowWorkspaceControl"
         )
         assert ROTATION_SET_REOPEN in snapshot_open_tools(
             "bd_tools", dock_tools=KNOWN_DOCK_TOOLS

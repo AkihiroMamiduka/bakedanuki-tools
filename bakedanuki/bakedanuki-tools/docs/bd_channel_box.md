@@ -811,145 +811,20 @@ Transform／JointそれぞれのXYZをまとめて丸め、複数行を選んで
 一度のメニュー操作で1回のUndoとして戻せます。ロック・入力接続などで
 コマンドが変更できない場合はエラーを表示し、変更なしならUndoを追加しません。
 
-### 子を維持した移動・回転値の設定
+### 子を維持する値設定・姿勢を維持する回転設定
 
-値編集モードの`translateX/Y/Z`行では、「ペースト」の次に
-「移動をセット（子を維持）」を表示します。`rotateX/Y/Z`、
-`rotateAxisX/Y/Z`、`jointOrientX/Y/Z`行では、同じ位置に
-「回転をセット（子を維持）」を表示します。いずれも右クリックした軸は入口で、
-共通のdockable Windowの「移動」または「回転」タブにXYZの3値を表示します。
-回転では右クリックした属性群を
-「値をセットする属性」の初期値とし、Transformは`rotate`／`rotateAxis`、
-Jointは`jointOrient`／`rotate`／`rotateAxis`の順に設定先を選べます。
-「子Jointの補償属性」は`jointOrient`／`rotate`の順で表示しますが、
-保存値がない場合の初期選択は`rotate`です。
+値編集モードの`translateX/Y/Z`行には「移動をセット（子を維持）」を表示します。
+`rotateX/Y/Z`、`rotateAxisX/Y/Z`、`jointOrientX/Y/Z`行には
+「回転をセット（子を維持）」と「回転をセット（姿勢を維持）」を表示します。
+右クリックした軸は起動の入口で、属性群を新ツールの設定先へ渡します。
 
-対象は**操作時の現在選択の末尾にある基準ノード1個だけ**です。複数選択中のほかの
-ノードの同じ属性には値を適用しません。Windowを開いたままMayaで選択を変えられ、
-対象名とXYZ欄は新しい基準ノードの実値に切り替わります。選択変更時は未確定の
-文字入力を破棄し、対象がないときは値入力を無効にします。既存Windowを再度開くと
-右クリックした項目のタブを選び、回転では属性群も設定先にして前面へ表示します。
-対象名は、名前とDAGパスが一意ならnamespaceを含む短名を表示し、同名ノードや
-インスタンスでパスが複数ある場合は選択中のフルパスを表示します。コマンド実行には
-表示名にかかわらずフルパスを使用し、表示はWindowの再取得時に判定し直します。
-最初の浮動表示はメニューをクリックした位置を中心に開き、以降の配置はMayaが保存します。
-モニター端では作業領域に収まるよう位置を補正します。XYZ欄はマウスで
-最初にフォーカスしたクリックで入力文字を全選択します。
-対象と子の補償についての説明と入力欄は仕切り線で分け、各ラベルと選択欄を横に並べます。
-XYZの値入力欄は軸ラベルと入力欄を一組にして縦3行に配置します。
-回転側の4つの選択欄も縦に並べ、ラベル幅を最長の項目に揃えます。
-浮動表示ではタブ切替に合わせて移動・回転それぞれの幅と高さへ変更します。
-初回サイズは`child_set_dock_window.py`冒頭の`TRANSLATE_INITIAL_WIDTH`・
-`TRANSLATE_INITIAL_HEIGHT`・`ROTATION_INITIAL_WIDTH`・
-`ROTATION_INITIAL_HEIGHT`で調整できます。手動で変更した各タブの浮動サイズは
-Mayaのuser preferences内の`bd_channel_box/ui.ini`へ保存し、次回は保存値を優先します。
-初回に回転メニューから開いても、未表示の移動タブには移動用の初期サイズを保持します。
-保存するのは浮動枠の寸法で、内側のworkspaceControlより小さい寸法を使って
-タブ切替ごとにWindowが縮むことはありません。既に保存された小さいサイズは維持されるため、
-必要なら修正後に手動で好みの大きさへ戻してください。
-選択タブと、移動の入力空間、回転の入力空間・子の維持範囲・子Jointの補償属性も
-同じファイルに保存します。閉じて再表示した場合やMaya起動時の自動復元では、
-前回の選択を表示します。保存済みの候補が現行版にない場合は各欄の初期値を使用します。
-回転の「値をセットする属性」は保存せず、右クリックした属性を優先します。
-ドッキング中はタブ切替でドックのサイズを変更せず、Mayaの保存配置を使用します。
-ドックが狭い場合はタブ内の内容をスクロールできます。
-入力欄が収まる初回寸法を指定してください。
-入力空間の選択欄には`World`／`Local`の順で表示し、保存値がない場合は`Local`です。
-空間の意味と表示単位はツールチップで確認できます。
-
-「入力空間」のLocalは対象属性の値を意味し、基準ノードの未丸め実値を
-表示します。Worldで指定する移動値はDAG原点の最終world位置、回転値は基準ノードの
-**最終world姿勢を固定XYZ順のEuler角**で表した値です。Worldの回転値は対象ノードの
-`rotateOrder`で解釈する属性値ではありません。値は現在のMaya表示単位で入力し、
-内部では移動をcm、回転をdegreeで扱います。World／Localや設定先の属性群を
-切り替えると、現在の基準ノードから選択先の実値を読み直して表示し、切替だけでは
-sceneを変更しません。JointからTransformへ選択を変え、設定先の`jointOrient`が
-使えなくなった場合は`rotate`へ切り替えます。
-Window表示中にMayaの距離・角度単位を変えた場合も、旧単位の未確定入力を破棄して
-現在単位で値を読み直します。
-
-各軸の文字入力はEnterまたはフォーカス移動で確定し、ホイール・上下操作はその場で
-反映します。1軸を操作するとき、残りの軸は現在のノードの未丸め実値を使用し、
-実行後にXYZを読み直します。OK／Cancelボタンによる一括確定はありません。
-通常Enter・テンキーEnterの確定キーは数値欄内で受理し、MayaのOutlinerへ伝播させません。
-XYZ各行の縦方向には2論理pxの間隔を置き、Windowの縦リサイズでも間隔を維持します。
-各軸に独立したStep欄を置き、Step変更だけではscene・Undo履歴を変更しません。
-このStepはbdChannelBox本体の属性別Stepと連動しません。
-
-移動では直接の子のworld座標を保持します。回転で保存値がない場合は子のworld座標と姿勢を
-両方保持する設定で、選択欄には「座標と姿勢」と表示します。必要なら「姿勢」へ
-切り替えられます。
-子Jointの姿勢補償先は保存値がなければ`rotate`で、`jointOrient`も選べます。
-Transform子は`rotate`で姿勢を補償します。補償によって子の属性値は変更されます。
-ロック・入力接続などでコマンドが変更できない場合はエラーを表示します。
-
-各値操作には`bdUtilCommands`の`bdSetTranslateCompensateChildren`、
-`bdSetRotateCompensateChildren`、`bdSetRotateAxisCompensateChildren`、
-`bdSetJointOrientCompensateChildren`を使用します。各操作はUndoで戻せ、
-目標値と補償結果が現状と同じならUndo履歴を増やしません。
-
-### 姿勢を維持した回転値の設定
-
-値編集モードの`rotateX/Y/Z`、`rotateAxisX/Y/Z`、`jointOrientX/Y/Z`行には、
-「回転をセット（子を維持）」の次に「回転をセット（姿勢を維持）」
-「回転を集約」を表示し、
-その下に通常とXYZ専用の丸めを置きます。
-右クリックした軸は入口で、独立したdockable Windowの
-「値をセットする属性」の初期値を決めます。
-子メニューは設けず、Window内で設定先、補償先、XYZの値を選びます。
-設定対象と属性選択欄の間に仕切り線を置きます。設定先・補償先の各ラベルと選択欄を
-横に並べ、その2組を縦に配置します。初回の浮動表示ではメニュー項目をクリックした
-位置を中心に開き、そのモニターの作業領域からはみ出す場合は位置を補正します。
-以降の浮動位置・サイズとドック配置はMayaが保持し、再起動時に復元します。
-狭いドックでは内容をスクロールできます。Maya側の終了・reloadでは選択監視を解除します。
-XYZ欄の入力文字は、マウスで最初にフォーカスしたクリックで全選択します。
-初回の浮動サイズは`rotation_set_window.py`冒頭の`INITIAL_WIDTH`・
-`INITIAL_HEIGHT`で調整できます。
-`rotation_set_ui.show()`と`restore()`はdockable Windowを返し、値入力のページは
-その`rotation_page`から参照します。
-
-Mayaが保存したこのWindowの配置を消して初回サイズで開き直す場合は、Script Editorで
-次を実行します。Windowを先に破棄してから保存状態を削除するため、Mayaの再起動は不要です。
-
-```python
-from maya import cmds
-from bd_tools.bd_channel_box import rotation_set_ui
-
-rotation_set_ui.dispose()
-name = rotation_set_ui.WORKSPACE_CONTROL_NAME
-if cmds.workspaceControlState(name, query=True, exists=True):
-    cmds.workspaceControlState(name, remove=True)
-rotation_set_ui.show()
-```
-
-削除するのは姿勢維持WindowのMaya workspace配置だけです。bdChannelBox本体の
-`reset_layout()`とは対象が異なり、子を維持する共通Windowやその`ui.ini`設定には
-影響しません。Mayaの浮動Window外枠を含む実寸は初期値と多少異なる場合があります。
-
-基準ノードがTransformなら設定先は`rotate`と`rotateAxis`で、補償先は残る一方です。
-Jointなら設定先は`rotate`、`rotateAxis`、`jointOrient`で、補償先は設定先以外の
-二属性から選べます。Jointの補償先の初期値は、設定先が`rotate`なら
-`jointOrient`、ほかは`rotate`です。設定先を切り替えると基準ノードのその属性の
-未丸め実値をXYZ欄へ表示し、切替だけではsceneを変更しません。
-Mayaの現在の角度単位で入力し、表示の小数桁数によって未編集の値を丸めません。
-Window表示中に角度単位を変えた場合も、旧単位の未確定入力を破棄して値を読み直します。
-XYZとStep欄のEnter確定は入力欄内で受理し、MayaのOutlinerへ伝播させません。
-
-Windowを開いたままMayaで選択を変えられ、対象名とXYZ欄は新しい基準ノードの
-実値に切り替わります。選択変更時は未確定の文字入力を破棄し、対象がないときは
-値入力を無効にします。Jointの`jointOrient`を設定先にしたままTransformへ選択を
-変えた場合は、設定先を`rotate`へ切り替えます。操作時の現在選択の末尾にある
-基準ノード1個だけへ値を設定し、そのノードの現在の回転から補償先の値を計算します。
-複数選択中のほかのノードには適用しません。直接の変更対象は設定先と補償先の二属性で、
-第三の回転属性は変更しません。現在のlocal matrixを維持するため、
-子のworld座標・姿勢も変わりません。
-各軸の文字入力はEnterまたはフォーカス移動で確定し、ホイール・上下操作はその場で
-反映します。残りの軸は現在のノードの未丸め実値を使用し、実行後にXYZを読み直します。
-各軸のStep欄はbdChannelBox本体と独立し、Stepの変更だけではscene・Undo履歴を
-変更しません。OK／Cancelボタンによる一括確定はありません。
-処理には`bdUtilCommands`の`bdSetRotationPreservingPose`を使い、各値操作を
-Undoで戻せます。目標値が現在値と同じならUndoを追加せず、
-ロック・入力接続などで変更できない場合はエラーを表示します。
+移動と回転の子維持メニューは、独立ツール
+[bdChildCompensatedSet](bd_child_compensated_set.md)の共通2タブWindowを開きます。
+姿勢維持メニューは独立ツール
+[bdRotationPreservingPose](bd_rotation_preserving_pose.md)を開きます。
+どちらもbdChannelBoxを閉じた状態から単独起動でき、現在選択の末尾にある
+TransformまたはJointの1ノードだけを操作します。Window固有の値入力、
+Step、設定保存、Mayaドックの仕様は各ツールの文書を参照してください。
 
 ### 回転の集約
 

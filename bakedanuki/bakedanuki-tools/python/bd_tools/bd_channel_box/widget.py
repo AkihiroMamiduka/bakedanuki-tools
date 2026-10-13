@@ -51,7 +51,6 @@ from .custom_filter_registry import CustomFilterRegistry
 from .custom_filter_editor import create_custom_filter
 from .custom_filter_setup import CustomFilterSetupPanel
 from .custom_filters import CustomFilterError, CustomFilterSelection
-from . import child_rotation_ui, child_translate_ui, rotation_set_ui
 from .table import ChannelTableView, TableRow
 
 __all__ = [
@@ -2643,6 +2642,8 @@ class ChannelBoxWidget(qt.QWidget):
         self, initial_target: RotationDestination
     ) -> None:
         """右クリックした属性を初期設定先にして姿勢維持Windowを開く。"""
+        from .. import bd_rotation_preserving_pose
+
         click_position = qt.QCursor.pos()
         self.state_sweep.finish()
         self.lock_sweep.finish()
@@ -2650,7 +2651,7 @@ class ChannelBoxWidget(qt.QWidget):
         self.controller.state_edit_session.finish()
         self.controller.finish_value_edit()
         try:
-            rotation_set_ui.show(initial_target, click_position)
+            bd_rotation_preserving_pose.show(initial_target, click_position)
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
@@ -2658,6 +2659,8 @@ class ChannelBoxWidget(qt.QWidget):
         self, initial_target: RoundTransformKind
     ) -> None:
         """右クリックした属性を初期設定先にして子補償Windowを開く。"""
+        from .. import bd_child_compensated_set
+
         click_position = qt.QCursor.pos()
         self.state_sweep.finish()
         self.lock_sweep.finish()
@@ -2666,9 +2669,13 @@ class ChannelBoxWidget(qt.QWidget):
         self.controller.finish_value_edit()
         try:
             if initial_target == "translate":
-                child_translate_ui.show(click_position)
+                bd_child_compensated_set.show(
+                    "translate", "translate", click_position
+                )
             else:
-                child_rotation_ui.show(initial_target, click_position)
+                bd_child_compensated_set.show(
+                    "rotation", initial_target, click_position
+                )
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 

@@ -13,8 +13,8 @@ from bd_util.maya.node import node_display_name
 from bd_util.maya.mpx_cmd import set_rotation_preserving_pose
 from bd_util.ui import qt
 
-from .controller import RotationDestination
-from .live_set_common import LiveSetWindowBase, LiveXyzEditor
+from .._shared.live_set import LiveSetWindowBase, LiveXyzEditor
+from .types import RotationTarget
 
 __all__ = ["RotationSetWindow", "INITIAL_WIDTH", "INITIAL_HEIGHT"]
 
@@ -35,10 +35,10 @@ class RotationSetWindow(LiveSetWindowBase):
         super().__init__(parent, as_page=as_page)
         self._node_name: str | None = None
         self._node_type: Literal["transform", "joint"] | None = None
-        self._requested_target: RotationDestination = "rotate"
+        self._requested_target: RotationTarget = "rotate"
         self._compensation_by_target: dict[
-            tuple[Literal["transform", "joint"], RotationDestination],
-            RotationDestination,
+            tuple[Literal["transform", "joint"], RotationTarget],
+            RotationTarget,
         ] = {}
         self.setWindowTitle("回転をセット（姿勢を維持）")
         self.target_label = qt.QLabel("設定対象（基準ノードのみ）：なし", self)
@@ -88,25 +88,25 @@ class RotationSetWindow(LiveSetWindowBase):
         self.refresh_requested.connect(self.refresh)
         self.refresh()
 
-    def set_initial_target(self, target: RotationDestination) -> None:
-        """メニューで右クリックした回転属性を今回の設定先にする。"""
+    def set_initial_target(self, target: RotationTarget) -> None:
+        """指定された回転属性を今回の設定先にする。"""
         if target not in ("rotate", "rotateAxis", "jointOrient"):
             raise ValueError("回転属性を指定してください")
         self._requested_target = target
         self.xyz_editor.discard_pending_input()
         self.refresh()
 
-    def target(self) -> RotationDestination:
+    def target(self) -> RotationTarget:
         """現在の設定先属性群を返す。"""
         return self._requested_target
 
-    def compensate_with(self) -> RotationDestination:
+    def compensate_with(self) -> RotationTarget:
         """現在の姿勢を吸収する属性群を返す。"""
-        return cast(RotationDestination, self.compensation_combo.currentData())
+        return cast(RotationTarget, self.compensation_combo.currentData())
 
     def _compensation_options(
-        self, target: RotationDestination
-    ) -> tuple[RotationDestination, ...]:
+        self, target: RotationTarget
+    ) -> tuple[RotationTarget, ...]:
         """JointではrotateAxis以外を先頭とする候補順を返す。"""
         joint = self._node_type == "joint"
         if target == "rotate":
@@ -117,18 +117,18 @@ class RotationSetWindow(LiveSetWindowBase):
 
     def _sync_options(self, node_type: Literal["transform", "joint"]) -> None:
         """選択ノードで有効な設定先と補償先だけを表示する。"""
-        available: tuple[RotationDestination, ...] = (
+        available: tuple[RotationTarget, ...] = (
             ("rotate", "rotateAxis", "jointOrient")
             if node_type == "joint"
             else ("rotate", "rotateAxis")
         )
-        desired: RotationDestination = (
+        desired: RotationTarget = (
             self._requested_target
             if self._requested_target in available
             else "rotate"
         )
         target_items = tuple(
-            cast(RotationDestination, self.target_combo.itemData(index))
+            cast(RotationTarget, self.target_combo.itemData(index))
             for index in range(self.target_combo.count())
         )
         blocker = qt.QtCore.QSignalBlocker(self.target_combo)
@@ -151,7 +151,7 @@ class RotationSetWindow(LiveSetWindowBase):
             selected = options[0]
         compensation_items = tuple(
             cast(
-                RotationDestination,
+                RotationTarget,
                 self.compensation_combo.itemData(index),
             )
             for index in range(self.compensation_combo.count())
@@ -174,7 +174,7 @@ class RotationSetWindow(LiveSetWindowBase):
         if self.target_combo.currentIndex() < 0:
             return
         self._requested_target = cast(
-            RotationDestination, self.target_combo.currentData()
+            RotationTarget, self.target_combo.currentData()
         )
         self.xyz_editor.discard_pending_input()
         self.refresh()

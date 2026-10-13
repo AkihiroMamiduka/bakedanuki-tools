@@ -22,9 +22,9 @@ from bd_util.maya.ui.dock import workspace_control
 from bd_util.ui import SettingsPath, qt
 
 from .._dev.reopen_targets import CHILD_SET_REOPEN
-from .anchored_dialog import centered_position_within_screen
-from .child_compensated_set_window import ChildCompensatedSetWindow
-from .controller import RoundTransformKind
+from .._shared.window_position import centered_position_within_screen
+from .types import ChildSetTarget
+from .window import ChildCompensatedSetWindow
 
 __all__ = [
     "ChildSetDockWindow",
@@ -43,7 +43,7 @@ TRANSLATE_INITIAL_HEIGHT = 190
 ROTATION_INITIAL_WIDTH = 328
 ROTATION_INITIAL_HEIGHT = 274
 
-_SETTINGS_PATH = SettingsPath("bd_channel_box/child_set/main")
+_SETTINGS_PATH = SettingsPath("bd_child_compensated_set/main")
 _REOPEN_OWNER, _REOPEN_TOOL_ID, _REOPEN_MODULE, _REOPEN_FUNCTION = (
     CHILD_SET_REOPEN
 )
@@ -146,7 +146,7 @@ class ChildSetDockWindow(MayaDockableWindow):
         self._size_change_serial = 0
         self._floating_host: qt.QWidget | None = None
         self._active_tab: ChildSetTab = "translate"
-        self._requested: tuple[ChildSetTab, RoundTransformKind] | None = None
+        self._requested: tuple[ChildSetTab, ChildSetTarget] | None = None
         self._initial_anchor: qt.QPoint | None = None
         self._reopen_token = object()
 
@@ -236,10 +236,8 @@ class ChildSetDockWindow(MayaDockableWindow):
             _REOPEN_OWNER, _REOPEN_TOOL_ID, token=self._reopen_token
         )
 
-    def request_tab(
-        self, tab: ChildSetTab, target: RoundTransformKind
-    ) -> None:
-        """メニューで選んだタブと回転属性を保存状態より優先する。"""
+    def request_tab(self, tab: ChildSetTab, target: ChildSetTarget) -> None:
+        """指定されたタブと設定先を保存状態より優先する。"""
         if tab == "translate" and target != "translate":
             raise ValueError("移動タブにはtranslateを指定してください")
         if tab == "rotation" and target not in (
@@ -253,13 +251,13 @@ class ChildSetDockWindow(MayaDockableWindow):
             self._apply_request()
 
     def set_initial_anchor(self, position: qt.QPoint) -> None:
-        """初回作成時だけメニュークリック位置へ浮動枠を寄せる。"""
+        """初回作成時だけ指定位置へ浮動枠を寄せる。"""
         self._initial_anchor = qt.QPoint(position)
         if self._attached:
             _run_later(self._position_initial_window)
 
     def _apply_request(self) -> None:
-        """復元済みの選択タブより明示メニュー操作を優先する。"""
+        """復元済みの選択タブより明示指定を優先する。"""
         requested = self._requested
         self._requested = None
         if requested is None:
@@ -281,7 +279,7 @@ class ChildSetDockWindow(MayaDockableWindow):
         _run_later(self._finish_attachment)
 
     def _finish_attachment(self) -> None:
-        """保存タブまたはメニュー指定タブのサイズと内容を反映する。"""
+        """保存タブまたは明示指定タブのサイズと内容を反映する。"""
         if self._disposed:
             return
         self._attached = True
@@ -429,7 +427,7 @@ class ChildSetDockWindow(MayaDockableWindow):
         return super().eventFilter(watched, event)
 
     def _position_initial_window(self) -> None:
-        """初回の浮動枠だけクリック位置を中心として画面内へ置く。"""
+        """初回の浮動枠だけ指定位置を中心として画面内へ置く。"""
         anchor = self._initial_anchor
         self._initial_anchor = None
         if anchor is None or not self._is_floating():

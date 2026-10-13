@@ -9,6 +9,14 @@
 
 ### Changed
 
+- bdChannelBoxの3つの値設定メニューから開くWindowを、単独起動できる
+  `bd_tools.bd_child_compensated_set`と`bd_tools.bd_rotation_preserving_pose`へ分離。
+  bdChannelBoxは公開`show()`を呼ぶ入口とし、共通の選択監視・XYZ入力部品は
+  `bd_tools._shared`へ移した。旧`bd_channel_box`配下のWindow moduleとdialogは削除。
+  両WindowのworkspaceControl IDとMayaの復元経路を新package名に変更したため、
+  旧ドック配置は引き継がれない。子維持ツールの設定先も
+  `bd_child_compensated_set/ui.ini`へ変更し、旧`bd_channel_box/ui.ini`のタブ・
+  入力空間・補償設定・浮動サイズは移行しない。sceneの移行は不要。
 - bdChannelBoxの「回転をセット（姿勢を維持）」を独立したdockable Windowへ変更。
   Mayaへのドッキングと再起動時の配置復元に対応し、初回の浮動表示だけ右クリック位置へ
   配置する。`rotation_set_ui.show()`の戻り値は入力ページからdockable Windowへ変更し、

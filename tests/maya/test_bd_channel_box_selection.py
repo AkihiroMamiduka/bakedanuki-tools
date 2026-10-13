@@ -1,6 +1,7 @@
 # coding: utf-8
 """属性行の選択と、明示的な一括数値入力・状態操作を検証する。"""
 
+import importlib
 from collections.abc import Callable, Iterator
 from math import isclose
 from typing import Literal, NoReturn, cast
@@ -22,11 +23,7 @@ from bd_util.ui import (
     qt,
 )
 import bd_tools.bd_channel_box.controller as controller_module
-from bd_tools.bd_channel_box import (
-    child_rotation_ui,
-    child_translate_ui,
-    rotation_set_ui,
-)
+from bd_tools.bd_child_compensated_set import ChildSetTab, ChildSetTarget
 from bd_tools.bd_channel_box.controller import (
     ChannelAttributeFilter,
     RoundTransformKind,
@@ -2332,7 +2329,8 @@ def test_rotation_set_action_opens_window_with_clicked_group(
         """Windowの初期設定先と表示位置を記録する。"""
         opened.append((target, anchor))
 
-    monkeypatch.setattr(rotation_set_ui, "show", record_show)
+    tool = importlib.import_module("bd_tools.bd_rotation_preserving_pose")
+    monkeypatch.setattr(tool, "show", record_show)
     editor.controller.set_attribute_filter("all")
     _events()
     before_transform = {
@@ -2374,20 +2372,20 @@ def test_child_set_action_opens_window_with_clicked_group(
     editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """子を維持する設定は入口の属性群をWindowへ渡し、表示だけでは値を変えない。"""
-    opened: list[tuple[str, qt.QPoint | None]] = []
+    opened: list[
+        tuple[ChildSetTab | None, ChildSetTarget | None, qt.QPoint | None]
+    ] = []
 
-    def record_translate_show(anchor: qt.QPoint | None = None) -> None:
-        """移動Windowの表示位置を記録する。"""
-        opened.append(("translate", anchor))
-
-    def record_rotation_show(
-        target: RoundTransformKind, anchor: qt.QPoint | None = None
+    def record_show(
+        tab: ChildSetTab | None = None,
+        target: ChildSetTarget | None = None,
+        anchor: qt.QPoint | None = None,
     ) -> None:
-        """回転Windowの初期設定先と表示位置を記録する。"""
-        opened.append((target, anchor))
+        """共通Windowのタブ、初期設定先、表示位置を記録する。"""
+        opened.append((tab, target, anchor))
 
-    monkeypatch.setattr(child_translate_ui, "show", record_translate_show)
-    monkeypatch.setattr(child_rotation_ui, "show", record_rotation_show)
+    tool = importlib.import_module("bd_tools.bd_child_compensated_set")
+    monkeypatch.setattr(tool, "show", record_show)
     editor.controller.set_attribute_filter("all")
     _events()
     before_transform = {
@@ -2413,13 +2411,13 @@ def test_child_set_action_opens_window_with_clicked_group(
     row = _row(editor, "jointOrientZ")
     assert row.child_set_action is not None
     row.child_set_action.trigger()
-    assert [target for target, _ in opened] == [
-        "translate",
-        "rotate",
-        "rotateAxis",
-        "jointOrient",
+    assert [(tab, target) for tab, target, _ in opened] == [
+        ("translate", "translate"),
+        ("rotation", "rotate"),
+        ("rotation", "rotateAxis"),
+        ("rotation", "jointOrient"),
     ]
-    assert all(isinstance(anchor, qt.QPoint) for _, anchor in opened)
+    assert all(isinstance(anchor, qt.QPoint) for _, _, anchor in opened)
     assert before_joint == {
         target: _rotation_triplet(joint + "." + target)
         for target in ("translate", "rotate", "rotateAxis", "jointOrient")

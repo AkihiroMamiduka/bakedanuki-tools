@@ -205,13 +205,14 @@ constraintを含む経路は従来どおり入力不可とします。
 
 ## Phase 3: Tool Collection Conventions
 
-次のツールを追加するときに、bdChannelBoxの実装を参考にして共通規約を整えます。
-完成したツールの仕様と責務分担は[bdChannelBox](bd_channel_box.md)を参照します。
+bdChannelBoxから独立した
+[bdChildCompensatedSet](bd_child_compensated_set.md)と
+[bdRotationPreservingPose](bd_rotation_preserving_pose.md)を実例として共通規約を整えます。
 
-- [ ] 個別ツールの命名と package 構成を実例から確定する
+- [x] 個別ツールの命名と package 構成を実例から確定する
 - [ ] 共通の tool discovery / launcher が必要か評価する
-- [ ] UI 設定 path と workspaceControl ID の命名規約を固定する
-- [ ] 複数ツールで本当に共有される処理を適切な層へ抽出する
+- [x] UI 設定 path と workspaceControl ID の命名規約を固定する
+- [x] 複数ツールで本当に共有される処理を適切な層へ抽出する
 
 ## Phase 4: Rig Integration
 

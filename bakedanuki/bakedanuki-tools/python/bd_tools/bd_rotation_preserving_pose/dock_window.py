@@ -14,9 +14,9 @@ from bd_util.maya.ui.dock import workspace_control
 from bd_util.ui import qt
 
 from .._dev.reopen_targets import ROTATION_SET_REOPEN
-from .anchored_dialog import centered_position_within_screen
-from .controller import RotationDestination
-from .rotation_set_window import (
+from .._shared.window_position import centered_position_within_screen
+from .types import RotationTarget
+from .window import (
     INITIAL_HEIGHT,
     INITIAL_WIDTH,
     RotationSetWindow,
@@ -76,12 +76,12 @@ class RotationSetDockWindow(MayaDockableWindow):
             token=self._reopen_token,
         )
 
-    def request_target(self, target: RotationDestination) -> None:
-        """右クリックした属性を今回の設定先として表示する。"""
+    def request_target(self, target: RotationTarget) -> None:
+        """指定された属性を今回の設定先として表示する。"""
         self.rotation_page.set_initial_target(target)
 
     def set_initial_anchor(self, position: qt.QPoint) -> None:
-        """初回の浮動表示だけメニューのクリック位置へ寄せる。"""
+        """初回の浮動表示だけ指定位置へ寄せる。"""
         self._initial_anchor = qt.QPoint(position)
         self._anchor_timer.start(0)
 
@@ -100,7 +100,7 @@ class RotationSetDockWindow(MayaDockableWindow):
             return False
 
     def _position_initial_window(self) -> None:
-        """浮動枠をクリック位置中心に置き、画面の作業領域へ収める。"""
+        """浮動枠を指定位置中心に置き、画面の作業領域へ収める。"""
         anchor = self._initial_anchor
         self._initial_anchor = None
         if anchor is None or self._disposed or not self._is_floating():
