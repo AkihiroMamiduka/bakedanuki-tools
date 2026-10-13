@@ -905,6 +905,26 @@ Transform子は`rotate`で姿勢を補償します。補償によって子の属
 XYZ欄の入力文字は、マウスで最初にフォーカスしたクリックで全選択します。
 初回の浮動サイズは`rotation_set_window.py`冒頭の`INITIAL_WIDTH`・
 `INITIAL_HEIGHT`で調整できます。
+`rotation_set_ui.show()`と`restore()`はdockable Windowを返し、値入力のページは
+その`rotation_page`から参照します。
+
+Mayaが保存したこのWindowの配置を消して初回サイズで開き直す場合は、Script Editorで
+次を実行します。Windowを先に破棄してから保存状態を削除するため、Mayaの再起動は不要です。
+
+```python
+from maya import cmds
+from bd_tools.bd_channel_box import rotation_set_ui
+
+rotation_set_ui.dispose()
+name = rotation_set_ui.WORKSPACE_CONTROL_NAME
+if cmds.workspaceControlState(name, query=True, exists=True):
+    cmds.workspaceControlState(name, remove=True)
+rotation_set_ui.show()
+```
+
+削除するのは姿勢維持WindowのMaya workspace配置だけです。bdChannelBox本体の
+`reset_layout()`とは対象が異なり、子を維持する共通Windowやその`ui.ini`設定には
+影響しません。Mayaの浮動Window外枠を含む実寸は初期値と多少異なる場合があります。
 
 基準ノードがTransformなら設定先は`rotate`と`rotateAxis`で、補償先は残る一方です。
 Jointなら設定先は`rotate`、`rotateAxis`、`jointOrient`で、補償先は設定先以外の
