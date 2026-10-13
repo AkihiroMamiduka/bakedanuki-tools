@@ -198,7 +198,7 @@ constraintを含む経路は従来どおり入力不可とします。
   対応済みのstringも含める。
 - 検証用Maya 2025の終了待ちタイムアウトは原因未特定。複数属性拡張時は2回連続で正常終了したが、
   背景色調整時の検証で再発した。操作結果とprocessの終了を区別して調査する。
-  詳細と手順は[Testing](testing.md#bdchannelboxのmaya本体検証)を参照する。
+  詳細と手順は[Testing](testing.md#bdchannelboxと独立ツールのmaya本体検証)を参照する。
 - 49ノード以下や大量の属性で負荷が問題になった場合は、まず既存runnerで構築・入力・選択切替を計測する。
   属性検索とstep欄の初期化は改善済み。追加のキャッシュ・行再利用・監視共有は実測に基づいて検討する。
   [維持する仕様](bd_channel_box.md#性能改善を続ける場合)を確認し、無効化や解放の複雑さも評価する。
@@ -207,10 +207,15 @@ constraintを含む経路は従来どおり入力不可とします。
 
 bdChannelBoxから独立した
 [bdChildCompensatedSet](bd_child_compensated_set.md)と
-[bdRotationPreservingPose](bd_rotation_preserving_pose.md)を実例として共通規約を整えます。
+[bdRotationPreservingPose](bd_rotation_preserving_pose.md)を実例として個別ツールの共通規約を
+整理しました。両ツールの独立化とbdChannelBoxの数値欄156 pxへの変更は、利用者の
+動作確認とpushが完了しています（2026-10-13）。従来失敗していたMaya 2027の幅testを含む
+全368件が通過しました。Maya 2026のOSクリップボードtestの再確認結果は
+[検証記録](bd_channel_box.md#検証)を参照してください。
 
 - [x] 個別ツールの命名と package 構成を実例から確定する
 - [ ] 共通の tool discovery / launcher が必要か評価する
+- [ ] bakedanuki 上部メニューがこのブランチに統合された後、独立ツールの起動項目を追加する
 - [x] UI 設定 path と workspaceControl ID の命名規約を固定する
 - [x] 複数ツールで本当に共有される処理を適切な層へ抽出する
 

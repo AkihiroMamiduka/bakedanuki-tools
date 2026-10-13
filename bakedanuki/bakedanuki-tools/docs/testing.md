@@ -47,7 +47,12 @@ Step欄のない行の除外、未選択行の操作がその行だけへ適用�
 util側の`tests/maya/ui/test_plugs_value_edits.py`で、複数Bindingをまとめた事前検証と
 書込み失敗時の復旧を確認します。toolsとutilの両方を更新し、同じ組合せで検証してください。
 
-## bdChannelBoxのMaya本体検証
+OSクリップボードを使うtestが全件実行時に失敗した場合は、失敗したtest単独、関連ファイル、
+全件の順に再実行して結果を分けて記録します。Maya versionを順番に実行しても再発する場合が
+あり、単独で通過しただけでは全件成功と扱いません。原因が特定できるまでは、競合や実装の
+問題のどちらとも断定しません。
+
+## bdChannelBoxと独立ツールのMaya本体検証
 
 `scripts/test_bd_channel_box_maya.py`は、末尾ノードを基準にする選択追従と、
 現行の揃える・ロックのサブメニュー、Step設定順を検証します。
@@ -206,6 +211,10 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 
 終了codeが0で `result.json` の `success` がTrueでも、保存画像で文字切れ、配置、
 入力欄の状態を確認してください。結果が保存されなかった場合は失敗として扱います。
+再起動検証では`result-restart.json`が無ければUI復元を確認できていません。
+`progress.json`と`maya-*.log`・`process-*.log`・`python-stacks-*.log`を見て、
+検証スクリプト開始前のMaya起動段階、操作中、終了待ちのどこで止まったかを区別してください。
+以前の成功結果を今回の再起動検証の結果として扱わず、必要な工程を再試行します。
 
 初回のMaya 2025本体検証では、全操作の成功結果とcallback解放を確認した後、
 Mayaアプリケーションの終了待ちが180秒でタイムアウトしました。native MELの
@@ -392,6 +401,11 @@ floatingにしてworkspaceとpreferencesを専用profileへ保存します。
 一括入力を検証してから終了します。結果は `result-restart.json`、画像は
 `07-after-maya-restart.png`、ログは `*-restart.log` に保存し、一度目の結果を残します。
 この再起動検証はsceneの保存・復元ではなく、Maya workspaceからのUI復元を対象にします。
+
+独立化後の確認では、bdChildCompensatedSetは新しいworkspaceControl IDで再起動復元まで
+成功しました。bdRotationPreservingPoseは通常のドック操作を確認しましたが、
+`--prepare-restart`の試行が検証スクリプト実行前のMaya起動段階で止まったため、
+新しいIDでの再起動復元結果は未取得です。今後配置復元を変更する際は、この工程も再試行します。
 
 ## 値欄の幅拡張の検証（2026-09-30）
 

@@ -143,7 +143,8 @@ UI 基盤は `bd_util.ui` と `bd_util.maya.ui` を利用します。
 - Qt class は `bd_util.ui.qt` 経由で使用する。
 - 通常 Window は `MayaWindowController` で重複表示を防ぐ。
 - dockable UI は `MayaDockableWindowController` と固定 `control_id` を使用する。
-- `settings_path` は `<tool_name>/windows/<window_name>` のように固定する。
+- `settings_path` はツール名を先頭にした固定 path にする。
+  例: `bd_child_compensated_set/main`。
 - Maya callback は Window owner に関連付ける。
 - import 時には UI を表示せず、明示的な `show()` で表示する。
 - reload 前には controller、workspaceControl、callback を完全に破棄する。
