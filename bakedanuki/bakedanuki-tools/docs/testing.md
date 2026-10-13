@@ -70,9 +70,20 @@ Step欄のない行の除外、未選択行の操作がその行だけへ適用�
 util側の`tests/maya/ui/test_plugs_value_edits.py`で、複数Bindingをまとめた事前検証と
 書込み失敗時の復旧を確認します。toolsとutilの両方を更新し、同じ組合せで検証してください。
 
-## bdChannelBoxのMaya本体検証
+OSクリップボードを使うtestが全件実行時に失敗した場合は、失敗したtest単独、関連ファイル、
+全件の順に再実行して結果を分けて記録します。Maya versionを順番に実行しても再発する場合が
+あり、単独で通過しただけでは全件成功と扱いません。原因が特定できるまでは、競合や実装の
+問題のどちらとも断定しません。
 
-リポジトリ直下から専用runnerを実行します。`--maya-version` は2025 / 2026 / 2027を
+## bdChannelBoxと独立ツールのMaya本体検証
+
+`scripts/test_bd_channel_box_maya.py`は、末尾ノードを基準にする選択追従と、
+現行の揃える・ロックのサブメニュー、Step設定順を検証します。
+現行メニューの自動回帰には`tests/maya/test_bd_channel_box*.py`を、独立ツールの
+選択追従・値操作・dock lifecycleには`tests/maya/test_bd_transform_set_windows.py`を使用します。
+
+リポジトリ直下から専用runnerを実行します。
+`--maya-version` は2025 / 2026 / 2027を
 指定でき、`--util-root` を省略すると環境変数またはsiblingのutilを使用します。
 
 ```powershell
@@ -80,16 +91,61 @@ util側の`tests/maya/ui/test_plugs_value_edits.py`で、複数Bindingをまと�
     scripts/test_bd_channel_box_maya.py --maya-version 2025 --timeout 180
 ```
 
+名前欄の描画・Enter確定・フォーカスと終了処理だけを検証する場合は、
+同じコマンドへ`--name-only`を追加します。
+bdChildCompensatedSetの移動・回転タブと浮動・ドックのサイズを実Mayaで確認する場合は
+`--child-set-only`を追加します。Maya再起動後のタブとサイズまで検証する場合は
+同じオプションに`--prepare-restart`を付け、出力された検証ディレクトリを
+`--restart-from`へ渡してもう一度実行します。
+bdRotationPreservingPoseについては`--pose-set-only`で浮動表示、Mayaへの
+ドッキングと再利用を確認します。同じオプションで2段階の再起動検証もできます。
+接続属性の入力だけを検証する場合は`--connections-only`を追加します。
+通常時間キー・SDK・Animation Layerの実画面入力とAuto Key ON／OFF、
+tooltip、constraintの入力禁止、Undo／Redo、時刻変更でのSlider終了を確認します。
+同じ検証は通常の全工程にも含みます。
+
+共有カスタムフィルターの管理画面と表示・値入力を検証する場合は、
+独立した`--custom-filters-only`工程を実行します。
+
+```powershell
+& "C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe" -B `
+    scripts/test_bd_channel_box_maya.py --maya-version 2025 --custom-filters-only --timeout 300
+```
+
+検証用の共有JSONを2件作成して登録し、管理画面の一覧・順序変更・ON/OFFと
+Attribute Filterへの反映を確認します。非表示属性をJSONの順に表示して値編集・Undoを行い、
+定義にないjoint型では`keyable + channelbox`へ戻る案内と表示行を確認します。
+同じ工程で設定モードのJSON保存、分割バー、候補の一括操作とドラッグ複数選択、
+表示順一覧の複数選択・上下移動・除外も実画面で確認します。
+設定モードは`tests/maya/test_bd_channel_box_custom_filters.py`で標準5条件、非表示属性の
+JSON登録、保存後のCustom表示、sceneとUndo履歴の不変を確認します。
+表示順と候補の境界を動かした際の両領域の表示、絞り込み候補の一括含める／含めない、
+スクロール外の候補、候補外の既存pathと別ノード型の保持、0件時の空配列も確認します。
+一括操作では保存前に共有JSON・scene・Undoが変わらず、保存後の再読込で反映されることを
+確認します。候補数が多い場合も、各候補の変更ごとに画面全体を再構築しないことを確認します。
+候補のCtrl／Shiftクリックと名前ドラッグによる複数選択、選択中・選択外のラジオの
+適用範囲、すでにONのラジオによる一括適用を確認します。スクロール外の選択保持と
+検索・標準フィルターで隠れた選択の解除、未定義型で同じ状態を再選択した際の
+無変更、JSON保存前のscene・Undo不変も確認します。
+上段の表示順一覧ではCtrlクリックとShiftによる範囲選択、連続・非連続選択の同時移動、
+端での操作禁止、
+移動後の選択保持と選択全件の除外を確認します。ノードにないpath、別ノード型の保持、
+保存前後のJSONとscene・Undo履歴も確認します。
+JSONの新規作成、型・属性順の保持、空定義と未定義型、外部更新時の上書き防止は
+`tests/unit/test_bd_channel_box_custom_filter_editor.py`で確認します。
+
 runnerは別の `maya.exe` を起動し、一時ディレクトリの `MAYA_APP_DIR`、Maya.env探索先、
 project、script pathを使用します。通常のMaya.envを書き換えず、起動済みMayaへ接続しません。
 PythonのuserSetupは読み込まず、検証用sceneで操作した後に専用processを終了します。
 時間切れの場合も、runner自身が起動したprocessだけを終了します。
 起動時のdeferred処理が完了した後に検証を開始し、専用sceneのUndoを有効にします。
+Qt signal経由の例外も工程名付きで記録し、操作工程を終えても例外が残れば失敗とします。
 
-boolのCheckBoxへのSpace入力、floatの文字入力、Sliderのマウスドラッグ、
-enumの選択肢表示・マウス選択・飛び番入力、右クリックメニューからの
-表示更新とbool・enumの混在値を揃える操作、
-各操作の1回Undo、選択追従、close / reopen、utilとtoolsのreloadを確認します。
+runnerは、boolのCheckBoxへのSpace入力、floatの文字入力、
+Sliderのマウスドラッグ、enumの選択肢表示・マウス選択・飛び番入力、
+右クリックのサブメニューからの整列と複数属性のロックを検証します。
+右クリックに「表示を更新」がないことと、直接更新が値・Undoを変更しないことも確認します。
+各操作の1回Undo、選択追従、close / reopen、utilとtoolsのreloadも検証対象です。
 ドッキングからfloatingへの切替、Mayaへのタブ再配置、Maya側のcloseによる破棄も確認します。
 step欄のキー入力が値とUndoを変更しないこと、変更後の刻み幅で値入力できること、
 値をUndoしてもstepが保持されることも確認します。
@@ -99,7 +155,8 @@ OFFかつ未フォーカス時の無書込み、フォーカス後とON時の編
 一覧へのスクロール伝達を確認します。`QApplication.sendEvent()`だけではホイールによる
 自動フォーカス取得を再現できないため、この検証の代用にはしません。
 上部ComboBoxから値編集と表示・ロックを切り替え、非表示属性の追加によって
-Window幅が変わらず、値編集156 px・設定200 pxの操作欄が収まることを確認します。
+Window幅が変わらず、値編集222 pxと設定モードの必要幅の操作欄が収まることを確認します。
+設定モードでは`hide`と`lock`の間が他のボタンと同じ6 pxになることも確認します。
 縦スクロールバーは必要時だけ表示し、その出入りによる名前列幅・入力列位置の変化は許容します。
 既存Hide属性の復帰、key／ch／hideのラジオボタン選択、lock／解除のSpace操作、
 表示とロックの混在・独立操作・Undo／Redo、値とstepの維持も確認します。
@@ -126,7 +183,9 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 - `result.json`: 成否、操作履歴、実行Maya version、性能計測値、各段階のUndo状態。
 - `01-multiple-selection.png`、`02-single-selection.png`、`03-after-reload.png`:
   QtのWindow描画から保存した確認画像。
-- `04-attribute-menu.png`: 属性名を右クリックして開いた操作メニュー。
+- `02-node-name-focused.png`: 名前欄へフォーカスした入力外観の確認画像。
+  `--name-only`でも閲覧時の`01-multiple-selection.png`と対にして確認する。
+- `04-attribute-menu.png`: 初回実装時に属性名を右クリックして開いた操作メニュー。
 - `05-docked.png`、`06-floating-content.png`: Maya右側へのドッキングとfloatingの表示。
 - `08-enum-popup.png`、`09-enum-selected.png`: enumの選択肢と入力後の表示。
 - `10-values-before-mode-switch.png`、`14-values-after-mode-switch.png`:
@@ -150,6 +209,23 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
   選択属性へ直接適用した表示状態とlockの結果。
 - `36-search-visibility-menu.png`、`37-attribute-search.png`:
   検索欄の3段階表示設定と、正式pathによる検索結果。
+- `38-value-field-width.png`: 20文字の未確定文字列を値欄へ表示した幅の確認画像。
+  通常行とSlider行の内側幅を検証し、撮影後はsceneへ確定せず元の表示へ戻す。
+- `39-input-connection-colors.png`: 現在キー・現在キーなし・その他の入力接続・
+  pairBlend・constraint・ロックをMaya本体で描画した画像。
+  帯の中央画素と通常背景色、上下1pxの余白を照合する。
+- `40-special-input-colors.png`: Driven Key・Expression・Muted・Animation Layer・
+  Nonkeyable・Animation Clip・Key Alteredを実接続で描画した画像。
+- `41-last-selected-reference.png`: 2ノードの元の選択順を保ち、末尾ノードの名前と値を表示した画像。
+- `42-native-reference-0.png`〜`42-native-reference-7.png`: 選択履歴設定のOFF／ONと
+  transform・jointの順序変更、再追加、network混在時のMaya標準Channel Boxの実表示。
+- `43-custom-filter-manager.png`: 共有JSONを2件登録した管理画面と読込状態。
+- `44-custom-filter-hidden-rows.png`: カスタム定義の順に並ぶ非表示属性を含む値編集行。
+- `45-custom-filter-undefined-joint.png`: 未定義joint型の代替条件の案内と表示行。
+- `46-custom-filter-setup.png`: 設定モードの編集対象、属性2択、表示順、保存操作。
+- `47-custom-filter-batch.png`: 分割バー調整後の設定画面と、検索候補の一括操作。
+- `48-custom-filter-selection.png`: 属性名の縦ドラッグによる複数選択と、選択行の所属操作。
+- `49-custom-filter-order-selection.png`: 上段の複数選択と、選択属性の一段移動。
 - `result-restart.json`、`clipboard-original.json`: 別Maya processでのOSクリップボード読取り結果と、
   検証後に復元する元のMIME data。
 - `progress.json`: 実行中の段階と完了済みの操作。
@@ -158,6 +234,10 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 
 終了codeが0で `result.json` の `success` がTrueでも、保存画像で文字切れ、配置、
 入力欄の状態を確認してください。結果が保存されなかった場合は失敗として扱います。
+再起動検証では`result-restart.json`が無ければUI復元を確認できていません。
+`progress.json`と`maya-*.log`・`process-*.log`・`python-stacks-*.log`を見て、
+検証スクリプト開始前のMaya起動段階、操作中、終了待ちのどこで止まったかを区別してください。
+以前の成功結果を今回の再起動検証の結果として扱わず、必要な工程を再試行します。
 
 初回のMaya 2025本体検証では、全操作の成功結果とcallback解放を確認した後、
 Mayaアプリケーションの終了待ちが180秒でタイムアウトしました。native MELの
@@ -179,6 +259,27 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。この段�
 変更ごとの件数と確認範囲は[bdChannelBoxの検証記録](bd_channel_box.md#検証)を参照します。
 変更した仕様に応じて既存testと本体runnerを更新し、次を確認します。
 
+- 基準ノード: 対象objectを抽出した選択リストの末尾を表示し、順序を入れ替えると
+  見出し・属性行・値・enum定義・編集可否・接続色・表示状態が一緒に切り替わること。
+  component・plug・同一nodeの重複除去と選択履歴設定の維持、未選択・単一・3ノードも確認する。
+  選択順変更時は属性選択・古いメニュー・未確定入力を破棄し、sceneへ表示値を書き戻さないこと。
+  Maya本体ではtransform・jointの順序変更と再追加を標準Channel Boxの描画に照らし、
+  末尾の基準が一致すること。`mainObjectList`は同型の複数対象を返すため、
+  照会リストの順序だけで表示nodeを断定しない。network混在時の標準UIの対象も記録する。
+  複数ノードのアニメーションカーブCopy/Pasteは、基準優先のBinding順ではなく
+  元の選択順でコピー元と貼り付け先を対応させること。
+- 選択上限: 49→50→51→49ノードで、50以上は属性取得と表示・編集を休止し、
+  全3モードで同じ案内を示すこと。旧入力欄・行・ノード監視を解放し、49以下で自動復帰すること。
+  件数はcomponent・plugを除外し、DAG instanceを同一ノードにまとめて数えること。
+  上限を変更する場合は新しい上限の前後でも確認し、Maya本体で表示と応答性を確かめること。
+- ノード名: 複数選択では末尾だけを改名し、衝突時はMayaの確定名を示すこと。
+  件数表示は対象ノードが2個以上のときだけ現れ、選択順・件数・tooltipに追従すること。
+  Undo／Redo・外部改名・選択切替・ロック状態・削除・Window終了後の監視終了を確認する。
+  名前変更後の属性行と右クリック操作が最新名を使うこと。Maya本体では通常Enterと
+  テンキーEnterで確定し、先にOutlinerを操作していても名前編集モードへ入らないこと。
+  閲覧中は枠なし、フォーカス中とEnter確定後は入力外観、競合した下書きはフォーカスを
+  外しても入力外観を保つこと。読み取り専用中はフォーカスしても閲覧外観でコピーでき、
+  狭いdock幅でもフォーカス移動によって名前欄の高さ・配置が変わらないこと。
 - 属性の複数選択: Ctrl／Shift・属性名ドラッグ・数値欄の縦ドラッグ、属性名だけの選択強調、
   属性名の右内側余白と入力Viewまでのspacing、値・Step・Slider・bool・enum・stringの入力palette維持、
   右クリック時の選択維持／切替、更新・Undo後の残存選択、対象ノード変更時の選択解除。
@@ -189,6 +290,23 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。この段�
   上下・Slider・bool・互換enumの選択属性への適用と、未選択行だけの単独操作。
 - 選択メニュー: 各属性をそれぞれの基準値へ揃えること、ロック／解除と3種類の表示状態、
   状態操作ではenum定義の不一致を理由にノードを除外しないこと、親ロックを自動解除しないこと。
+- 現行の右クリックメニュー: 値編集行のラベル・入力部品から同じメニューを開き、
+  選択済みの行は複数選択を維持し、未選択行はその行だけを選ぶこと。
+  状態編集行はメニューも選択変更もなく、余白はStep設定だけを示すこと。
+  アニメーション、値の揃え・コピー・ペースト・float系の四捨五入・回転の集約、フリーズ、
+  Step設定、ロック・表示の並びを[現行仕様](bd_channel_box.md#選択属性のメニュー)に照らすこと。
+  四捨五入は選択範囲と桁数の3階層で、非float行には表示しないこと。
+  既存行の表示桁数が候補の上限となり、Mayaの桁数設定は表示更新後に反映すること。
+  正負の中間値、距離・角度の表示単位、複数ノードごとの実値、表示外属性、
+  編集不可・hard limit、1回Undoと同値時の無Undoを確認すること。
+- 回転の集約: rotate／rotateAxis／jointOrientの各XYZ行だけに表示し、Transformには
+  Joint専用の子項目を示さないこと。選択した各ノードの回転全体を一度ずつ合成し、
+  local matrixを維持して集約先以外をゼロにすること。混在選択、lock・入力接続の除外、
+  角度単位、1回Undo、同値時の無Undoを確認すること。
+- 値を揃える操作: 「選択属性」は各行の表示ノード値を使い、「全て」と各表示条件は
+  表示ノードの属性状態で同じpathを選ぶこと。検索・表示フィルター・行選択で隠れた属性、
+  型やenum定義の不一致、編集不可、未丸め値、1回Undo、同値時の無Undo、
+  OSクリップボードの維持を確認すること。
 - 表示・ロックの選択操作: 選択行のradio・CheckBoxのクリックとキー入力を
   選択属性全体へ適用し、選択外の行は単行操作となること。表示状態とlockの混在、
   一回Undo、行の除去の遅延、選択済みの離れた行へなぞり操作が波及しないことも確認する。
@@ -197,7 +315,7 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。この段�
   sceneとUndoを変更しないこと。Pasteが1個／複数nodeの同一正式pathへ、表示行と行順に依存せず
   非表示属性も適用すること。欠落・型違い・enum定義違い・readonly対象の内部除外、hard limitの
   全体拒否、一回Undo、同値時の無Undo、壊れたdataと未対応versionの無書込みを確認する。
-  表示状態で絞るPasteは先頭選択nodeでpathを決め、後続nodeへ同じpathを適用すること、
+  表示状態で絞るPasteは末尾の基準nodeでpathを決め、他のnodeへ同じpathを適用すること、
   成功・部分適用・対象0件で通知を表示せず、以前の通知を消すことも確認する。
   一属性値だけの場合は選択した複数の同型pathと全選択nodeへ展開し、複数値や型・単位・
   enum定義が異なる対象へ誤って適用しないことも確認する。
@@ -223,6 +341,17 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。この段�
   行再構築・Window再表示・Maya再起動後の復元、配置リセット後の維持、scene・Undoへの無書込み。
   通常の値欄・Slider付きの値欄・enum欄の自動フォーカス取得防止、フォーカス後の編集、
   ONへの復帰と再度OFFにした場合の動作、一覧へのスクロール伝達をWindows入力経路で検証する。
+- 独立した子維持・姿勢維持ツール: Windowを開いたままMayaの選択を変え、
+  末尾の基準ノード1個へ追従すること。選択変更時の未確定入力破棄、対象なし時の入力停止、
+  設定先候補とXYZ実値の更新を確認する。各軸のEnter／フォーカス移動による確定、
+  ホイール・上下操作の即時反映、残りの軸の未丸め実値維持、各操作のUndo／Redo、
+  同値時の無Undoを検証する。各軸のStep変更はscene・Undoへ書かず、
+  bdChannelBox本体のStepと連動しないことも確認する。
+  子維持の移動・回転は同一dockable Windowの2タブを使い、メニューからのタブ・回転属性選択、
+  回転メニューからの初回起動後も未表示の移動タブが初期サイズを保つこと、
+  浮動時のタブ別サイズ変更と再起動復元、ドッキング時のドック寸法維持、reloadでの再表示と
+  callback解除を確認する。浮動枠と内側controlの寸法差がある状態でも10往復のタブ切替で
+  幅・高さが変わらず、タブ切替自体はscene・Undo履歴を変更しないこと。
 - 表示・ロック: 既存Hide属性の列挙・復帰、Keyable／ChannelBox／Hide、ロック／解除、
   各項目の混在と独立操作、1回UndoとRedo、接続済み属性・親ロックの扱い。
   表示状態の混在は3ボタンとも未選択にし、印・tooltipを確認する。
@@ -239,8 +368,9 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。この段�
   表示方針だけをWindow再表示・Maya再起動・配置reset後へ復元する。
 - 幅・配置: Sliderあり／なし、最小幅／拡大時、長い属性名、縦スクロール時、ドック／floating。
   QTableView内の既存行Viewが常時表示され、選択の配色と一括入力欄で文字切れ・重なりがないこと。
-  上部のMode／Attribute Filter／Attribute Searchが最小幅280 pxにも収まり、各入力欄が揃うこと。
+  上部のMode／Attribute Filter／Attribute Searchが最小幅340 pxにも収まり、各入力欄が揃うこと。
   StepとSliderの幅・開始位置、値欄の文字切れ、不要な右余白を保存画像でも確認する。
+  値欄156 pxで`1234.123456789123456`の20文字が収まり、Step／Sliderの60 pxを維持すること。
   行数と長い属性名が増えてもWindow幅を保ち、各モードの操作幅で文字切れ・重なりがないことを確認する。
   縦スクロールバーは必要時だけ表示する。
 - lifecycle: 選択切替・close・reloadで古い入力とcallbackを終了し、再表示で重複させない。
@@ -263,6 +393,8 @@ toolsのMaya testは、その場合だけWindows標準のSegoe UIを読み込み
 未commit差分の有無も記録してください。異なるprocessや負荷条件の単発値を直接比較しません。
 反復回数とwarm-up、Qtの遅延更新・削除・描画、GCの扱いを揃え、中央値を比較します。
 特に選択切替は`cmds.select()`の呼出しだけでなく、入力行の再構築とQt更新まで含めます。
+現行の本体runnerは最大10ノードの計測です。選択上限を見直す際は、この値だけで判断せず、
+実際のrigや属性構成で49ノード近傍と変更後の上限近傍を別途計測してください。
 
 `result.json`、画像、ログは既定では`%TEMP%`配下にあるため、将来の比較資料として使う場合は
 消去される前に保管してください。docsには比較条件・結果・検証の制限を残し、
@@ -292,6 +424,37 @@ floatingにしてworkspaceとpreferencesを専用profileへ保存します。
 一括入力を検証してから終了します。結果は `result-restart.json`、画像は
 `07-after-maya-restart.png`、ログは `*-restart.log` に保存し、一度目の結果を残します。
 この再起動検証はsceneの保存・復元ではなく、Maya workspaceからのUI復元を対象にします。
+
+独立化後の確認では、bdChildCompensatedSetは新しいworkspaceControl IDで再起動復元まで
+成功しました。bdRotationPreservingPoseは通常のドック操作を確認しましたが、
+`--prepare-restart`の試行が検証スクリプト実行前のMaya起動段階で止まったため、
+新しいIDでの再起動復元結果は未取得です。今後配置復元を変更する際は、この工程も再試行します。
+
+## 値欄の幅拡張の検証（2026-09-30）
+
+値欄160 px・共通入力列226 pxへの変更では、Maya 2025のbdChannelBox関連runtime test
+188件、Pyright、Black checkが成功しました。幅280 / 360 / 520 pxで横スクロールがなく、
+通常行とSlider行で20文字の文字幅が編集領域内へ収まることを確認しました。
+
+Maya 2025本体では46工程の操作結果が成功し、`38-value-field-width.png`で
+`1234.123456789123456`が末尾まで見えることを確認しました。
+資料は`%TEMP%/bd-channel-box-maya2025-69fcd5de`です。
+ただしMaya本体の終了待ちが180秒でタイムアウトし、runnerは専用processを停止して
+終了code 1を返しました。操作と表示の検証成功と、本体の正常終了は区別します。
+
+## 値欄150 pxと表示・ロック行の余白調整（2026-10-01）
+
+値欄150 px、初期Window幅380 px、最小幅340 pxへの調整では、
+bdChannelBox関連runtime testがMaya 2025 / 2026 / 2027で各189件、
+Pyright、Black checkが成功しました。
+表示・ロック行は幅340 / 380 / 520 / 650 pxで属性名が残り、`hide`と`lock`の間も
+他のボタン間と同じ6 pxであることを確認しました。
+
+Maya 2025本体の隔離processでは46工程の操作結果が成功し、
+`11-state-mode-hidden-attributes.png`で属性名と操作部品の配置を確認しました。
+資料は`%TEMP%/bd-channel-box-maya2025-gtgj6mwk`です。
+検証用Mayaの終了待ちは150秒でタイムアウトし、runnerは終了code 1を返しました。
+表示・操作の成功と本体の正常終了は区別します。
 
 ## Type Contracts
 

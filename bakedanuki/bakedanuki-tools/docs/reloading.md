@@ -107,6 +107,8 @@ reloadする必要が生じたら、Mayaを再起動します。
    タブも再表示対象に入ることをMaya本体で確認します。
 
 登録・解除の実例は[bdChannelBoxのUI実装](../python/bd_tools/bd_channel_box/ui.py)、
+[子維持ツール](../python/bd_tools/bd_child_compensated_set/ui.py)、
+[姿勢維持ツール](../python/bd_tools/bd_rotation_preserving_pose/ui.py)、
 dockの識別情報は[reopen_targets.py](../python/bd_tools/_dev/reopen_targets.py)を
 参照してください。
 
@@ -117,6 +119,8 @@ bdChannelBoxは `bd_channel_box.dispose()` を登録します。dock controller�
 workspaceControlとWindowを破棄します。Maya側のcloseも `dock_closed` で同じ終了処理へ接続します。
 `show()`とMayaの`restore()`の両方で、utilへ再表示情報を登録します。reload前に
 開いていたbdChannelBoxは自動的に再表示されるため、手動の`show()`は不要です。
+子維持・姿勢維持の独立ツールも各UI moduleの`dispose()`を登録し、開いていた
+dockだけをreload後に再表示します。
 個別moduleやclass instanceを変数へ保持した場合は、必要に応じて取り直してください。
 
 - UI module の import 時に Window を表示しない。

@@ -173,7 +173,7 @@ def state_editor(
             enumName="Off:Preview:Final",
             keyable=True,
         )
-    cmds.select(*_NODES, replace=True)
+    cmds.select(*reversed(_NODES), replace=True)
     cmds.flushUndo()
     widget = ChannelBoxWidget()
     widget.show()
@@ -184,6 +184,56 @@ def state_editor(
     widget.deleteLater()
     _events()
     file_command(new=True, force=True)
+
+
+@pytest.mark.parametrize("surface", ["row", "name", "display", "lock"])
+def test_state_row_right_click_has_no_menu_or_selection_effect(
+    state_editor: ChannelBoxWidget, surface: str
+) -> None:
+    """状態行の右クリックはメニューを開かず、属性選択も変えない。"""
+    _states(state_editor)
+    row = _state_row(state_editor)
+    selected = _state_keys(state_editor, "translateX")
+    state_editor.table_view.select_keys(selected)
+    target = {
+        "row": row,
+        "name": row.name_label,
+        "display": row.display_buttons["keyable"],
+        "lock": row.lock_check_box,
+    }[surface]
+    position = target.rect().center()
+    global_position = target.mapToGlobal(position)
+    for kind in (
+        qt.QEvent.Type.MouseButtonPress,
+        qt.QEvent.Type.MouseButtonRelease,
+    ):
+        event = qt.QtGui.QMouseEvent(
+            kind,
+            qt.QPointF(position),
+            qt.QPointF(global_position),
+            qt.Qt.MouseButton.RightButton,
+            (
+                qt.Qt.MouseButton.RightButton
+                if kind == qt.QEvent.Type.MouseButtonPress
+                else qt.Qt.MouseButton.NoButton
+            ),
+            qt.Qt.KeyboardModifier.NoModifier,
+        )
+        qt.QApplication.sendEvent(target, event)
+    event = qt.QtGui.QContextMenuEvent(
+        qt.QtGui.QContextMenuEvent.Reason.Mouse,
+        position,
+        global_position,
+    )
+    qt.QApplication.sendEvent(target, event)
+    _events()
+    assert not hasattr(row, "context_menu")
+    assert not state_editor.context_menu.isVisible()
+    assert [
+        action.text() for action in state_editor.context_menu.actions()
+    ] == ["Step設定"]
+    assert state_editor.table_view.selected_keys() == selected
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_mode_switch_only_reads_and_preserves_value_step(
@@ -213,7 +263,7 @@ def test_mode_switch_only_reads_and_preserves_value_step(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
-@pytest.mark.parametrize("width", [280, 360, 520])
+@pytest.mark.parametrize("width", [340, 380, 520, 650])
 def test_mode_switch_preserves_width_with_long_hidden_name(
     state_editor: ChannelBoxWidget, width: int
 ) -> None:
@@ -245,26 +295,37 @@ def test_mode_switch_preserves_width_with_long_hidden_name(
     _states(editor)
     row = _state_row(editor)
     assert row.name_label.contentsMargins().right() == 4
+    assert row.name_label.isVisible()
+    assert row.name_label.text() == "Weight"
+    assert row.name_label.contentsRect().width() >= (
+        row.name_label.fontMetrics().horizontalAdvance("Weight")
+    )
     assert editor.width() == before[0]
     assert editor.scroll_area.verticalScrollBar().isVisible()
-    assert row.name_label.width() < before[1]
-    assert row.editor.x() < before[2]
+    # 値編集222pxから状態編集の必要幅へ切り替わり、属性名側の余白が増える
+    assert row.name_label.width() > before[1]
+    assert row.editor.x() > before[2]
     assert editor.scroll_area.horizontalScrollBar().maximum() == 0
     for current in editor.row_widgets:
         assert isinstance(current, AttributeStateRowWidget)
-        assert current.editor.width() == 200
+        assert current.name_label.isVisible()
+        assert current.name_label.contentsRect().width() > 0
+        buttons = (*current.display_buttons.values(), current.lock_check_box)
+        assert current.editor.width() == sum(
+            button.sizeHint().width() for button in buttons
+        ) + 6 * (len(buttons) - 1)
         assert current.editor.x() + current.editor.width() == current.width()
         assert (
             current.editor.x()
             == current.name_label.x() + current.name_label.width()
         )
-        buttons = (*current.display_buttons.values(), current.lock_check_box)
         for button in buttons:
             assert button.width() >= button.sizeHint().width()
             assert 0 <= button.x()
             assert button.x() + button.width() <= current.editor.width()
         for left, right in zip(buttons, buttons[1:]):
-            assert left.x() + left.width() < right.x()
+            assert right.x() - left.x() - left.width() == 6
+        assert buttons[-1].x() + buttons[-1].width() == current.editor.width()
     _values(editor)
     assert not editor.scroll_area.verticalScrollBar().isVisible()
     restored = _value_row(editor)
@@ -309,6 +370,33 @@ def test_five_filters_in_both_modes_only_read_representative_state(
     assert _row_names(editor).intersection(attributes) == expected
     assert {path: _flags(path) for path in before} == before
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize("mode", ["values", "states"])
+def test_filter_uses_last_selected_node_after_order_change(
+    state_editor: ChannelBoxWidget, mode: ChannelBoxMode
+) -> None:
+    """同じノード群を逆順にすると両モードの絞り込み基準も切り替わる。"""
+    editor = state_editor
+    cmds.setAttr("stateA.mode", keyable=False)
+    cmds.setAttr("stateA.mode", channelBox=True)
+    cmds.setAttr("stateB.mode", keyable=False)
+    cmds.setAttr("stateB.mode", channelBox=False)
+    _events()
+    editor.controller.set_mode(mode)
+    _filter(editor, "channel_box")
+    assert "mode" in _row_names(editor)
+
+    # 基準を非表示状態のBへ切り替え、他ノードの状態を転送しない
+    cmds.select("stateA", "stateB", replace=True)
+    _events()
+    assert editor.controller.node_names == ("|stateA", "|stateB")
+    assert editor.controller.representative_node_name == "|stateB"
+    assert "mode" not in _row_names(editor)
+    _filter(editor, "hidden")
+    assert "mode" in _row_names(editor)
+    assert _flags("stateA.mode") == (False, True, False)
+    assert _flags("stateB.mode") == (False, False, False)
 
 
 def test_filters_remember_each_mode_through_refresh_and_selection(
@@ -530,7 +618,7 @@ def test_hidden_attribute_can_be_restored_and_hidden_row_stays_available(
     assert _checked_display(editor, "hiddenValue") == ("hidden",)
     cmds.select(clear=True)
     _events()
-    cmds.select(*_NODES, replace=True)
+    cmds.select(*reversed(_NODES), replace=True)
     _events()
     assert "hiddenValue" in _row_names(editor)
     _choose_display(editor, "keyable", "hiddenValue")

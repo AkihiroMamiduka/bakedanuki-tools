@@ -9,6 +9,7 @@ from math import isclose
 from typing import cast
 import pytest
 from maya import cmds
+from maya.api import OpenMaya as om
 
 from bd_util.maya.ui import MayaBoolPlugsBinding, MayaFloatPlugsBinding
 from bd_util.ui import (
@@ -92,6 +93,28 @@ def _row(widget: ChannelBoxWidget, name: str) -> AttributeRowWidget:
     return row
 
 
+def _edit_node_name(editor: ChannelBoxWidget, value: str) -> None:
+    """名前欄への入力とEnter確定を再現してQt通知を処理する。"""
+    line = editor.node_name_edit
+    assert line is not None
+    line.setText(value)
+    line.textEdited.emit(value)
+    for event_type in (
+        qt.QEvent.Type.ShortcutOverride,
+        qt.QEvent.Type.KeyPress,
+        qt.QEvent.Type.KeyRelease,
+    ):
+        event = qt.QtGui.QKeyEvent(
+            event_type,
+            qt.Qt.Key.Key_Return,
+            qt.Qt.KeyboardModifier.NoModifier,
+        )
+        event.setAccepted(False)
+        qt.QApplication.sendEvent(line, event)
+        assert event.isAccepted()
+    _events()
+
+
 def _open_context_menu(widget: qt.QWidget) -> None:
     """右クリック通知を送り、子Widgetからの伝播も含めてメニューを開く。"""
     position = widget.rect().center()
@@ -104,10 +127,56 @@ def _open_context_menu(widget: qt.QWidget) -> None:
     _events()
 
 
+@pytest.mark.parametrize(
+    ("name", "surface"),
+    [
+        ("translateX", "value"),
+        ("translateX", "value_text"),
+        ("translateX", "step"),
+        ("translateX", "step_text"),
+        ("weight", "value"),
+        ("weight", "slider"),
+        ("visibility", "editor"),
+        ("mode", "editor"),
+    ],
+)
+def test_attribute_input_opens_row_context_menu(
+    editor: ChannelBoxWidget, name: str, surface: str
+) -> None:
+    """入力部品の種類にかかわらず属性メニューを開き、値は変更しない。"""
+    row = _row(editor, name)
+    target = cast(qt.QWidget, row.editor)
+    if surface in ("value", "value_text", "step", "step_text", "slider"):
+        view = row.editor
+        assert isinstance(view, (FloatSliderSpinBox, FloatValueStepSpinBox))
+        if surface in ("value", "value_text"):
+            target = view.spin_box
+        elif surface == "slider":
+            assert isinstance(view, FloatSliderSpinBox)
+            target = view.slider
+        else:
+            assert isinstance(view, FloatValueStepSpinBox)
+            target = view.step_spin_box
+        if surface.endswith("_text"):
+            line_edit = target.findChild(qt.QLineEdit)
+            assert line_edit is not None
+            target = line_edit
+    cmds.flushUndo()
+    _open_context_menu(cast(qt.QWidget, target))
+    assert row.context_menu.isVisible()
+    assert all(
+        action.text() != "表示を更新" for action in row.context_menu.actions()
+    )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    row.context_menu.close()
+
+
 @pytest.fixture
 def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     """異なる値を持つ2ノードを、値を揃えずに表示する。"""
     assert qt_application is not None
+    auto_key = bool(cmds.autoKeyframe(query=True, state=True))
+    cmds.autoKeyframe(state=False)
     _new_scene()
     for name, value in (("channelA", 0.25), ("channelB", 0.75)):
         cmds.createNode("transform", name=name)
@@ -135,7 +204,7 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     cmds.addAttr(
         "channelA", longName="integer", attributeType="long", keyable=True
     )
-    cmds.select("channelA", "channelB", replace=True)
+    cmds.select("channelB", "channelA", replace=True)
     cmds.flushUndo()
     widget = ChannelBoxWidget()
     widget.show()
@@ -146,6 +215,7 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     widget.deleteLater()
     _events()
     _new_scene()
+    cmds.autoKeyframe(state=auto_key)
 
 
 def test_selection_and_refresh_only_read_values(
@@ -158,12 +228,286 @@ def test_selection_and_refresh_only_read_values(
     assert row.editor.spin_box.value() == 0.25
     row.editor.spin_box.setFocus()
     row.editor.spin_box.editingFinished.emit()
-    editor.header_label.setFocus()
-    editor.refresh_action.trigger()
+    editor.mode_combo.setFocus()
+    editor.refresh()
     _events()
     assert cmds.getAttr("channelA.weight") == 0.25
     assert cmds.getAttr("channelB.weight") == 0.75
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_last_selected_node_drives_rows_and_alignment(
+    editor: ChannelBoxWidget,
+) -> None:
+    """選択リスト末尾を表示基準にして、同じノード群の逆順も反映する。"""
+    assert editor.controller.node_names == ("|channelB", "|channelA")
+    assert editor.controller.representative_node_name == "|channelA"
+    assert editor.node_name_edit is not None
+    assert editor.node_name_edit.text() == "channelA"
+    assert _row(editor, "lowerOnly")
+
+    # 対象ノードを変えずに順序だけを入れ替え、末尾の値と行を読む
+    old_binding = _row(editor, "weight").row.binding
+    cmds.select("channelA", "channelB", replace=True)
+    _events()
+    assert old_binding.is_disposed
+    assert editor.controller.node_names == ("|channelA", "|channelB")
+    assert editor.controller.representative_node_name == "|channelB"
+    assert editor.node_name_edit is not None
+    assert editor.node_name_edit.text() == "channelB"
+    assert "lowerOnly" not in {
+        row.row.attribute.name for row in editor.row_widgets
+    }
+    row = _row(editor, "weight")
+    assert row.row.target_names == ("|channelB", "|channelA")
+    assert isinstance(row.editor, FloatSliderSpinBox)
+    assert row.editor.spin_box.value() == 0.75
+    visibility = _row(editor, "visibility").editor
+    assert isinstance(visibility, BoolCheckBox)
+    assert not visibility.isChecked()
+
+    # 明示的な揃える操作では末尾ノードの未丸め値を他対象へ適用する
+    cmds.flushUndo()
+    row.align_action.trigger()
+    assert cmds.getAttr("channelA.weight") == 0.75
+    assert cmds.getAttr("channelB.weight") == 0.75
+    cmds.undo()
+    _events()
+    assert cmds.getAttr("channelA.weight") == 0.25
+    assert cmds.getAttr("channelB.weight") == 0.75
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_selection_count_badge_tracks_edit_targets(
+    editor: ChannelBoxWidget,
+) -> None:
+    """件数表示は編集対象ノードだけを数え、名前欄と選択順に追従する。"""
+    badge = editor.selection_count_label
+    assert badge.isVisible()
+    assert badge.text() == "2 ノード"
+    assert badge.focusPolicy() == qt.Qt.FocusPolicy.NoFocus
+    assert editor.node_name_edit is not None
+    assert editor.header_layout.indexOf(editor.node_name_edit) < (
+        editor.header_layout.indexOf(badge)
+    )
+    assert badge.toolTip() == editor.node_name_edit.toolTip()
+    assert "|channelB\n|channelA" in badge.toolTip()
+
+    # 基準を保ったまま対象数を変えても、表示名と件数を更新する
+    cmds.createNode("transform", name="channelC")
+    cmds.select("channelB", "channelC", "channelA", replace=True)
+    _events()
+    assert editor.controller.representative_node_name == "|channelA"
+    assert editor.node_name_edit is not None
+    assert editor.node_name_edit.text() == "channelA"
+    assert badge.isVisible()
+    assert badge.text() == "3 ノード"
+    assert "|channelB\n|channelC\n|channelA" in badge.toolTip()
+
+    editor.mode_combo.setCurrentIndex(1)
+    _events()
+    assert badge.isVisible()
+    assert badge.text() == "3 ノード"
+
+    cmds.select("channelA", replace=True)
+    _events()
+    assert editor.node_name_edit is not None
+    assert editor.node_name_edit.text() == "channelA"
+    assert not badge.isVisible()
+
+    cmds.select(clear=True)
+    _events()
+    assert editor.node_name_edit is None
+    assert editor.header_label.text() == "ノードを選択してください"
+    assert not badge.isVisible()
+
+
+def test_last_object_ignores_trailing_component_and_plug(
+    editor: ChannelBoxWidget,
+) -> None:
+    """末尾のcomponentとplugを除き、最後のobjectを基準にする。"""
+    cmds.select("channelA", "channelB", replace=True)
+    _events()
+    assert editor.controller.representative_node_name == "|channelB"
+    mesh = cast(list[str], cmds.polyCube(name="selectionTailMesh"))[0]
+    selection = om.MSelectionList()
+    for item in (
+        "channelB",
+        "channelA",
+        mesh + ".vtx[0]",
+        "channelB.weight",
+    ):
+        selection.add(item)
+    om.MGlobal.setActiveSelectionList(selection)
+    _events()
+    assert editor.controller.node_names == ("|channelB", "|channelA")
+    assert editor.controller.representative_node_name == "|channelA"
+    assert editor.selection_count_label.text() == "2 ノード"
+    assert editor.node_name_edit is not None
+    assert editor.node_name_edit.text() == "channelA"
+    row = _row(editor, "weight")
+    assert isinstance(row.editor, FloatSliderSpinBox)
+    assert row.editor.spin_box.value() == 0.25
+
+
+def test_empty_selection_clears_representative(
+    editor: ChannelBoxWidget,
+) -> None:
+    """object選択を解除したら基準ノードと表示行を消す。"""
+    cmds.select(clear=True)
+    _events()
+    assert editor.controller.node_names == ()
+    assert editor.controller.representative_node_name is None
+    assert editor.header_label.text() == "ノードを選択してください"
+    assert editor.node_name_edit is None
+    assert not editor.row_widgets
+
+
+def test_node_name_edit_changes_only_last_selected_node_and_updates_actions(
+    editor: ChannelBoxWidget,
+) -> None:
+    """名前欄は末尾だけを改名し、再構築後の行操作も新しい名前を使う。"""
+    line = editor.node_name_edit
+    assert line is not None
+    cmds.flushUndo()
+
+    _edit_node_name(editor, "renamedChannel")
+
+    assert editor.node_name_edit is line
+    assert line.text() == "renamedChannel"
+    assert cmds.objExists("|renamedChannel")
+    assert cmds.objExists("|channelB")
+    assert editor.controller.node_names == ("|channelB", "|renamedChannel")
+    assert editor.controller.representative_node_name == "|renamedChannel"
+    _row(editor, "weight").align_action.trigger()
+    assert cmds.getAttr("channelB.weight") == 0.25
+    assert cmds.getAttr("renamedChannel.weight") == 0.25
+
+
+def test_node_name_appearance_tracks_focus_conflict_and_read_only(
+    editor: ChannelBoxWidget,
+) -> None:
+    """名前欄だけ、閲覧・入力・競合・読み取り専用の外観を切り替える。"""
+    line = editor.node_name_edit
+    assert line is not None
+    native_height = line.minimumHeight()
+    assert "palette(window)" in line.styleSheet()
+    cmds.flushUndo()
+
+    line.setFocus()
+    _events()
+    assert line.hasFocus()
+    assert line.styleSheet() == ""
+    line.setText("draftName")
+    line.textEdited.emit("draftName")
+    cmds.rename("channelA", "externalName")
+    _events()
+    assert line.hasConflict()
+
+    editor.mode_combo.setFocus()
+    _events()
+    assert not line.hasFocus()
+    assert line.styleSheet() == ""
+    assert line.text() == "draftName"
+    assert cmds.objExists("|externalName")
+
+    line.setFocus()
+    line.setText("externalName")
+    line.textEdited.emit("externalName")
+    _events()
+    assert not line.hasConflict()
+    editor.mode_combo.setFocus()
+    _events()
+    assert "palette(window)" in line.styleSheet()
+    assert line.minimumHeight() == native_height
+
+    cmds.lockNode("externalName", lock=False, lockName=True)
+    editor.refresh()
+    _events()
+    assert line.isReadOnly()
+    line.setFocus()
+    _events()
+    assert "palette(window)" in line.styleSheet()
+
+
+def test_node_name_edit_shows_maya_collision_name_and_tracks_undo(
+    editor: ChannelBoxWidget,
+) -> None:
+    """同名衝突・Undo／Redo・外部改名を同じ名前欄へ反映する。"""
+    line = editor.node_name_edit
+    assert line is not None
+    cmds.flushUndo()
+
+    _edit_node_name(editor, "channelB")
+    assert editor.node_name_edit is line
+    assert line.text() == "channelB1"
+    assert editor.controller.representative_node_name == "|channelB1"
+    cmds.undo()
+    _events()
+    assert editor.node_name_edit is line
+    assert line.text() == "channelA"
+    assert editor.controller.representative_node_name == "|channelA"
+    cmds.redo()
+    _events()
+    assert editor.node_name_edit is line
+    assert line.text() == "channelB1"
+
+    cmds.rename("channelB1", "externalChannel")
+    _events()
+    assert editor.node_name_edit is line
+    assert line.text() == "externalChannel"
+    assert "|externalChannel" in line.toolTip()
+
+
+def test_node_name_draft_is_discarded_when_selection_changes(
+    editor: ChannelBoxWidget,
+) -> None:
+    """選択切替のフォーカス移動で旧基準ノードに下書きを書き込まない。"""
+    line = editor.node_name_edit
+    assert line is not None
+    view_model = line.view_model
+    line.setText("uncommittedName")
+    line.textEdited.emit("uncommittedName")
+    cmds.flushUndo()
+
+    cmds.select("channelB", replace=True)
+    _events()
+
+    assert view_model.is_disposed
+    assert editor.node_name_edit is not line
+    assert editor.node_name_edit is not None
+    assert editor.node_name_edit.text() == "channelB"
+    assert cmds.objExists("|channelA")
+    assert not cmds.objExists("|uncommittedName")
+
+
+def test_node_name_external_edit_conflict_and_lock(
+    editor: ChannelBoxWidget,
+) -> None:
+    """外部改名中は入力を保持し、ロック中は名前を読み取り専用にする。"""
+    line = editor.node_name_edit
+    assert line is not None
+    line.setText("draftName")
+    line.textEdited.emit("draftName")
+
+    cmds.rename("channelA", "externalName")
+    _events()
+    assert editor.node_name_edit is line
+    assert line.text() == "draftName"
+    assert line.hasConflict()
+    assert editor.message_label.isVisible()
+    line.editingFinished.emit()
+    assert cmds.objExists("|externalName")
+    _edit_node_name(editor, "draftName")
+    assert cmds.objExists("|draftName")
+    assert not line.hasConflict()
+
+    cmds.lockNode("draftName", lock=False, lockName=True)
+    editor.refresh()
+    assert line.isReadOnly()
+    cmds.lockNode("draftName", lock=False, lockName=False)
+    editor.refresh()
+    assert not line.isReadOnly()
 
 
 def test_supported_types_flags_and_view_selection(
@@ -180,7 +524,16 @@ def test_supported_types_flags_and_view_selection(
     assert isinstance(slider, FloatSliderSpinBox)
     assert value_step.width() == slider.width()
     for spin_box in (value_step.spin_box, slider.spin_box):
-        assert spin_box.minimumWidth() == spin_box.maximumWidth() == 90
+        assert spin_box.minimumWidth() == spin_box.maximumWidth() == 156
+        line_edit = spin_box.findChild(qt.QLineEdit)
+        assert isinstance(line_edit, qt.QLineEdit)
+        margins = line_edit.textMargins()
+        text_width = line_edit.fontMetrics().horizontalAdvance(
+            "1234.123456789123456"
+        )
+        assert text_width + margins.left() + margins.right() + 4 <= (
+            line_edit.contentsRect().width()
+        )
     assert (
         value_step.step_spin_box.minimumWidth()
         == value_step.step_spin_box.maximumWidth()
@@ -209,16 +562,24 @@ def test_input_columns_stay_compact_at_right_edge(
         _events()
 
     # 画面を広げてもStep・Sliderや入力後方の余白へ幅を配分しない
-    for width in (280, 360, 520):
+    for width in (340, 380, 520):
         editor.resize(width, 600)
         _events()
         assert editor.scroll_area.horizontalScrollBar().maximum() == 0
         for row in editor.row_widgets:
             assert isinstance(row, AttributeRowWidget)
             view = row.editor
-            assert view.width() == 156
+            assert view.width() == 222
             assert view.x() + view.width() == row.width()
-            assert view.x() == row.name_label.x() + row.name_label.width()
+            assert (
+                row.input_indicator.x()
+                == row.name_label.x() + row.name_label.width()
+            )
+            assert row.input_indicator.width() == 6
+            assert (
+                view.x()
+                == row.input_indicator.x() + row.input_indicator.width()
+            )
             if isinstance(view, BoolCheckBox):
                 assert view.text() == ""
                 assert not view.isTristate()
@@ -238,7 +599,7 @@ def test_input_columns_stay_compact_at_right_edge(
             if isinstance(view, FloatValueStepSpinBox):
                 assert view.step_spin_box.select_all_on_mouse_focus()
             assert view.spin_box.x() == 0
-            assert view.spin_box.width() == 90
+            assert view.spin_box.width() == 156
             assert auxiliary.x() == view.spin_box.width() + 6
             assert auxiliary.width() == 60
             assert auxiliary.x() + auxiliary.width() == view.width()
@@ -321,27 +682,27 @@ def test_bool_input_and_explicit_alignment(
 
 
 @pytest.mark.parametrize("surface", ["attribute", "background"])
-def test_context_menu_refresh_only_reads_values(
+def test_context_menus_omit_refresh_and_direct_refresh_only_reads_values(
     editor: ChannelBoxWidget, surface: str
 ) -> None:
-    """属性名と余白から更新でき、値・Undo・変更済みstepを維持する。"""
+    """行と余白のメニューに更新はなく、直接再読込は値とstepを保つ。"""
     _value_step(editor, "translateX").setSingleStep(0.01)
     row = _row(editor, "weight")
     if surface == "attribute":
         target = row.name_label
         menu = row.context_menu
-        action = row.refresh_action
     else:
         target = editor.table_view.viewport()
         assert target is not None
         menu = editor.context_menu
-        action = editor.refresh_action
     _open_context_menu(target)
     assert menu.isVisible()
-    assert action in menu.actions()
+    assert all(action.text() != "表示を更新" for action in menu.actions())
+    if surface == "background":
+        assert [action.text() for action in menu.actions()] == ["Step設定"]
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
     menu.close()
-    action.trigger()
+    editor.refresh()
     _events()
     assert _row(editor, "weight") is not row
     assert _value_step(editor, "translateX").singleStep() == 0.01
@@ -505,21 +866,40 @@ def test_selection_change_finishes_drag_undo(
     assert cmds.getAttr("channelB.weight") == 0.75
 
 
-def test_animated_representative_remains_read_only(
-    editor: ChannelBoxWidget,
+@pytest.mark.parametrize("auto_key", [False, True])
+def test_animated_representative_follows_auto_key(
+    editor: ChannelBoxWidget, auto_key: bool
 ) -> None:
-    """キー付き代表属性の値は時刻へ追従し、一括入力を許可しない。"""
+    """キー付き代表の保存をAuto Keyへ従わせ、未接続の後続は通常編集する。"""
     cmds.setKeyframe("channelA.weight", time=1, value=0.2)
     cmds.setKeyframe("channelA.weight", time=10, value=0.8)
     cmds.currentTime(10)
+    cmds.autoKeyframe(state=auto_key)
     _events()
     binding = _row(editor, "weight").row.binding
     assert isinstance(binding, MayaFloatPlugsBinding)
     assert isclose(binding.value, 0.8, rel_tol=0, abs_tol=1e-12)
-    assert not binding.view_model.set_value_command.can_execute
-    assert not _row(editor, "weight").align_action.isEnabled()
-    assert not binding.set_value(0.5)
+    assert binding.view_model.set_value_command.can_execute
+    row = _row(editor, "weight")
+    assert row.align_action.isEnabled()
+    assert "2/2" in row.name_label.toolTip()
+    assert "Auto Key" in row.name_label.toolTip()
+    assert isinstance(row.editor, FloatSliderSpinBox)
+    cmds.flushUndo()
+    row.editor.spin_box.setValue(0.5)
+    assert binding.value == 0.5
+    assert cmds.getAttr("channelA.weight") == 0.5
+    assert cmds.getAttr("channelB.weight") == 0.5
+    assert cmds.keyframe("channelA.weight", query=True, valueChange=True) == [
+        0.2,
+        0.5 if auto_key else 0.8,
+    ]
+    assert not cmds.listConnections("channelB.weight", source=True)
+    cmds.undo()
+    _events()
+    assert cmds.getAttr("channelA.weight") == 0.8
     assert cmds.getAttr("channelB.weight") == 0.75
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_missing_and_incompatible_attributes_are_excluded(

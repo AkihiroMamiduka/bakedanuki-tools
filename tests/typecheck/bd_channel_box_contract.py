@@ -3,6 +3,7 @@
 
 from typing import Literal, assert_type
 
+from bd_util.maya.node.inspection import ScalarAttributeInfo
 from bd_util.maya.ui import (
     ChannelDisplayState,
     MayaEditSession,
@@ -24,9 +25,17 @@ from bd_util.ui import (
 from bd_tools import bd_channel_box
 from bd_tools.bd_channel_box.controller import (
     ChannelAttributeFilter,
+    ChannelDisplayFilter,
     ChannelRow,
     ChannelStateRow,
+    RoundTransformKind,
 )
+from bd_tools.bd_channel_box.custom_filters import (
+    CustomFilterDefinition,
+    CustomFilterSelection,
+)
+from bd_tools.bd_channel_box.custom_filter_editor import CustomFilterDraft
+from bd_tools.bd_channel_box.custom_filter_setup import CustomFilterSetupPanel
 from bd_tools.bd_channel_box.widget import (
     AttributeRowWidget,
     AttributeStateRowWidget,
@@ -37,12 +46,25 @@ from bd_tools.bd_channel_box.table import ChannelTableView
 assert_type(bd_channel_box.show(), bd_channel_box.ChannelBoxWindow)
 assert_type(bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
 assert_type(bd_channel_box.show().widget, ChannelBoxWidget)
+assert_type(bd_channel_box.show().widget.setup_panel, CustomFilterSetupPanel)
+assert_type(CustomFilterDraft("rig.json").move_many("joint", ("a",), -1), bool)
+assert_type(CustomFilterDraft("rig.json").remove_many("joint", ("a",)), None)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.selected_candidate_paths(),
+    tuple[str, ...],
+)
+assert_type(
+    bd_channel_box.show().widget.controller.setup_attributes,
+    tuple[ScalarAttributeInfo, ...],
+)
+assert_type(bd_channel_box.show().widget.node_name_edit, StringLineEdit | None)
 assert_type(bd_channel_box.show().ui_state, UiStateManager)
 assert_type(bd_channel_box.show().ui_state_tracker, MayaUiStateTracker)
 row = bd_channel_box.show().widget.row_widgets[0]
 assert_type(row, AttributeRowWidget | AttributeStateRowWidget)
 if isinstance(row, AttributeRowWidget):
     assert_type(row.row, ChannelRow)
+    assert_type(row.context_menu, qt.QMenu)
     assert_type(
         row.editor,
         BoolCheckBox
@@ -52,17 +74,44 @@ if isinstance(row, AttributeRowWidget):
         | StringLineEdit,
     )
     assert_type(row.align_action, qt.QAction)
+    assert_type(row.mute_menu, qt.QMenu)
+    assert_type(row.mute_selected_action, qt.QAction)
+    assert_type(row.mute_all_animation_action, qt.QAction)
+    assert_type(row.unmute_menu, qt.QMenu)
+    assert_type(row.unmute_selected_action, qt.QAction)
+    assert_type(row.unmute_all_animation_action, qt.QAction)
+    assert_type(row.animation_copy_menu, qt.QMenu)
+    assert_type(row.animation_copy_selected_action, qt.QAction)
+    assert_type(row.animation_copy_all_action, qt.QAction)
+    assert_type(row.animation_paste_menu, qt.QMenu)
+    assert_type(row.animation_paste_same_action, qt.QAction)
+    assert_type(row.animation_paste_selected_action, qt.QAction)
+    assert_type(row.animation_cut_menu, qt.QMenu)
+    assert_type(row.animation_cut_selected_action, qt.QAction)
+    assert_type(row.animation_cut_all_action, qt.QAction)
+    assert_type(row.animation_delete_menu, qt.QMenu)
+    assert_type(row.animation_delete_selected_action, qt.QAction)
+    assert_type(row.animation_delete_all_action, qt.QAction)
     assert_type(row.copy_menu, qt.QMenu)
     assert_type(row.copy_all_values_action, qt.QAction)
     assert_type(row.copy_selected_values_action, qt.QAction)
     assert_type(row.paste_menu, qt.QMenu)
-    assert_type(row.paste_copied_values_menu, qt.QMenu)
     assert_type(
         row.paste_copied_values_actions,
         dict[ChannelAttributeFilter, qt.QAction],
     )
     assert_type(row.paste_copied_values_action, qt.QAction)
     assert_type(row.paste_selected_values_action, qt.QAction)
+    assert_type(row.round_menu, qt.QMenu | None)
+    assert_type(row.child_set_action, qt.QAction | None)
+    assert_type(row.round_decimal_limit(), int)
+    assert_type(row.rotation_menu, qt.QMenu | None)
+    assert_type(row.freeze_menu, qt.QMenu)
+    assert_type(row.freeze_separator_action, qt.QAction)
+    assert_type(row.freeze_translate_action, qt.QAction)
+    assert_type(row.freeze_rotate_action, qt.QAction)
+    assert_type(row.freeze_scale_action, qt.QAction)
+    assert_type(row.freeze_all_action, qt.QAction)
     assert_type(row.default_single_step(), float)
     assert_type(row.set_wheel_editing_without_focus(True), None)
 else:
@@ -78,7 +127,7 @@ assert_type(bd_channel_box.close(), None)
 assert_type(bd_channel_box.restore(), bd_channel_box.ChannelBoxWindow)
 assert_type(bd_channel_box.reset_layout(), bd_channel_box.ChannelBoxWindow)
 assert_type(bd_channel_box.WORKSPACE_CONTROL_NAME, str)
-assert_type(bd_channel_box.show().widget.refresh_action, qt.QAction)
+assert_type(bd_channel_box.show().widget.refresh(), None)
 assert_type(bd_channel_box.show().widget.menu_bar, qt.QMenuBar)
 assert_type(bd_channel_box.show().widget.edit_menu, qt.QMenu)
 assert_type(bd_channel_box.show().widget.copy_menu, qt.QMenu)
@@ -87,7 +136,6 @@ assert_type(
     bd_channel_box.show().widget.copy_selected_values_action, qt.QAction
 )
 assert_type(bd_channel_box.show().widget.paste_menu, qt.QMenu)
-assert_type(bd_channel_box.show().widget.paste_copied_values_menu, qt.QMenu)
 assert_type(
     bd_channel_box.show().widget.paste_copied_values_actions,
     dict[ChannelAttributeFilter, qt.QAction],
@@ -133,17 +181,43 @@ assert_type(
 assert_type(bd_channel_box.show().widget.controller.begin_state_edit(), None)
 assert_type(
     bd_channel_box.show().widget.controller.attribute_filter,
-    ChannelAttributeFilter,
+    ChannelDisplayFilter,
+)
+assert_type(
+    bd_channel_box.show().widget.controller.custom_filter_fallback_node_type,
+    str | None,
 )
 assert_type(
     bd_channel_box.show().widget.controller.set_attribute_filter("hidden"),
     None,
 )
+custom_filter = CustomFilterSelection(
+    "C:/filters/rig.json",
+    CustomFilterDefinition("Rig", {"joint": ("rotateOrder",)}),
+)
 assert_type(
-    bd_channel_box.show().widget.controller.mode, Literal["values", "states"]
+    bd_channel_box.show().widget.controller.set_attribute_filter(
+        custom_filter
+    ),
+    None,
+)
+assert_type(
+    bd_channel_box.show().widget.controller.replace_custom_filter(
+        custom_filter
+    ),
+    None,
+)
+assert_type(
+    bd_channel_box.show().widget.controller.clear_custom_filter(
+        custom_filter.path
+    ),
+    None,
+)
+assert_type(
+    bd_channel_box.show().widget.controller.mode,
+    Literal["values", "states", "custom_filter_setup"],
 )
 assert_type(bd_channel_box.show().widget.controller.set_mode("states"), None)
-assert_type(bd_channel_box.show().widget.row_widgets[0].context_menu, qt.QMenu)
 table = bd_channel_box.show().widget.table_view
 assert_type(table, ChannelTableView)
 assert_type(table.selected_keys(), tuple[tuple[str, str], ...])
@@ -152,6 +226,7 @@ assert_type(table.select_keys(keys), None)
 assert_type(table.set_visible_keys(keys), int)
 assert_type(table.set_visible_keys(None), int)
 controller = bd_channel_box.show().widget.controller
+assert_type(controller.representative_node_name, str | None)
 assert_type(controller.apply_numeric_values(keys, 5.0), bool)
 assert_type(controller.offset_numeric_values(keys, 1.0), bool)
 assert_type(controller.apply_bool_values(keys, True), bool)
@@ -159,6 +234,21 @@ assert_type(controller.apply_enum_values(keys, keys[0], 1), bool)
 assert_type(controller.begin_value_edit(), None)
 assert_type(controller.finish_value_edit(), None)
 assert_type(controller.align_selected_values(keys), bool)
+assert_type(controller.round_selected_values(keys, 2), bool)
+assert_type(controller.round_filtered_values("visible", 2), bool)
+round_kind: RoundTransformKind = "rotate"
+assert_type(
+    controller.round_transform_xyz(
+        round_kind,
+        2,
+        compensate_child_translate=True,
+        joint_child_compensation_attr="jointOrient",
+    ),
+    int,
+)
+assert_type(controller.consolidate_rotation("rotate"), int)
+assert_type(controller.can_set_rotation_preserving_pose(), bool)
+assert_type(controller.can_set_child_compensated_value(), bool)
 assert_type(controller.set_selected_locked(keys, True), bool)
 assert_type(controller.can_paste_values(), bool)
 assert_type(controller.can_paste_single_value(), bool)
@@ -167,5 +257,19 @@ assert_type(controller.copy_selected_values(keys), int)
 assert_type(controller.paste_copied_values(), bool)
 assert_type(controller.paste_copied_values("keyable"), bool)
 assert_type(controller.paste_copied_values_to_selected(keys), bool)
+assert_type(controller.has_transform_context(), bool)
+assert_type(controller.can_freeze_translation(), bool)
+assert_type(controller.freeze_transforms("all"), int)
 assert_type(controller.set_selected_display(keys, "hidden"), bool)
+assert_type(controller.set_muted_selected(keys, muted=True), int)
+assert_type(controller.set_muted_all_visible(muted=False), int)
+assert_type(controller.can_paste_animation_curves(), bool)
+assert_type(controller.copy_animation_curves_selected(keys), int)
+assert_type(controller.copy_animation_curves_all_visible(), int)
+assert_type(controller.cut_animation_curves_selected(keys), int)
+assert_type(controller.cut_animation_curves_all_visible(), int)
+assert_type(controller.paste_animation_curves_same_attributes(), int)
+assert_type(controller.paste_animation_curves_to_selected(keys), int)
+assert_type(controller.delete_animation_curves_selected(keys), int)
+assert_type(controller.delete_animation_curves_all_visible(), int)
 assert_type(controller.rows[0].target_names, tuple[str, ...])

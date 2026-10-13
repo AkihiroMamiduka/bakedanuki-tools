@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -29,7 +30,7 @@ class _WorkspaceHost:
     def attach(self, window: MayaDockableWindow, _pointer: int = 0) -> None:
         """実Windowを格納し、Maya mixinを通さずQtで表示する。"""
         self.window = window
-        qt.QWidget.show(window)
+        qt.QWidget.setVisible(window, True)
 
     def delete(self, _name: str) -> None:
         """Mayaがcontrol配下のQt objectを削除する経路を再現する。"""
@@ -63,6 +64,29 @@ def _step_view(window: ChannelBoxWindow, path: str) -> FloatValueStepSpinBox:
     )
     assert isinstance(row.editor, FloatValueStepSpinBox)
     return row.editor
+
+
+def _write_custom_filter(
+    path: Path,
+    name: str,
+    node_types: dict[str, list[str]] | None = None,
+) -> None:
+    """管理画面の検証用に共有可能な最小のフィルター定義を書く。"""
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": name,
+                "node_types": (
+                    node_types
+                    if node_types is not None
+                    else {"transform": ["visibility"]}
+                ),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
 
 @pytest.fixture
@@ -288,3 +312,181 @@ def test_search_visibility_preference_persists_without_query(
     assert reset is dock_host.window
     assert reset.widget.search_visibility == visibility
     assert reset.widget.search_edit.text() == ""
+
+
+def test_custom_filter_manager_keeps_errors_and_controls_visibility(
+    dock_host: _WorkspaceHost,
+    tmp_path: Path,
+) -> None:
+    """同名登録、読込エラー、管理画面の切替と並べ替えを確認する。"""
+    from bd_tools import bd_channel_box
+    from bd_tools.bd_channel_box.custom_filters import (
+        CustomFilterSelection,
+        normalize_filter_path,
+    )
+
+    first = tmp_path / "rig_first.json"
+    second = tmp_path / "rig_second.json"
+    broken = tmp_path / "broken.json"
+    _write_custom_filter(first, "Rig")
+    _write_custom_filter(second, "Rig")
+    broken.write_text("{", encoding="utf-8")
+    window = bd_channel_box.show()
+    widget = window.widget
+    paths = widget.custom_filter_registry.add_paths((first, second, broken))
+    assert paths == tuple(
+        normalize_filter_path(path) for path in (first, second, broken)
+    )
+    assert len(widget.custom_filter_registry.entries) == 3
+    assert widget.custom_filter_registry.entries[2].error is not None
+    assert widget.filter_combo.count() == 7
+    assert first.name in widget.filter_combo.itemText(5)
+    assert second.name in widget.filter_combo.itemText(6)
+    first_selection = widget.filter_combo.itemData(5)
+    assert isinstance(first_selection, CustomFilterSelection)
+    assert widget.filter_combo.findData(first_selection) == 5
+    with pytest.raises(ValueError):
+        widget.custom_filter_registry.add_paths((tmp_path / "third.json", ""))
+    assert len(widget.custom_filter_registry.entries) == 3
+
+    widget.manage_custom_filters_action.trigger()
+    dialog = widget.custom_filter_dialog
+    assert dialog is not None and dialog.isVisible()
+    assert dialog.list_widget.count() == 3
+    assert "読込エラー" in dialog.list_widget.item(2).text()
+    widget.filter_combo.setCurrentIndex(5)
+    widget.mode_combo.setCurrentIndex(1)
+    widget.filter_combo.setCurrentIndex(5)
+    dialog.list_widget.item(0).setCheckState(qt.Qt.CheckState.Unchecked)
+    assert widget.controller.attribute_filter == "all"
+    widget.mode_combo.setCurrentIndex(0)
+    assert widget.controller.attribute_filter == "visible"
+    assert widget.filter_combo.count() == 6
+    assert widget.custom_filter_registry.entries[0].enabled is False
+
+    widget.filter_combo.setCurrentIndex(5)
+    selected = widget.controller.attribute_filter
+    assert isinstance(selected, CustomFilterSelection)
+    dialog.list_widget.setCurrentRow(1)
+    dialog.move_up_button.click()
+    assert widget.custom_filter_registry.entries[0].path == paths[1]
+    assert widget.filter_combo.itemData(5).path == paths[1]
+    assert widget.controller.attribute_filter == selected
+    assert widget.filter_combo.currentIndex() == 5
+    _write_custom_filter(broken, "Fixed")
+    dialog.list_widget.setCurrentRow(2)
+    dialog.reload_button.click()
+    assert widget.custom_filter_registry.entries[2].error is None
+    assert widget.filter_combo.count() == 7
+    dialog.list_widget.item(1).setCheckState(qt.Qt.CheckState.Checked)
+    assert widget.filter_combo.count() == 8
+    assert widget.filter_combo.itemData(6).path == paths[0]
+    dialog.list_widget.setCurrentRow(1)
+    dialog.remove_button.click()
+    assert first.is_file()
+    assert tuple(
+        entry.path for entry in widget.custom_filter_registry.entries
+    ) == (paths[1], paths[2])
+
+
+def test_custom_filter_registrations_survive_reopen_reload_and_layout_reset(
+    dock_host: _WorkspaceHost,
+    tmp_path: Path,
+) -> None:
+    """個人設定のパス・順序・ON/OFFをWindow再生成後も維持する。"""
+    import bd_tools
+
+    from bd_tools import bd_channel_box
+
+    first = tmp_path / "one.json"
+    second = tmp_path / "two.json"
+    _write_custom_filter(first, "One")
+    _write_custom_filter(second, "Two")
+    window = bd_channel_box.show()
+    registry = window.widget.custom_filter_registry
+    first_path, second_path = registry.add_paths((first, second))
+    registry.move(second_path, -1)
+    registry.set_enabled(first_path, False)
+    assert tuple(entry.path for entry in registry.entries) == (
+        second_path,
+        first_path,
+    )
+    assert window.widget.filter_combo.count() == 6
+
+    bd_channel_box.close()
+    _events()
+    reopened = bd_channel_box.show()
+    _events()
+    assert tuple(
+        (entry.path, entry.enabled)
+        for entry in reopened.widget.custom_filter_registry.entries
+    ) == ((second_path, True), (first_path, False))
+    assert reopened.widget.filter_combo.itemText(5) == "Custom: Two"
+    reset = bd_channel_box.reset_layout()
+    _events()
+    assert tuple(
+        entry.path for entry in reset.widget.custom_filter_registry.entries
+    ) == (second_path, first_path)
+    bd_channel_box.close()
+    _events()
+    bd_tools.reload_package()
+    from bd_tools import bd_channel_box as current_module
+
+    current = current_module.show()
+    _events()
+    assert tuple(
+        (entry.path, entry.enabled)
+        for entry in current.widget.custom_filter_registry.entries
+    ) == ((second_path, True), (first_path, False))
+
+
+def test_custom_filter_reload_updates_selection_and_fallback_notice(
+    dock_host: _WorkspaceHost,
+    tmp_path: Path,
+) -> None:
+    """型未定義の案内、正常再読込、読込失敗時の既定復帰を確認する。"""
+    from bd_tools import bd_channel_box
+    from bd_tools.bd_channel_box.custom_filters import CustomFilterSelection
+
+    source = tmp_path / "reload.json"
+    _write_custom_filter(source, "Rig", {"joint": ["visibility"]})
+    node = cmds.createNode("transform", name="customFilterReloadBase")
+    cmds.select(node, replace=True)
+    window = bd_channel_box.show()
+    widget = window.widget
+    (path,) = widget.custom_filter_registry.add_paths((source,))
+    widget.filter_combo.setCurrentIndex(5)
+    _events()
+    assert isinstance(
+        widget.controller.attribute_filter, CustomFilterSelection
+    )
+    assert not widget.filter_fallback_label.isHidden()
+    fallback_text = widget.filter_fallback_label.text()
+    assert "transform" in fallback_text
+    assert "keyable + channelbox" in fallback_text
+    assert "未定義" in fallback_text
+
+    _write_custom_filter(source, "Rig", {"transform": ["visibility"]})
+    widget.custom_filter_registry.reload(path)
+    _events()
+    assert isinstance(
+        widget.controller.attribute_filter, CustomFilterSelection
+    )
+    assert widget.filter_combo.currentIndex() == 5
+    assert (
+        widget.filter_combo.findData(widget.controller.attribute_filter) == 5
+    )
+    assert widget.filter_fallback_label.isHidden()
+    assert tuple(row.attribute.path for row in widget.controller.rows) == (
+        "visibility",
+    )
+
+    source.write_text("{", encoding="utf-8")
+    widget.custom_filter_registry.reload(path)
+    _events()
+    assert widget.controller.attribute_filter == "visible"
+    assert widget.filter_combo.count() == 5
+    assert widget.filter_combo.currentData() == "visible"
+    assert widget.custom_filter_registry.entries[0].error is not None
+    assert widget.filter_fallback_label.isHidden()
+    assert source.is_file()

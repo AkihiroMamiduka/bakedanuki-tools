@@ -30,6 +30,11 @@ if TYPE_CHECKING:
 _OUTPUT_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_OUTPUT"
 _PHASE_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PHASE"
 _PREPARE_RESTART_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PREPARE_RESTART"
+_NAME_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_NAME_ONLY"
+_CONNECTIONS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CONNECTIONS_ONLY"
+_CUSTOM_FILTERS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CUSTOM_FILTERS_ONLY"
+_CHILD_SET_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CHILD_SET_ONLY"
+_POSE_SET_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_POSE_SET_ONLY"
 _PERSISTED_STEP = 0.5
 _STARTUP_IDLE_COMMAND = (
     "import __main__; "
@@ -67,6 +72,12 @@ class _MayaSmokeSession:
         self.screenshots: list[str] = []
         self.measurements: dict[str, float | int] = {}
         self.diagnostics: list[dict[str, object]] = []
+        self._reference_saved_tracking: bool | None = None
+        self._reference_saved_selection: tuple[str, ...] = ()
+        self._reference_network = ""
+        self._reference_joint = ""
+        self._reference_native_box = ""
+        self._reference_case_index = 0
         self._value_layout: tuple[int, int, int, int] | None = None
         self._started_at = time.perf_counter()
         self._startup_idle_checks = 0
@@ -75,6 +86,16 @@ class _MayaSmokeSession:
             self._setup_scene,
             self._show,
             self._inspect,
+            self._inspect_node_name_enter,
+            self._inspect_last_selected_representative,
+            self._inspect_native_reference_after_idle,
+            self._inspect_native_reference_after_idle,
+            self._inspect_native_reference_after_idle,
+            self._inspect_native_reference_after_idle,
+            self._inspect_native_reference_after_idle,
+            self._inspect_native_reference_after_idle,
+            self._inspect_native_reference_after_idle,
+            self._inspect_native_reference_after_idle,
             self._inspect_wheel_setting,
             self._inspect_attribute_search,
             self._inspect_native_wheel_controls,
@@ -83,7 +104,7 @@ class _MayaSmokeSession:
             self._redock,
             self._inspect_redocked,
             self._reset_dock_layout,
-            self._refresh_from_context_menu,
+            self._inspect_refresh_without_menu_action,
             self._edit_step,
             self._undo_step_value,
             self._edit_bool,
@@ -121,13 +142,60 @@ class _MayaSmokeSession:
             self._show_after_reload,
             self._capture_after_reload,
             self._benchmark,
+            self._inspect_input_colors,
+            self._inspect_connected_values,
+            self._inspect_connected_drag,
             self._finish,
         )
-        if self._phase == "restart":
+        if os.environ.get(_CHILD_SET_ONLY_VARIABLE) == "1":
+            self._stages = (
+                (self._inspect_child_set_restart, self._finish)
+                if self._phase == "restart"
+                else (
+                    self._setup_scene,
+                    self._inspect_child_set_tabs,
+                    self._inspect_child_set_docking,
+                    self._finish,
+                )
+            )
+        elif os.environ.get(_POSE_SET_ONLY_VARIABLE) == "1":
+            self._stages = (
+                (self._inspect_pose_set_restart, self._finish)
+                if self._phase == "restart"
+                else (
+                    self._setup_scene,
+                    self._inspect_pose_set_docking,
+                    self._finish,
+                )
+            )
+        elif self._phase == "restart":
             self._stages = (
                 self._inspect_restart,
                 self._setup_scene,
                 self._edit_after_restart,
+                self._finish,
+            )
+        elif os.environ.get(_CONNECTIONS_ONLY_VARIABLE) == "1":
+            self._stages = (
+                self._setup_scene,
+                self._show,
+                self._inspect_connected_values,
+                self._inspect_connected_drag,
+                self._finish,
+            )
+        elif os.environ.get(_NAME_ONLY_VARIABLE) == "1":
+            self._stages = (
+                self._setup_scene,
+                self._show,
+                self._inspect,
+                self._inspect_node_name_enter,
+                self._finish,
+            )
+        elif os.environ.get(_CUSTOM_FILTERS_ONLY_VARIABLE) == "1":
+            self._stages = (
+                self._setup_scene,
+                self._show,
+                self._inspect_custom_filters,
                 self._finish,
             )
 
@@ -141,6 +209,10 @@ class _MayaSmokeSession:
         with (self.output / "python-slot-errors.log").open(
             "a", encoding="utf-8"
         ) as stream:
+            if self._stage_index:
+                stream.write(
+                    f"stage: {self._stages[self._stage_index - 1].__name__}\n"
+                )
             stream.write(
                 "".join(traceback.format_exception(error_type, error, trace))
             )
@@ -262,7 +334,8 @@ class _MayaSmokeSession:
             )
             cmds.setAttr(f"{node}.hiddenWeight", 0.2 + index * 0.4)
             self.nodes.append(node)
-        cmds.select(self.nodes, replace=True)
+        # 既存工程がQA0を表示基準にするため、末尾にQA0を置く
+        cmds.select(list(reversed(self.nodes)), replace=True)
         self.steps.append("create_isolated_scene")
 
     def _show(self) -> None:
@@ -275,7 +348,13 @@ class _MayaSmokeSession:
 
     def _inspect(self) -> None:
         """実Windowの描画と対応Viewの存在を確認して画像を保存する。"""
-        from bd_util.ui import BoolCheckBox, EnumComboBox, FloatSliderSpinBox
+        from bd_util.ui import (
+            BoolCheckBox,
+            EnumComboBox,
+            FloatSliderSpinBox,
+            FloatValueStepSpinBox,
+            qt,
+        )
 
         window = self._require_window()
         if not window.isVisible():
@@ -293,7 +372,324 @@ class _MayaSmokeSession:
         if window.widget.scroll_area.horizontalScrollBar().maximum():
             raise AssertionError("入力欄が縮小後のWindow幅に収まりません")
         self._capture("01-multiple-selection.png")
+
+        # 通常行とSlider行で、20文字の値が編集欄の内側へ収まることを確認する
+        sample = "1234.123456789123456"
+        for path in ("translate.translateX", "weight"):
+            view = self._row(path).editor
+            if not isinstance(
+                view, (FloatValueStepSpinBox, FloatSliderSpinBox)
+            ):
+                raise AssertionError(f"数値欄がありません: {path}")
+            line_edit = view.spin_box.findChild(qt.QLineEdit)
+            if not isinstance(line_edit, qt.QLineEdit):
+                raise AssertionError(f"値の編集欄がありません: {path}")
+            margins = line_edit.textMargins()
+            required_width = (
+                line_edit.fontMetrics().horizontalAdvance(sample)
+                + margins.left()
+                + margins.right()
+                + 4
+            )
+            if required_width > line_edit.contentsRect().width():
+                raise AssertionError(f"20文字の値が欄内に収まりません: {path}")
+            if path == "translate.translateX":
+                # 未確定文字列の描画だけを採取し、sceneへ書き戻さず元へ戻す
+                original_text = line_edit.text()
+                try:
+                    line_edit.setText(sample)
+                    self._capture("38-value-field-width.png")
+                finally:
+                    line_edit.setText(original_text)
         self.steps.append("inspect_rendered_views")
+
+    def _inspect_node_name_enter(self) -> None:
+        """実Mayaの名前欄でEnterが改名を確定し、入力欄に留まることを確認する。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+
+        widget = self._require_window().widget
+        editor = widget.node_name_edit
+        if editor is None:
+            raise AssertionError("基準ノードの名前入力欄がありません")
+        original = self.nodes[0]
+        requested = "bdChannelBoxNameEnterQA"
+        if "palette(window)" not in editor.styleSheet():
+            raise AssertionError("閲覧中の名前欄が背景に溶け込んでいません")
+        idle_height = editor.height()
+        editor.setFocus()
+        self._flush_gui()
+        if editor.styleSheet():
+            raise AssertionError(
+                "名前欄へフォーカスしても入力外観になりません"
+            )
+        if editor.height() != idle_height:
+            raise AssertionError("名前欄のフォーカスで高さが変わりました")
+        self._capture("02-node-name-focused.png")
+        editor.setText(requested)
+        editor.textEdited.emit(requested)
+        for event_type in (
+            qt.QEvent.Type.ShortcutOverride,
+            qt.QEvent.Type.KeyPress,
+            qt.QEvent.Type.KeyRelease,
+        ):
+            event = qt.QtGui.QKeyEvent(
+                event_type,
+                qt.Qt.Key.Key_Return,
+                qt.Qt.KeyboardModifier.NoModifier,
+            )
+            event.setAccepted(False)
+            qt.QApplication.sendEvent(editor, event)
+            if not event.isAccepted():
+                raise AssertionError("名前欄がEnterを受理しませんでした")
+        self._flush_gui()
+        try:
+            if (
+                not cmds.objExists(f"|{requested}")
+                or editor.text() != requested
+            ):
+                raise AssertionError(
+                    "名前欄でのEnter確定が実名へ反映されません"
+                )
+            if qt.QApplication.focusWidget() is not editor:
+                raise AssertionError(
+                    "Enter確定後に名前欄からフォーカスが移りました"
+                )
+        finally:
+            if cmds.objExists(f"|{requested}"):
+                cmds.rename(requested, original)
+                self._flush_gui()
+        widget.mode_combo.setFocus()
+        self._flush_gui()
+        if "palette(window)" not in editor.styleSheet():
+            raise AssertionError(
+                "フォーカスを外しても名前欄が閲覧外観に戻りません"
+            )
+        if editor.height() != idle_height:
+            raise AssertionError("名前欄のフォーカス移動で高さが変わりました")
+        self.steps.append("inspect_node_name_enter")
+
+    def _assert_representative_selection(
+        self, selected: tuple[str, ...], expected_weight: float
+    ) -> None:
+        """選択順と末尾の見出し・値表示が一致することを確認する。"""
+        from maya import cmds
+
+        from bd_util.ui import FloatSliderSpinBox, FloatValueStepSpinBox
+
+        widget = self._require_window().widget
+        expected_paths = tuple(
+            cmds.ls(node, long=True)[0] for node in selected
+        )
+        if widget.controller.node_names != expected_paths:
+            raise AssertionError(
+                f"選択順が異なります: {widget.controller.node_names}"
+            )
+        if widget.controller.representative_node_name != expected_paths[-1]:
+            raise AssertionError("末尾ノードが表示基準になっていません")
+        name_edit = widget.node_name_edit
+        if name_edit is None or name_edit.text() != selected[-1]:
+            raise AssertionError(
+                "名前欄が末尾ノードではありません: "
+                f"{name_edit.text() if name_edit is not None else None}"
+            )
+        editor = self._row("weight").editor
+        if not isinstance(editor, (FloatSliderSpinBox, FloatValueStepSpinBox)):
+            raise AssertionError("weightの数値欄がありません")
+        if abs(editor.spin_box.value() - expected_weight) > 1e-6:
+            raise AssertionError(
+                f"weightの表示値が異なります: {editor.spin_box.value()}"
+            )
+
+    def _inspect_last_selected_representative(self) -> None:
+        """両選択順を検証し、標準Channel Boxとの比較を次のidleへ送る。"""
+        from maya import cmds, mel
+
+        native_box = mel.eval("$bdChannelBoxQANativeName = $gChannelBoxName")
+        if not native_box or not cmds.channelBox(native_box, exists=True):
+            raise AssertionError("Maya標準Channel Boxを取得できません")
+
+        self._reference_native_box = native_box
+        self._reference_saved_tracking = bool(
+            cmds.selectPref(query=True, trackSelectionOrder=True)
+        )
+        self._reference_saved_selection = tuple(
+            cmds.ls(selection=True, long=True) or ()
+        )
+        try:
+            network = cmds.createNode("network", name="bdChannelBoxMixedQA")
+            self._reference_network = network
+            cmds.addAttr(
+                network,
+                longName="weight",
+                attributeType="double",
+                keyable=True,
+            )
+            cmds.setAttr(f"{network}.weight", 0.9)
+            joint = cmds.createNode("joint", name="bdChannelBoxJointQA")
+            self._reference_joint = joint
+            cmds.addAttr(
+                joint,
+                longName="weight",
+                attributeType="double",
+                keyable=True,
+            )
+            cmds.setAttr(f"{joint}.weight", 0.9)
+            for tracking in (False, True):
+                cmds.selectPref(trackSelectionOrder=tracking)
+                for selected, expected_weight in (
+                    (tuple(self.nodes), 0.75),
+                    (tuple(reversed(self.nodes)), 0.25),
+                ):
+                    cmds.select(selected, replace=True)
+                    self._flush_gui()
+                    self._assert_representative_selection(
+                        selected, expected_weight
+                    )
+                    if not tracking and selected == tuple(self.nodes):
+                        self._capture("41-last-selected-reference.png")
+            self._select_reference_case(0)
+        except Exception:
+            self._cleanup_reference_probe()
+            raise
+
+    def _select_reference_case(self, index: int) -> None:
+        """追跡設定と異種ノードの順を指定して次のidle検証へ進める。"""
+        from maya import cmds
+
+        from bd_util.maya.node.inspection import selected_node_names
+
+        tracking = index >= 4
+        kind = index % 4
+        cmds.selectPref(trackSelectionOrder=tracking)
+        if kind == 0:
+            selected = (self.nodes[0], self._reference_network)
+        elif kind == 1:
+            selected = (self.nodes[0], self._reference_joint)
+        elif kind == 2:
+            selected = (self._reference_joint, self.nodes[0])
+        else:
+            selected = (self.nodes[0], self._reference_joint)
+        cmds.select(selected, replace=True)
+        if kind == 3:
+            # 選択済みtransformを再追加した後の実際の選択リストを読む
+            cmds.select(self.nodes[0], add=True)
+        self._flush_gui()
+        active = selected_node_names()
+        expected_paths = tuple(
+            cmds.ls(name, long=True)[0] for name in selected
+        )
+        if kind != 3 and active != expected_paths:
+            raise AssertionError(f"Mayaの選択順が異なります: {active}")
+        names = tuple(name.rsplit("|", 1)[-1] for name in active)
+        expected_weight = 0.25 if names[-1] == self.nodes[0] else 0.9
+        self._assert_representative_selection(names, expected_weight)
+        self._reference_case_index = index
+        native_items = (
+            cmds.channelBox(
+                self._reference_native_box, query=True, mainObjectList=True
+            )
+            or ()
+        )
+        native_paths = tuple(
+            cmds.ls(item, long=True)[0] for item in native_items
+        )
+        self.diagnostics.append(
+            {
+                "stage": "native_reference_selected",
+                "case": index,
+                "tracking": tracking,
+                "active_selection": active,
+                "native_objects": native_paths,
+                "native_show_transforms": bool(
+                    cmds.channelBox(
+                        self._reference_native_box,
+                        query=True,
+                        showTransforms=True,
+                    )
+                ),
+                "native_visible": bool(
+                    cmds.channelBox(
+                        self._reference_native_box, query=True, visible=True
+                    )
+                ),
+                "native_obscured": bool(
+                    cmds.channelBox(
+                        self._reference_native_box,
+                        query=True,
+                        isObscured=True,
+                    )
+                ),
+            }
+        )
+
+    def _inspect_native_reference_after_idle(self) -> None:
+        """idle後の標準表示を記録し、次の異種選択へ進める。"""
+        from maya import cmds
+
+        from bd_util.maya.node.inspection import selected_node_names
+
+        index = self._reference_case_index
+        try:
+            native_box = self._reference_native_box
+            items = (
+                cmds.channelBox(native_box, query=True, mainObjectList=True)
+                or ()
+            )
+            native_paths = tuple(cmds.ls(item, long=True)[0] for item in items)
+            active = selected_node_names()
+            self.diagnostics.append(
+                {
+                    "stage": "native_reference_after_idle",
+                    "case": index,
+                    "tracking": index >= 4,
+                    "active_selection": active,
+                    "native_objects": native_paths,
+                    "native_visible": bool(
+                        cmds.channelBox(native_box, query=True, visible=True)
+                    ),
+                    "native_obscured": bool(
+                        cmds.channelBox(
+                            native_box, query=True, isObscured=True
+                        )
+                    ),
+                }
+            )
+            # 照会順は公開仕様で保証されないため、表示名は保存画像で確認する
+            self._capture_maya(f"42-native-reference-{index}.png")
+            if index % 4 != 0 and active[-1] not in native_paths:
+                raise AssertionError(
+                    f"標準Channel Boxの対象に末尾がありません: {native_paths}"
+                )
+            if index == 7:
+                self.steps.append(
+                    "last_selected_reference_and_native_snapshots"
+                )
+                self._cleanup_reference_probe()
+            else:
+                self._select_reference_case(index + 1)
+        except Exception:
+            self._cleanup_reference_probe()
+            raise
+
+    def _cleanup_reference_probe(self) -> None:
+        """選択追跡設定と元の選択を復元し、一時ノードを削除する。"""
+        from maya import cmds
+
+        saved_tracking = self._reference_saved_tracking
+        if saved_tracking is None:
+            return
+        self._reference_saved_tracking = None
+        cmds.selectPref(trackSelectionOrder=saved_tracking)
+        if self._reference_saved_selection:
+            cmds.select(self._reference_saved_selection, replace=True)
+        else:
+            cmds.select(clear=True)
+        for node in (self._reference_network, self._reference_joint):
+            if node and cmds.objExists(node):
+                cmds.delete(node)
+        self._flush_gui()
 
     def _inspect_wheel_setting(self) -> None:
         """設定メニューを表示し、OFFでは未フォーカスのホイール入力を止める。"""
@@ -698,26 +1094,29 @@ class _MayaSmokeSession:
         self._assert_values("weight", (0.25, 0.75))
         self.steps.append("reset_layout_recreates_right_dock")
 
-    def _refresh_from_context_menu(self) -> None:
-        """属性名の右クリックメニューから更新し、値とUndoを維持する。"""
+    def _inspect_refresh_without_menu_action(self) -> None:
+        """右クリックに更新操作がなく、直接更新も値とUndoを保つことを確認する。"""
         from maya import cmds
-
-        from bd_util.ui import qt
 
         row = self._row("weight")
         cmds.flushUndo()
         self._open_context_menu(row.name_label)
         if not row.context_menu.isVisible():
             raise AssertionError("属性名からメニューを開けません")
-        row.context_menu.setActiveAction(row.refresh_action)
-        self._key(row.context_menu, qt.Qt.Key.Key_Return)
+        if any(
+            action.text() == "表示を更新"
+            for action in row.context_menu.actions()
+        ):
+            raise AssertionError("属性行のメニューに更新操作が残っています")
+        row.context_menu.close()
+        self._require_window().widget.refresh()
         self._flush_gui()
         if self._row("weight") is row:
-            raise AssertionError("メニューから表示が更新されません")
+            raise AssertionError("直接更新で表示が再構築されません")
         self._assert_values("weight", (0.25, 0.75))
         if not cmds.undoInfo(query=True, undoQueueEmpty=True):
-            raise AssertionError("メニューの表示更新でUndo履歴が増えました")
-        self.steps.append("context_menu_refresh_only_reads_values")
+            raise AssertionError("直接更新でUndo履歴が増えました")
+        self.steps.append("no_context_refresh_and_direct_refresh_reads_values")
 
     def _edit_step(self) -> None:
         """右クリックのStep設定と、正本を変えない実入力・保存を確認する。"""
@@ -739,8 +1138,8 @@ class _MayaSmokeSession:
         if tuple(
             action.text() for action in widget.step_settings_menu.actions()
         ) != (
-            "初期値に戻す: 全ての属性",
             "初期値に戻す: 選択属性",
+            "初期値に戻す: 全ての属性",
         ):
             raise AssertionError("Step設定のリセット順または表記が不正です")
         row.context_menu.close()
@@ -865,8 +1264,12 @@ class _MayaSmokeSession:
 
         row = self._row("mode")
         self._open_context_menu(row.name_label)
-        row.context_menu.setActiveAction(row.align_action)
-        self._key(row.context_menu, qt.Qt.Key.Key_Return)
+        row.context_menu.setActiveAction(row.align_menu.menuAction())
+        self._key(row.context_menu, qt.Qt.Key.Key_Right)
+        if not row.align_menu.isVisible():
+            raise AssertionError("揃えるサブメニューを開けません")
+        row.align_menu.setActiveAction(row.align_action)
+        self._key(row.align_menu, qt.Qt.Key.Key_Return)
         self._flush_gui()
         self._assert_values("mode", (5, 5))
         self.steps.append("enum_context_alignment")
@@ -976,8 +1379,12 @@ class _MayaSmokeSession:
         if not row.context_menu.grab().save(str(image_path)):
             raise RuntimeError("属性行のメニュー画像を保存できません")
         self.screenshots.append(str(image_path))
-        row.context_menu.setActiveAction(row.align_action)
-        self._key(row.context_menu, qt.Qt.Key.Key_Return)
+        row.context_menu.setActiveAction(row.align_menu.menuAction())
+        self._key(row.context_menu, qt.Qt.Key.Key_Right)
+        if not row.align_menu.isVisible():
+            raise AssertionError("揃えるサブメニューを開けません")
+        row.align_menu.setActiveAction(row.align_action)
+        self._key(row.align_menu, qt.Qt.Key.Key_Return)
         self._assert_values("enabled", (False, False))
         self.steps.append("align_representative_bool_value")
 
@@ -1194,6 +1601,410 @@ class _MayaSmokeSession:
         self._capture("14-values-after-mode-switch.png")
         self.steps.append("return_to_values_preserves_width_step_and_scene")
 
+    def _inspect_custom_filters(self) -> None:
+        """共有JSONの管理・設定画面と、実ノードでの表示・編集を確認する。"""
+        from maya import cmds
+
+        from bd_tools.bd_channel_box.custom_filters import (
+            CustomFilterSelection,
+            normalize_filter_path,
+        )
+        from bd_tools.bd_channel_box.widget import CustomFilterManagerDialog
+        from bd_util.ui import FloatValueStepSpinBox, qt
+
+        widget = self._require_window().widget
+        registry = widget.custom_filter_registry
+        combo = widget.filter_combo
+        if registry.entries or combo.count() != 5:
+            raise AssertionError(
+                "独立profileのフィルター登録が空ではありません"
+            )
+
+        # 共有ファイル2件を隔離した出力先へ作り、個人設定に登録する
+        first_path = self.output / "custom-filter-rig.json"
+        second_path = self.output / "custom-filter-controls.json"
+        _write_json(
+            first_path,
+            {
+                "schema_version": 1,
+                "name": "Rig",
+                "node_types": {
+                    "transform": [
+                        "hiddenWeight",
+                        "weight",
+                        "translate.translateX",
+                    ]
+                },
+            },
+        )
+        _write_json(
+            second_path,
+            {
+                "schema_version": 1,
+                "name": "Controls",
+                "node_types": {"transform": ["mode", "enabled"]},
+            },
+        )
+        paths = (
+            normalize_filter_path(first_path),
+            normalize_filter_path(second_path),
+        )
+        if registry.add_paths((first_path, second_path)) != paths:
+            raise AssertionError("共有JSONを2件登録できません")
+        self._flush_gui()
+        if tuple(entry.path for entry in registry.entries) != paths:
+            raise AssertionError("共有JSONの登録順が保持されません")
+        if tuple(combo.itemText(index) for index in range(5, 7)) != (
+            "Custom: Rig",
+            "Custom: Controls",
+        ):
+            raise AssertionError(
+                "Attribute Filterの末尾に登録順で追加されません"
+            )
+        self.steps.append("register_two_custom_filter_files")
+
+        # 設定メニューから管理画面を表示し、一覧と読込状態を撮影する
+        widget.manage_custom_filters_action.trigger()
+        self._flush_gui()
+        dialog = widget.custom_filter_dialog
+        if (
+            not isinstance(dialog, CustomFilterManagerDialog)
+            or not dialog.isVisible()
+        ):
+            raise AssertionError("カスタムフィルター管理画面が表示されません")
+        items = tuple(dialog.list_widget.item(index) for index in range(2))
+        if dialog.list_widget.count() != 2 or any(
+            item is None for item in items
+        ):
+            raise AssertionError("管理画面の登録件数が不正です")
+        if tuple(item.text() for item in items if item is not None) != (
+            "Rig",
+            "Controls",
+        ):
+            raise AssertionError("管理画面の登録順が不正です")
+        if paths[0] not in dialog.details_label.text():
+            raise AssertionError(
+                "管理画面に共有ファイルのパスが表示されません"
+            )
+        image_path = self.output / "43-custom-filter-manager.png"
+        if not dialog.grab().save(str(image_path)):
+            raise RuntimeError("カスタムフィルター管理画面を撮影できません")
+        self.screenshots.append(str(image_path))
+        self.steps.append("inspect_custom_filter_manager_dialog")
+
+        # 上下移動とチェック操作を画面から行い、ComboBoxへ即時反映させる
+        dialog.list_widget.setCurrentRow(1)
+        dialog.move_up_button.click()
+        self._flush_gui()
+        if tuple(entry.path for entry in registry.entries) != paths[::-1]:
+            raise AssertionError("管理画面の上移動が登録順へ反映されません")
+        if tuple(combo.itemText(index) for index in range(5, 7)) != (
+            "Custom: Controls",
+            "Custom: Rig",
+        ):
+            raise AssertionError("上移動がAttribute Filterへ反映されません")
+        dialog.move_down_button.click()
+        self._flush_gui()
+        if tuple(entry.path for entry in registry.entries) != paths:
+            raise AssertionError("管理画面の下移動が登録順へ反映されません")
+        dialog.list_widget.setCurrentRow(0)
+        first_item = dialog.list_widget.item(0)
+        if first_item is None:
+            raise AssertionError("管理画面の先頭登録がありません")
+        first_item.setCheckState(qt.Qt.CheckState.Unchecked)
+        self._flush_gui()
+        if registry.entries[0].enabled or combo.count() != 6:
+            raise AssertionError(
+                "OFFにした登録がAttribute Filterから消えません"
+            )
+        restored_item = dialog.list_widget.item(0)
+        if restored_item is None:
+            raise AssertionError("OFFにした登録を再選択できません")
+        restored_item.setCheckState(qt.Qt.CheckState.Checked)
+        self._flush_gui()
+        if not registry.entries[0].enabled or combo.count() != 7:
+            raise AssertionError(
+                "ONに戻した登録がAttribute Filterへ戻りません"
+            )
+        dialog.close()
+        self._flush_gui()
+        self.steps.append("move_and_toggle_custom_filter_registrations")
+
+        # 非表示属性もJSONの指定順で値編集行へ出し、表示フラグを変えない
+        selection: object = combo.itemData(5)
+        if not isinstance(selection, CustomFilterSelection):
+            raise AssertionError("カスタム項目の識別子が見つかりません")
+        if selection.path != paths[0]:
+            raise AssertionError("登録順とComboBoxの選択対象が異なります")
+        self._select_combo_item(combo, 5)
+        expected_rows = ("hiddenWeight", "weight", "translate.translateX")
+        if (
+            tuple(row.row.attribute.path for row in widget.row_widgets)
+            != expected_rows
+        ):
+            raise AssertionError("カスタム属性がJSONの順に表示されません")
+        if widget.filter_fallback_label.isVisible():
+            raise AssertionError(
+                "定義済みノード型で代替条件の案内が表示されます"
+            )
+        self._capture("44-custom-filter-hidden-rows.png")
+        cmds.flushUndo()
+        view = self._row("hiddenWeight").editor
+        if not isinstance(view, FloatValueStepSpinBox):
+            raise AssertionError("非表示属性の値入力欄がありません")
+        view.spin_box.setValue(0.5)
+        self._flush_gui()
+        self._assert_values("hiddenWeight", (0.5, 0.5))
+        for node in self.nodes:
+            plug = f"{node}.hiddenWeight"
+            if cmds.getAttr(plug, keyable=True) or cmds.getAttr(
+                plug, channelBox=True
+            ):
+                raise AssertionError("値入力で属性の表示フラグが変わりました")
+        cmds.undo()
+        self._flush_gui()
+        self._assert_values("hiddenWeight", (0.2, 0.6))
+        self.steps.append("edit_hidden_attribute_in_json_order")
+
+        # JSONで未定義のjointでは型の継承をせず既定のvisibleへ戻す
+        other = cmds.createNode("joint", name="bdChannelBoxCustomFallback")
+        cmds.addAttr(
+            other, longName="weight", attributeType="double", keyable=True
+        )
+        cmds.addAttr(other, longName="hiddenWeight", attributeType="double")
+        for name in ("multiHiddenA", "multiHiddenB"):
+            cmds.addAttr(other, longName=name, attributeType="double")
+        cmds.select(other, replace=True)
+        self._flush_gui()
+        fallback_rows = {row.row.attribute.path for row in widget.row_widgets}
+        if "weight" not in fallback_rows or "hiddenWeight" in fallback_rows:
+            raise AssertionError(
+                "未定義ノード型のvisibleフォールバックが不正です"
+            )
+        if widget.controller.attribute_filter != selection:
+            raise AssertionError(
+                "ノード変更でカスタムフィルター選択が失われました"
+            )
+        fallback_label = widget.filter_fallback_label
+        if not fallback_label.isVisible() or not all(
+            word in fallback_label.text()
+            for word in ("joint", "keyable + channelbox")
+        ):
+            raise AssertionError(
+                "未定義ノード型の代替条件が画面に示されません"
+            )
+        self._capture("45-custom-filter-undefined-joint.png")
+        self.steps.append("undefined_node_type_uses_visible_fallback")
+
+        # 設定モードで非表示属性をJSONへ登録し、通常表示へ反映する
+        cmds.flushUndo()
+        self._select_combo_item(widget.mode_combo, 2)
+        panel = widget.setup_panel
+        panel.set_target(paths[0])
+        self._flush_gui()
+        if combo.count() != 5 or not panel.isVisible():
+            raise AssertionError("設定モードの表示条件と画面が不正です")
+        candidates = (
+            button
+            for button in panel.findChildren(qt.QRadioButton)
+            if button.toolTip().splitlines()[0] == "hiddenWeight"
+            and button.text() == "含める"
+        )
+        include = next(candidates, None)
+        if include is None:
+            raise AssertionError("非表示属性の所属ボタンがありません")
+        include.click()
+        panel.candidate_scroll.ensureWidgetVisible(include)
+        self._flush_gui()
+        self._capture("46-custom-filter-setup.png")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("設定モードの選択がUndo履歴を変更しました")
+
+        # 分割バーと候補一括操作を実画面で確かめる
+        splitter = panel.list_splitter
+        if splitter.orientation() != qt.Qt.Orientation.Vertical:
+            raise AssertionError("表示順と候補の分割方向が縦ではありません")
+        splitter.setSizes([300, 80])
+        self._flush_gui()
+        order_large = splitter.sizes()
+        splitter.setSizes([80, 300])
+        self._flush_gui()
+        candidates_large = splitter.sizes()
+        if not (
+            order_large[0] > candidates_large[0]
+            and order_large[1] < candidates_large[1]
+        ):
+            raise AssertionError("分割バーで一覧の表示範囲を変更できません")
+        panel.search_edit.setText("hiddenWeight")
+        self._flush_gui()
+        panel.exclude_all_button.click()
+        self._flush_gui()
+        if panel.draft is None or panel.draft.paths("joint"):
+            raise AssertionError(
+                "候補の一括除外が作業中の定義へ反映されません"
+            )
+        panel.include_all_button.click()
+        self._flush_gui()
+        if panel.draft is None or panel.draft.paths("joint") != (
+            "hiddenWeight",
+        ):
+            raise AssertionError(
+                "候補の一括追加が作業中の定義へ反映されません"
+            )
+        self._capture("47-custom-filter-batch.png")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("候補の一括操作がUndo履歴を変更しました")
+        self.steps.append("resize_and_batch_custom_filter_setup")
+
+        # 属性名の縦ドラッグと選択行へのラジオ一括適用を実画面で確かめる
+        panel.search_edit.setText("multiHidden")
+        self._flush_gui()
+        label_a = next(
+            (
+                label
+                for label in panel.findChildren(qt.QLabel)
+                if label.toolTip() == "multiHiddenA"
+            ),
+            None,
+        )
+        label_b = next(
+            (
+                label
+                for label in panel.findChildren(qt.QLabel)
+                if label.toolTip() == "multiHiddenB"
+            ),
+            None,
+        )
+        if label_a is None or label_b is None:
+            raise AssertionError("複数選択用の属性名が見つかりません")
+        panel.candidate_scroll.ensureWidgetVisible(label_a)
+        self._flush_gui()
+        start = label_a.rect().center()
+        end = label_a.mapFromGlobal(
+            label_b.mapToGlobal(label_b.rect().center())
+        )
+        self._mouse(label_a, qt.QEvent.Type.MouseButtonPress, start)
+        self._mouse(label_a, qt.QEvent.Type.MouseMove, end)
+        self._mouse(label_a, qt.QEvent.Type.MouseButtonRelease, end)
+        self._flush_gui()
+        if panel.selected_candidate_paths() != (
+            "multiHiddenA",
+            "multiHiddenB",
+        ):
+            raise AssertionError("属性名のドラッグで範囲を選択できません")
+        include_many = next(
+            (
+                button
+                for button in panel.findChildren(qt.QRadioButton)
+                if button.toolTip().splitlines()[0] == "multiHiddenA"
+                and button.text() == "含める"
+            ),
+            None,
+        )
+        exclude_many = next(
+            (
+                button
+                for button in panel.findChildren(qt.QRadioButton)
+                if button.toolTip().splitlines()[0] == "multiHiddenA"
+                and button.text() == "含めない"
+            ),
+            None,
+        )
+        if include_many is None or exclude_many is None:
+            raise AssertionError("複数選択用の所属ボタンが見つかりません")
+        include_many.click()
+        self._flush_gui()
+        if panel.draft is None or panel.draft.paths("joint") != (
+            "hiddenWeight",
+            "multiHiddenA",
+            "multiHiddenB",
+        ):
+            raise AssertionError("選択した属性を一度で追加できません")
+        self._capture("48-custom-filter-selection.png")
+        exclude_many.click()
+        self._flush_gui()
+        if panel.draft is None or panel.draft.paths("joint") != (
+            "hiddenWeight",
+        ):
+            raise AssertionError("選択した属性を一度で除外できません")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("複数選択と所属変更がUndo履歴を変更しました")
+        self.steps.append("select_and_toggle_custom_filter_candidates")
+
+        # 上段の複数選択を一段移動し、選択全件の除外まで確認する
+        panel.include_all_button.click()
+        panel.list_splitter.setSizes([300, 80])
+        self._flush_gui()
+        order = panel.order_list
+        if panel.draft is None or panel.draft.paths("joint") != (
+            "hiddenWeight",
+            "multiHiddenA",
+            "multiHiddenB",
+        ):
+            raise AssertionError("表示順一覧に検証用の属性が揃いません")
+        for index, modifiers in (
+            (1, qt.Qt.KeyboardModifier.NoModifier),
+            (2, qt.Qt.KeyboardModifier.ShiftModifier),
+        ):
+            item = order.item(index)
+            order.scrollToItem(item)
+            self._flush_gui()
+            position = order.visualItemRect(item).center()
+            self._mouse(
+                order.viewport(),
+                qt.QEvent.Type.MouseButtonPress,
+                position,
+                modifiers=modifiers,
+            )
+            self._mouse(
+                order.viewport(),
+                qt.QEvent.Type.MouseButtonRelease,
+                position,
+                modifiers=modifiers,
+            )
+        self._flush_gui()
+        if tuple(item.text() for item in order.selectedItems()) != (
+            "multiHiddenA",
+            "multiHiddenB",
+        ):
+            raise AssertionError("表示順一覧の複数選択が反映されません")
+        panel.up_button.click()
+        self._flush_gui()
+        if panel.draft.paths("joint") != (
+            "multiHiddenA",
+            "multiHiddenB",
+            "hiddenWeight",
+        ):
+            raise AssertionError("選択した属性をまとめて上へ移動できません")
+        self._capture("49-custom-filter-order-selection.png")
+        panel.down_button.click()
+        self._flush_gui()
+        if panel.draft.paths("joint") != (
+            "hiddenWeight",
+            "multiHiddenA",
+            "multiHiddenB",
+        ):
+            raise AssertionError("選択した属性をまとめて下へ戻せません")
+        panel.remove_button.click()
+        self._flush_gui()
+        if panel.draft.paths("joint") != ("hiddenWeight",):
+            raise AssertionError("選択した属性をまとめて除外できません")
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("表示順と除外がUndo履歴を変更しました")
+        self.steps.append("move_and_remove_selected_custom_filter_order")
+
+        panel.save_button.click()
+        self._flush_gui()
+        if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("JSON保存がUndo履歴を変更しました")
+        self._select_combo_item(widget.mode_combo, 0)
+        self._select_combo_item(combo, 5)
+        if "hiddenWeight" not in (
+            row.row.attribute.path for row in widget.row_widgets
+        ):
+            raise AssertionError("保存したjoint型の属性が表示されません")
+        self.steps.append("author_custom_filter_for_joint")
+
     def _inspect_filters(self) -> None:
         """両モードの絞り込み、選択保持と状態操作後の行の出入りを実UIで確認する。"""
         from maya import cmds
@@ -1335,8 +2146,8 @@ class _MayaSmokeSession:
             raise AssertionError("表示順の確認でUndo履歴が増えました")
         self.steps.append("joint_priority_order_in_both_modes")
 
-        # 検証用jointを除き、後続のclose・reload検証の選択と表示へ戻す
-        cmds.select(self.nodes, replace=True)
+        # 検証用jointを除き、QA0を基準とした後続工程の選択と表示へ戻す
+        cmds.select(list(reversed(self.nodes)), replace=True)
         self._flush_gui()
         cmds.delete(joint)
         self._select_combo_item(widget.mode_combo, 0)
@@ -1400,9 +2211,15 @@ class _MayaSmokeSession:
             row = self._row(path)
             if row.name_label.contentsMargins().right() != 4:
                 raise AssertionError(f"属性名の右余白が不正です: {path}")
-            if row.editor.x() != row.name_label.x() + row.name_label.width():
+            if (
+                row.input_indicator.x()
+                != row.name_label.x() + row.name_label.width()
+                or row.input_indicator.width() != 6
+                or row.editor.x()
+                != row.input_indicator.x() + row.input_indicator.width()
+            ):
                 raise AssertionError(
-                    f"属性名と入力欄の間に隙間があります: {path}"
+                    f"属性名・接続表示・入力欄の配置が不正です: {path}"
                 )
             if (
                 row.name_label.palette().color(qt.QPalette.ColorRole.Window)
@@ -1484,17 +2301,29 @@ class _MayaSmokeSession:
         # 選択内の右クリックから全属性をロックし、一回で復元する
         row = self._row("translate.translateX")
         self._open_context_menu(row.name_label)
-        lock_action = next(
+        lock_menu_action = next(
             action
             for action in row.context_menu.actions()
+            if action.text() == "ロック" and action.menu() is not None
+        )
+        lock_menu = lock_menu_action.menu()
+        if lock_menu is None:
+            raise AssertionError("ロックのサブメニューがありません")
+        lock_action = next(
+            action
+            for action in lock_menu.actions()
             if action.objectName() == "selected_lock"
         )
-        row.context_menu.setActiveAction(lock_action)
+        row.context_menu.setActiveAction(lock_menu_action)
+        self._key(row.context_menu, qt.Qt.Key.Key_Right)
+        if not lock_menu.isVisible():
+            raise AssertionError("ロックのサブメニューを開けません")
+        lock_menu.setActiveAction(lock_action)
         menu_path = self.output / "28-multi-attribute-menu.png"
-        if not row.context_menu.grab().save(str(menu_path)):
+        if not lock_menu.grab().save(str(menu_path)):
             raise RuntimeError("選択属性メニューの画像を保存できません")
         self.screenshots.append(str(menu_path))
-        self._key(row.context_menu, qt.Qt.Key.Key_Return)
+        self._key(lock_menu, qt.Qt.Key.Key_Return)
         for node in self.nodes:
             for name in attributes:
                 if not cmds.getAttr(f"{node}.{name}", lock=True):
@@ -1900,7 +2729,7 @@ class _MayaSmokeSession:
             if not cmds.undoInfo(query=True, undoQueueEmpty=True):
                 raise AssertionError("Pasteが一回のUndoになっていません")
 
-            # 基準nodeの表示状態でpathを決め、後続nodeにも同じpathを貼る
+            # 基準nodeの表示状態でpathを決め、他のnodeにも同じpathを貼る
             cmds.setAttr(f"{self.nodes[0]}.weight", keyable=True)
             cmds.setAttr(f"{self.nodes[0]}.enabled", keyable=False)
             cmds.setAttr(f"{self.nodes[0]}.enabled", channelBox=True)
@@ -1915,11 +2744,11 @@ class _MayaSmokeSession:
             target_row = self._row("translate.translateX")
             self._open_context_menu(target_row.name_label)
             expected_labels = (
-                "全て",
-                "keyable + channelbox",
-                "keyable",
-                "channelbox",
-                "hide",
+                "コピー元と同じ属性：全て",
+                "コピー元と同じ属性：Keyable + ChannelBox",
+                "コピー元と同じ属性：Keyable",
+                "コピー元と同じ属性：ChannelBox",
+                "コピー元と同じ属性：Hide",
             )
             actual_labels = tuple(
                 action.text()
@@ -1929,23 +2758,20 @@ class _MayaSmokeSession:
                 raise AssertionError(
                     f"表示状態Pasteメニューが不正です: {actual_labels}"
                 )
-            target_row.paste_copied_values_menu.popup(
+            target_row.paste_menu.popup(
                 target_row.name_label.mapToGlobal(
                     qt.QPoint(target_row.name_label.width(), 0)
                 )
             )
             self._flush_gui()
             filter_menu_path = self.output / "33-clipboard-filter-menu.png"
-            if not target_row.paste_copied_values_menu.grab().save(
-                str(filter_menu_path)
-            ):
+            if not target_row.paste_menu.grab().save(str(filter_menu_path)):
                 raise RuntimeError(
                     "表示状態でPaste対象を選ぶメニュー画像を保存できません"
                 )
             self.screenshots.append(str(filter_menu_path))
             cmds.flushUndo()
             target_row.paste_copied_values_actions["channel_box"].trigger()
-            target_row.paste_copied_values_menu.close()
             target_row.paste_menu.close()
             target_row.context_menu.close()
             self._flush_gui()
@@ -2320,9 +3146,13 @@ class _MayaSmokeSession:
                 cmds.select(targets, replace=True)
                 self._flush_gui()
                 elapsed = (time.perf_counter() - started) * 1000
-                if len(widget.controller.node_names) != count or (
-                    widget.controller.node_names[0].rsplit("|", 1)[-1]
-                    != targets[0]
+                names = widget.controller.node_names
+                representative = widget.controller.representative_node_name
+                if (
+                    len(names) != count
+                    or names[0].rsplit("|", 1)[-1] != targets[0]
+                    or representative is None
+                    or representative.rsplit("|", 1)[-1] != targets[-1]
                 ):
                     raise AssertionError("計測中に選択追従が完了していません")
                 if index >= 2:
@@ -2334,13 +3164,635 @@ class _MayaSmokeSession:
             self.measurements[f"{key}_rows"] = len(widget.row_widgets)
         self._assert_values("field00", (11.0,) * len(self.nodes))
 
+    def _inspect_input_colors(self) -> None:
+        """Maya本体で接続種類・ロック色と上下の隙間を確認して撮影する。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+
+        widget = self._require_window().widget
+        widget.controller.set_mode("values")
+        widget.controller.set_attribute_filter("visible")
+        cmds.file(new=True, force=True)
+        target = cmds.createNode("transform", name="bdChannelBoxInputColors")
+        driver = cmds.createNode("transform", name="bdChannelBoxInputDriver")
+        cmds.currentTime(5)
+        cmds.setKeyframe(target + ".translateX", time=5, value=5)
+        cmds.setKeyframe(target + ".translateY", time=1, value=1)
+        cmds.connectAttr(driver + ".translateZ", target + ".translateZ")
+        blend = cmds.createNode("pairBlend")
+        constraint = cmds.createNode("scaleConstraint")
+        cmds.connectAttr(blend + ".outRotate", target + ".rotate")
+        cmds.connectAttr(constraint + ".constraintScale", target + ".scale")
+        cmds.setAttr(target + ".visibility", lock=True)
+        cmds.select(target, replace=True)
+        self._flush_gui()
+        expected = (
+            ("translate.translateX", "#CD2729"),
+            ("translate.translateY", "#DD727A"),
+            ("translate.translateZ", "#F1F1A5"),
+            ("rotate.rotateX", "#ACF1AC"),
+            ("rotate.rotateY", "#ACF1AC"),
+            ("rotate.rotateZ", "#ACF1AC"),
+            ("scale.scaleX", "#A3CBF0"),
+            ("scale.scaleY", "#A3CBF0"),
+            ("scale.scaleZ", "#A3CBF0"),
+            ("visibility", "#5C6874"),
+        )
+        for path, color in expected:
+            indicator = self._row(path).input_indicator
+            image = indicator.grab().toImage()
+            background = (
+                indicator.palette()
+                .color(qt.QPalette.ColorRole.Window)
+                .name()
+                .upper()
+            )
+            actual = (
+                image.pixelColor(image.width() // 2, image.height() // 2)
+                .name()
+                .upper()
+            )
+            if actual != (background if color is None else color):
+                raise AssertionError(
+                    f"入力接続の帯色が不正です: {path}: {actual} != {color}"
+                )
+            for y in (0, image.height() - 1):
+                edge = image.pixelColor(image.width() // 2, y).name().upper()
+                if edge != background:
+                    raise AssertionError(
+                        f"入力接続の上下余白が不正です: {path}: {edge}"
+                    )
+        self._capture("39-input-connection-colors.png")
+        self.steps.append("input_connection_and_lock_colors")
+
+        # 特殊な駆動元を一つのtransformへ置いて、新しい色を実画面で照合する
+        target = cmds.createNode("transform", name="bdChannelBoxSpecialColors")
+        cmds.select(target, replace=True)
+        cmds.currentTime(1)
+        cmds.setKeyframe(target + ".scaleX", time=1, value=1)
+        cmds.setKeyframe(target + ".scaleX", time=10, value=2)
+        cmds.timeEditorComposition("ProbeComposition", createTrack=True)
+        cmds.timeEditorClip(
+            "ProbeClip",
+            addSelectedObjects=True,
+            type=["animCurveTU"],
+            track="ProbeComposition:0",
+        )
+        driver = cmds.createNode("transform", name="bdChannelBoxSpecialDriver")
+        cmds.addAttr(
+            driver, longName="control", attributeType="double", keyable=True
+        )
+        cmds.setDrivenKeyframe(
+            target + ".translateX",
+            currentDriver=driver + ".control",
+            value=5,
+        )
+        cmds.expression(
+            string=f"{target}.translateY = {driver}.translateY * 2;"
+        )
+        cmds.setKeyframe(target + ".translateZ", time=1, value=1)
+        cmds.mute(target + ".translateZ")
+        layer = cmds.animLayer("ProbeLayer", attribute=[target + ".rotateZ"])
+        cmds.setKeyframe(target + ".rotateZ", time=1, value=5, animLayer=layer)
+        cmds.setAttr(target + ".rotateY", keyable=False, channelBox=True)
+        cmds.setKeyframe(target + ".scaleY", time=1, value=2)
+        cmds.setAttr(target + ".scaleY", 5)
+        cmds.select(target, replace=True)
+        self._flush_gui()
+        for path, color in (
+            ("translate.translateX", "#5099DA"),
+            ("translate.translateY", "#CBA5F1"),
+            ("translate.translateZ", "#BFA182"),
+            ("rotate.rotateZ", "#4DB6AC"),
+            ("rotate.rotateY", "#949494"),
+            ("scale.scaleX", "#FFCC80"),
+            ("scale.scaleY", "#FDCBC4"),
+        ):
+            indicator = self._row(path).input_indicator
+            image = indicator.grab().toImage()
+            actual = (
+                image.pixelColor(image.width() // 2, image.height() // 2)
+                .name()
+                .upper()
+            )
+            if actual != color:
+                raise AssertionError(
+                    f"特殊入力の帯色が不正です: {path}: {actual} != {color}"
+                )
+        self._capture("40-special-input-colors.png")
+        self.steps.append("special_input_colors")
+
+    def _inspect_connected_values(self) -> None:
+        """実画面の値欄で時間キー・SDK・LayerとAuto Key・Undoを照合する。"""
+        from maya import cmds
+
+        from bd_util.ui import FloatSliderSpinBox, FloatValueStepSpinBox
+
+        widget = self._require_window().widget
+        widget.controller.set_mode("values")
+        widget.controller.set_attribute_filter("visible")
+        cmds.autoKeyframe(state=False)
+        cmds.file(new=True, force=True)
+        for auto_key in (False, True):
+            target = cmds.createNode(
+                "transform", name=f"bdChannelBoxConnected{int(auto_key)}"
+            )
+            driver = cmds.createNode("transform", name=target + "Driver")
+            for attribute in ("timeValue", "sdkValue", "layerValue"):
+                cmds.addAttr(
+                    target,
+                    longName=attribute,
+                    attributeType="double",
+                    minValue=0,
+                    maxValue=10,
+                    keyable=True,
+                )
+            cmds.setKeyframe(target + ".timeValue", time=1, value=1)
+            cmds.setKeyframe(target + ".timeValue", time=10, value=10)
+            cmds.setDrivenKeyframe(
+                target + ".sdkValue",
+                currentDriver=driver + ".translateX",
+                driverValue=0,
+                value=1,
+            )
+            cmds.setDrivenKeyframe(
+                target + ".sdkValue",
+                currentDriver=driver + ".translateX",
+                driverValue=10,
+                value=5,
+            )
+            cmds.setKeyframe(target + ".layerValue", time=1, value=1)
+            layer = cast(
+                str,
+                cmds.animLayer(
+                    target + "Layer", attribute=target + ".layerValue"
+                ),
+            )
+            cmds.setKeyframe(
+                target + ".layerValue", time=1, value=2, animLayer=layer
+            )
+            root = cast(str, cmds.animLayer(query=True, root=True))
+            cmds.animLayer(root, edit=True, selected=False)
+            cmds.animLayer(layer, edit=True, selected=True, preferred=True)
+            cmds.pointConstraint(driver, target)
+            cmds.currentTime(5)
+            cmds.select(target, replace=True)
+            cmds.autoKeyframe(state=auto_key)
+            self._flush_gui()
+
+            # 禁止したconstraintは値欄を無効化し、理由をtooltipへ表示する
+            constrained = self._row("translate.translateX")
+            assert isinstance(constrained.editor, FloatValueStepSpinBox)
+            assert not constrained.editor.spin_box.isEnabled()
+            assert constrained.row.binding.target_states[0].reason
+            for attribute in ("timeValue", "sdkValue", "layerValue"):
+                row = self._row(attribute)
+                assert isinstance(row.editor, FloatSliderSpinBox)
+                assert row.editor.spin_box.isEnabled()
+                tooltip = row.name_label.toolTip()
+                assert (
+                    "SDK" in tooltip
+                    if attribute == "sdkValue"
+                    else "Auto Key" in tooltip
+                )
+                if attribute == "layerValue":
+                    assert layer in tooltip
+                    curves = cast(
+                        list[str],
+                        cmds.animLayer(layer, query=True, animCurves=True),
+                    )
+                else:
+                    curves = cmds.keyframe(
+                        target + "." + attribute, query=True, name=True
+                    )
+                assert curves
+                before = cmds.getAttr(target + "." + attribute)
+                original = cmds.keyframe(
+                    curves[0], query=True, valueChange=True
+                )
+                cmds.flushUndo()
+
+                # 実際の数値Viewへ入力し、保存方式と一回Undoを確認する
+                row.editor.spin_box.setValue(7)
+                self._flush_gui()
+                assert cmds.getAttr(target + "." + attribute) == 7
+                if attribute == "sdkValue" or not auto_key:
+                    assert (
+                        cmds.keyframe(curves[0], query=True, valueChange=True)
+                        == original
+                    )
+                else:
+                    assert (
+                        cmds.keyframe(
+                            curves[0],
+                            query=True,
+                            time=(5, 5),
+                            keyframeCount=True,
+                        )
+                        == 1
+                    )
+                cmds.undo()
+                self._flush_gui()
+                assert cmds.getAttr(target + "." + attribute) == before
+                assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+                cmds.redo()
+                self._flush_gui()
+                assert cmds.getAttr(target + "." + attribute) == 7
+
+            self._capture(f"41-connected-values-auto-key-{int(auto_key)}.png")
+            cmds.setAttr(driver + ".translateX", 10)
+            assert cmds.getAttr(target + ".sdkValue") == 5
+            self.steps.append(f"connected_values_auto_key_{int(auto_key)}")
+            cmds.autoKeyframe(state=False)
+
+    def _inspect_connected_drag(self) -> None:
+        """時刻変更で接続属性のSlider操作を終了し、次の時刻への入力を防ぐ。"""
+        from maya import cmds
+
+        from bd_util.ui import FloatSliderSpinBox
+
+        widget = self._require_window().widget
+        cmds.select("bdChannelBoxConnected1", replace=True)
+        cmds.currentTime(5)
+        cmds.autoKeyframe(state=True)
+        self._flush_gui()
+        row = self._row("timeValue")
+        assert isinstance(row.editor, FloatSliderSpinBox)
+        slider = row.editor.slider
+        slider.setSliderDown(True)
+        slider.setValue(slider.maximum() * 4 // 10)
+        assert widget.controller.value_edit_session.is_editing
+        cmds.currentTime(6)
+        self._flush_gui()
+        assert not widget.controller.value_edit_session.is_editing
+        assert not slider.isSliderDown()
+        assert (
+            cmds.keyframe(
+                "bdChannelBoxConnected1.timeValue",
+                query=True,
+                time=(6, 6),
+                keyframeCount=True,
+            )
+            == 0
+        )
+        cmds.autoKeyframe(state=False)
+        self.steps.append("connected_drag_finishes_at_time_change")
+
+    def _inspect_pose_set_docking(self) -> None:
+        """姿勢維持Windowの浮動表示、ドッキング、再利用をMaya本体で調べる。"""
+        from maya import cmds
+
+        from bd_tools import bd_rotation_preserving_pose as rotation_set_ui
+
+        node = cmds.createNode("joint", name="poseSetDockTarget")
+        cmds.select(node, replace=True)
+        window = rotation_set_ui.show("jointOrient")
+        self._flush_gui()
+        name = rotation_set_ui.WORKSPACE_CONTROL_NAME
+        if not cmds.workspaceControl(name, query=True, exists=True):
+            raise AssertionError("姿勢維持workspaceControlがありません")
+        if not cmds.workspaceControl(name, query=True, floating=True):
+            raise AssertionError(
+                "姿勢維持Windowの初回表示が浮動状態ではありません"
+            )
+        if window.rotation_page.target() != "jointOrient":
+            raise AssertionError("メニュー指定の回転属性が反映されません")
+        self.steps.append("pose_set_floating_and_target")
+
+        cmds.workspaceControl(
+            name, edit=True, dockToMainWindow=("right", True)
+        )
+        self._flush_gui()
+        if cmds.workspaceControl(name, query=True, floating=True):
+            raise AssertionError("姿勢維持WindowをMayaへドッキングできません")
+        if rotation_set_ui.show("rotate") is not window:
+            raise AssertionError("再表示で姿勢維持Windowが重複しました")
+        self._flush_gui()
+        if window.rotation_page.target() != "rotate":
+            raise AssertionError("再表示時の回転属性が反映されません")
+        cmds.workspaceControl(name, edit=True, floating=True)
+        self._flush_gui()
+        if not cmds.workspaceControl(name, query=True, floating=True):
+            raise AssertionError("姿勢維持Windowを浮動状態へ戻せません")
+        self.steps.append("pose_set_docks_and_reuses_window")
+
+    def _prepare_pose_set_restart(self) -> None:
+        """姿勢維持dockの浮動配置を保存し、再起動検証へ渡す。"""
+        from maya import cmds
+
+        from bd_tools import bd_rotation_preserving_pose as rotation_set_ui
+
+        name = rotation_set_ui.WORKSPACE_CONTROL_NAME
+        cmds.workspaceControl(
+            name, edit=True, floating=True, resizeWidth=360, resizeHeight=250
+        )
+        self._flush_gui()
+        geometry = rotation_set_ui.show().window().geometry().getRect()
+        cmds.workspaceLayoutManager(save=True)
+        cmds.savePrefs(general=True, uiLayout=True)
+        _write_json(
+            self.output / "prepared-restart.json",
+            {
+                "maya_version": str(cmds.about(version=True)),
+                "control_name": name,
+                "geometry": geometry,
+            },
+        )
+        self.steps.append("save_pose_set_dock_for_restart")
+
+    def _inspect_pose_set_restart(self) -> None:
+        """MayaのuiScriptによる姿勢維持dockの復元と再利用を確かめる。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+        from bd_tools import bd_rotation_preserving_pose as rotation_set_ui
+        from bd_tools.bd_rotation_preserving_pose.dock_window import (
+            RotationSetDockWindow,
+        )
+
+        self._flush_gui()
+        name = rotation_set_ui.WORKSPACE_CONTROL_NAME
+        if not cmds.workspaceControl(name, query=True, exists=True):
+            raise AssertionError("Maya再起動で姿勢維持dockが復元されません")
+        windows = [
+            widget
+            for widget in qt.QApplication.allWidgets()
+            if isinstance(widget, RotationSetDockWindow)
+        ]
+        if len(windows) != 1:
+            raise AssertionError(
+                f"姿勢維持Windowの復元数が不正です: {len(windows)}"
+            )
+        window = windows[0]
+        if not cmds.workspaceControl(name, query=True, floating=True):
+            raise AssertionError("姿勢維持Windowの浮動配置が復元されません")
+        saved = json.loads(
+            (self.output / "prepared-restart.json").read_text(encoding="utf-8")
+        )
+        geometry = window.window().geometry().getRect()
+        if any(
+            abs(left - right) > 40
+            for left, right in zip(geometry, saved["geometry"])
+        ):
+            raise AssertionError(
+                "姿勢維持Windowの保存配置と復元結果が異なります: "
+                f"{saved['geometry']} -> {geometry}"
+            )
+        if rotation_set_ui.show() is not window:
+            raise AssertionError("復元後の再表示でWindowが重複しました")
+        self.steps.append("maya_restart_restores_pose_set_dock")
+
+    def _inspect_child_set_tabs(self) -> None:
+        """回転からの初回起動と共通dockのタブ別浮動サイズを調べる。"""
+        from maya import cmds
+
+        from bd_tools import bd_child_compensated_set as child_set_ui
+        from bd_tools.bd_child_compensated_set.dock_window import (
+            ROTATION_INITIAL_HEIGHT,
+            ROTATION_INITIAL_WIDTH,
+            TRANSLATE_INITIAL_HEIGHT,
+            TRANSLATE_INITIAL_WIDTH,
+        )
+
+        name = child_set_ui.WORKSPACE_CONTROL_NAME
+        window = child_set_ui.show("rotation", "rotateAxis")
+        self._flush_gui()
+        if not cmds.workspaceControl(name, query=True, exists=True):
+            raise AssertionError("子維持の共通workspaceControlがありません")
+        if not cmds.workspaceControl(name, query=True, floating=True):
+            raise AssertionError("子維持の初回表示が浮動状態ではありません")
+        if window.tabs.currentIndex() != 1:
+            raise AssertionError("回転メニューで回転タブが選ばれません")
+        if window.rotation_page.target() != "rotateAxis":
+            raise AssertionError("右クリックした回転属性が反映されません")
+        self._capture_child_set_window("child-set-rotation.png", window)
+        width, height = self._child_set_floating_size(name, window)
+        if (
+            abs(width - ROTATION_INITIAL_WIDTH) > 1
+            or abs(height - ROTATION_INITIAL_HEIGHT) > 1
+        ):
+            raise AssertionError(
+                f"回転タブの初回サイズが不正です: {width}x{height}"
+            )
+
+        if child_set_ui.show("translate", "translate") is not window:
+            raise AssertionError("移動メニューが別Windowを作成しました")
+        self._flush_gui()
+        if window.tabs.currentIndex() != 0:
+            raise AssertionError("移動メニューで移動タブが選ばれません")
+        width, height = self._child_set_floating_size(name, window)
+        if (
+            abs(width - TRANSLATE_INITIAL_WIDTH) > 1
+            or abs(height - TRANSLATE_INITIAL_HEIGHT) > 1
+        ):
+            raise AssertionError(
+                f"回転メニュー初回起動後の移動サイズが不正です: {width}x{height}"
+            )
+        self.steps.append("child_set_rotation_first_keeps_translate_default")
+        self._capture_child_set_window("child-set-translate.png", window)
+
+        cmds.workspaceControl(
+            name, edit=True, resizeWidth=380, resizeHeight=245
+        )
+        self._flush_gui()
+        translate_size = self._child_set_floating_size(name, window)
+        if child_set_ui.show("rotation", "rotateAxis") is not window:
+            raise AssertionError("回転メニューが別Windowを作成しました")
+        self._flush_gui()
+
+        cmds.workspaceControl(
+            name, edit=True, resizeWidth=420, resizeHeight=350
+        )
+        self._flush_gui()
+        rotation_size = self._child_set_floating_size(name, window)
+        child_set_ui.show("translate", "translate")
+        self._flush_gui()
+        width, height = self._child_set_floating_size(name, window)
+        if (width, height) != translate_size:
+            raise AssertionError(
+                "移動タブの保存サイズが不正です: "
+                f"{translate_size} -> {(width, height)}"
+            )
+        for index in range(10):
+            window.tabs.setCurrentIndex(1)
+            self._flush_gui()
+            current_rotation = self._child_set_floating_size(name, window)
+            if current_rotation != rotation_size:
+                raise AssertionError(
+                    "回転タブが繰り返し切替で変化しました: "
+                    f"{rotation_size} -> {current_rotation} ({index + 1}回目)"
+                )
+            window.tabs.setCurrentIndex(0)
+            self._flush_gui()
+            current_translate = self._child_set_floating_size(name, window)
+            if current_translate != translate_size:
+                raise AssertionError(
+                    "移動タブが繰り返し切替で変化しました: "
+                    f"{translate_size} -> {current_translate} ({index + 1}回目)"
+                )
+        self.steps.append("child_set_tabs_restore_floating_sizes")
+        self.steps.append("child_set_tab_sizes_stable_after_ten_round_trips")
+
+    def _inspect_child_set_docking(self) -> None:
+        """ドック中のタブ切替がMayaのパネル寸法を変えないことを調べる。"""
+        from maya import cmds
+
+        from bd_tools import bd_child_compensated_set as child_set_ui
+
+        name = child_set_ui.WORKSPACE_CONTROL_NAME
+        window = child_set_ui.show()
+        cmds.workspaceControl(
+            name, edit=True, dockToMainWindow=("right", True)
+        )
+        self._flush_gui()
+        if cmds.workspaceControl(name, query=True, floating=True):
+            raise AssertionError("Maya右側へドッキングできません")
+        before = (
+            cmds.workspaceControl(name, query=True, width=True),
+            cmds.workspaceControl(name, query=True, height=True),
+        )
+        window.tabs.setCurrentIndex(1)
+        self._flush_gui()
+        after = (
+            cmds.workspaceControl(name, query=True, width=True),
+            cmds.workspaceControl(name, query=True, height=True),
+        )
+        if any(abs(left - right) > 12 for left, right in zip(before, after)):
+            raise AssertionError(
+                "タブ切替でドックサイズが変化しました: "
+                f"{before} -> {after}; "
+                f"floating={cmds.workspaceControl(name, query=True, floating=True)}, "
+                f"window_min={window.minimumSizeHint()}, "
+                f"tabs_min={window.tabs.minimumSizeHint()}, "
+                f"scroll_min={window.rotation_scroll.minimumSizeHint()}, "
+                f"page_min={window.rotation_page.minimumSizeHint()}"
+            )
+        cmds.workspaceControl(name, edit=True, floating=True)
+        self._flush_gui()
+        window.tabs.setCurrentIndex(0)
+        self._flush_gui()
+        self.steps.append("child_set_docked_size_is_stable")
+
+    def _prepare_child_set_restart(self) -> None:
+        """タブ別サイズと選択設定を保存して実Maya再起動へ渡す。"""
+        from maya import cmds
+
+        from bd_tools import bd_child_compensated_set as child_set_ui
+
+        window = child_set_ui.show("rotation", "rotateAxis")
+        name = child_set_ui.WORKSPACE_CONTROL_NAME
+        cmds.workspaceControl(
+            name, edit=True, floating=True, resizeWidth=420, resizeHeight=350
+        )
+        self._flush_gui()
+        if window.tabs.currentIndex() != 1:
+            raise AssertionError("再起動前の回転タブが選ばれていません")
+        translate = window.translate_page
+        rotation = window.rotation_page
+        translate.space_combo.setCurrentIndex(
+            translate.space_combo.findData("world")
+        )
+        rotation.space_combo.setCurrentIndex(
+            rotation.space_combo.findData("world")
+        )
+        if rotation.preservation_combo is None:
+            raise AssertionError("子の維持範囲がありません")
+        rotation.preservation_combo.setCurrentIndex(
+            rotation.preservation_combo.findData("orientation")
+        )
+        if rotation.joint_child_combo is None:
+            raise AssertionError("子Jointの補償属性がありません")
+        rotation.joint_child_combo.setCurrentIndex(
+            rotation.joint_child_combo.findData("jointOrient")
+        )
+        if not window.ui_state.save():
+            raise AssertionError("選択中のタブと設定を保存できません")
+        window._save_sizes()
+        cmds.workspaceLayoutManager(save=True)
+        cmds.savePrefs(general=True, uiLayout=True)
+        _write_json(
+            self.output / "prepared-restart.json",
+            {
+                "maya_version": str(cmds.about(version=True)),
+                "control_name": name,
+            },
+        )
+        self.steps.append("save_child_set_tabs_sizes_and_options_for_restart")
+
+    def _inspect_child_set_restart(self) -> None:
+        """Mayaの自動復元で選択タブ・サイズ・設定を確かめる。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+        from bd_tools import bd_child_compensated_set as child_set_ui
+        from bd_tools.bd_child_compensated_set.dock_window import (
+            ChildSetDockWindow,
+        )
+
+        self._flush_gui()
+        name = child_set_ui.WORKSPACE_CONTROL_NAME
+        if not cmds.workspaceControl(name, query=True, exists=True):
+            raise AssertionError("Maya再起動で子維持dockが復元されません")
+        windows = [
+            widget
+            for widget in qt.QApplication.allWidgets()
+            if isinstance(widget, ChildSetDockWindow)
+        ]
+        if len(windows) != 1:
+            raise AssertionError(
+                f"子維持Windowの復元数が不正です: {len(windows)}"
+            )
+        window = windows[0]
+        if window.tabs.currentIndex() != 1:
+            raise AssertionError("回転タブがMaya再起動後に復元されません")
+        rotation = window.rotation_page
+        if rotation.space() != "world":
+            raise AssertionError("回転の入力空間が復元されません")
+        if rotation.compensate_child_translate():
+            raise AssertionError("子の維持範囲が復元されません")
+        if rotation.joint_child_compensation_attr() != "jointOrient":
+            raise AssertionError("子Jointの補償属性が復元されません")
+        width, height = self._child_set_floating_size(name, window)
+        if abs(width - 420) > 1 or abs(height - 350) > 1:
+            raise AssertionError(
+                f"回転タブの復元サイズが不正です: {width}x{height}"
+            )
+        if child_set_ui.show("translate", "translate") is not window:
+            raise AssertionError("再起動後のメニューでWindowが重複しました")
+        self._flush_gui()
+        if window.translate_page.space() != "world":
+            raise AssertionError("移動の入力空間が復元されません")
+        width, height = self._child_set_floating_size(name, window)
+        if abs(width - 380) > 1 or abs(height - 245) > 1:
+            raise AssertionError(
+                f"移動タブの復元サイズが不正です: {width}x{height}"
+            )
+        self.steps.append("maya_restart_restores_child_set_tabs_sizes_options")
+
     def _finish(self) -> None:
         """すべての操作結果を保存し、検証専用Mayaを終了する。"""
         from bd_tools import bd_channel_box
+        from bd_tools import bd_child_compensated_set as child_set_ui
+        from bd_tools import bd_rotation_preserving_pose as rotation_set_ui
 
         bd_channel_box.dispose()
+        if os.environ.get(_CHILD_SET_ONLY_VARIABLE) == "1":
+            if os.environ.get(_PREPARE_RESTART_VARIABLE) == "1":
+                self._prepare_child_set_restart()
+            else:
+                child_set_ui.dispose()
+        if os.environ.get(_POSE_SET_ONLY_VARIABLE) == "1":
+            if os.environ.get(_PREPARE_RESTART_VARIABLE) == "1":
+                self._prepare_pose_set_restart()
+            else:
+                rotation_set_ui.dispose()
         self.steps.append("dispose")
-        if os.environ.get(_PREPARE_RESTART_VARIABLE) == "1":
+        if (
+            os.environ.get(_PREPARE_RESTART_VARIABLE) == "1"
+            and os.environ.get(_CHILD_SET_ONLY_VARIABLE) != "1"
+            and os.environ.get(_POSE_SET_ONLY_VARIABLE) != "1"
+        ):
             self._prepare_restart()
         self._complete(True)
 
@@ -2537,15 +3989,19 @@ class _MayaSmokeSession:
         )
 
     def _assert_state_layout(self, row: AttributeStateRowWidget) -> None:
-        """Window幅を維持し、200pxの操作欄へ全ボタンが収まることを確認する。"""
+        """Window幅を維持し、操作欄へ全ボタンが隙間なく収まることを確認する。"""
         actual = self._row_layout(row)
         expected = self._value_layout
+        buttons = (*row.display_buttons.values(), row.lock_check_box)
+        required_width = sum(
+            button.sizeHint().width() for button in buttons
+        ) + 6 * (len(buttons) - 1)
         if expected is None or (actual[0], actual[3]) != (
             expected[0],
-            200,
+            required_width,
         ):
             raise AssertionError(
-                f"Window幅または設定モードの200px幅が異なります: "
+                f"Window幅または設定モードの操作幅が異なります: "
                 f"{self._value_layout} -> {actual}"
             )
         if (
@@ -2554,12 +4010,15 @@ class _MayaSmokeSession:
             .maximum()
         ):
             raise AssertionError("状態入力欄がWindow幅に収まりません")
-        for button in (*row.display_buttons.values(), row.lock_check_box):
+        for button in buttons:
             if (
                 button.width() < button.sizeHint().width()
                 or button.x() + button.width() > row.editor.width()
             ):
-                raise AssertionError("状態ボタンが200pxの操作欄に収まりません")
+                raise AssertionError("状態ボタンが操作欄に収まりません")
+        for left, right in zip(buttons, buttons[1:]):
+            if right.x() - left.x() - left.width() != 6:
+                raise AssertionError("状態ボタン間に不要な余白があります")
 
     def _attribute_states(
         self, name: str
@@ -2654,11 +4113,17 @@ class _MayaSmokeSession:
 
     @staticmethod
     def _mouse(
-        widget: qt.QWidget, event_type: qt.QEvent.Type, position: qt.QPoint
+        widget: qt.QWidget,
+        event_type: qt.QEvent.Type,
+        position: qt.QPoint,
+        *,
+        modifiers: qt.Qt.KeyboardModifier | None = None,
     ) -> None:
         """Widget内の位置へマウス操作を送り、連続編集の開始と終了を通す。"""
         from bd_util.ui import qt
 
+        if modifiers is None:
+            modifiers = qt.Qt.KeyboardModifier.NoModifier
         button = qt.Qt.MouseButton.LeftButton
         buttons = qt.Qt.MouseButton.LeftButton
         if event_type == qt.QEvent.Type.MouseMove:
@@ -2671,7 +4136,7 @@ class _MayaSmokeSession:
             qt.QPointF(widget.mapToGlobal(position)),
             button,
             buttons,
-            qt.Qt.KeyboardModifier.NoModifier,
+            modifiers,
         )
         qt.QApplication.sendEvent(widget, event)
 
@@ -2740,6 +4205,38 @@ class _MayaSmokeSession:
             raise RuntimeError(f"Window画像を保存できません: {image_path}")
         self.screenshots.append(str(image_path))
 
+    def _capture_child_set_window(self, filename: str, window: object) -> None:
+        """子維持Windowのタブ内容を配置確認用PNGへ保存する。"""
+        from bd_tools.bd_child_compensated_set.dock_window import (
+            ChildSetDockWindow,
+        )
+
+        if not isinstance(window, ChildSetDockWindow):
+            raise TypeError("子維持Windowを指定してください")
+        image_path = self.output / filename
+        if not window.grab().save(str(image_path)):
+            raise RuntimeError(
+                f"子維持Window画像を保存できません: {image_path}"
+            )
+        self.screenshots.append(str(image_path))
+
+    def _child_set_floating_size(
+        self, name: str, window: object
+    ) -> tuple[int, int]:
+        """子維持workspaceControlの浮動枠寸法を返す。"""
+        from bd_util.maya.ui.dock import workspace_control
+        from bd_tools.bd_child_compensated_set.dock_window import (
+            ChildSetDockWindow,
+        )
+
+        if not isinstance(window, ChildSetDockWindow):
+            raise TypeError("子維持Windowを指定してください")
+        host = workspace_control.find_floating_host(name, window)
+        if host is None:
+            raise AssertionError("子維持workspaceControlの浮動枠がありません")
+        size = host.size()
+        return size.width(), size.height()
+
     def _capture_maya(self, filename: str) -> None:
         """独立したMaya main windowを描画し、ドッキング位置の確認画像を保存する。"""
         from bd_util.maya.ui import get_main_window
@@ -2769,6 +4266,10 @@ class _MayaSmokeSession:
 
         faulthandler.cancel_dump_traceback_later()
         self._trace_file.close()
+        slot_errors = self.output / "python-slot-errors.log"
+        if success and slot_errors.is_file():
+            success = False
+            error = slot_errors.read_text(encoding="utf-8")
         _write_json(
             self.output
             / (
@@ -2833,6 +4334,11 @@ def _launch(
     *,
     prepare_restart: bool = False,
     restart_from: Path | None = None,
+    name_only: bool = False,
+    connections_only: bool = False,
+    custom_filters_only: bool = False,
+    child_set_only: bool = False,
+    pose_set_only: bool = False,
 ) -> int:
     """固有の設定と作業ディレクトリを使う検証Maya processを起動する。"""
     repository = Path(__file__).resolve().parents[1]
@@ -2878,6 +4384,13 @@ def _launch(
     environment[_OUTPUT_VARIABLE] = str(output)
     environment[_PHASE_VARIABLE] = phase
     environment[_PREPARE_RESTART_VARIABLE] = "1" if prepare_restart else "0"
+    environment[_NAME_ONLY_VARIABLE] = "1" if name_only else "0"
+    environment[_CONNECTIONS_ONLY_VARIABLE] = "1" if connections_only else "0"
+    environment[_CUSTOM_FILTERS_ONLY_VARIABLE] = (
+        "1" if custom_filters_only else "0"
+    )
+    environment[_CHILD_SET_ONLY_VARIABLE] = "1" if child_set_only else "0"
+    environment[_POSE_SET_ONLY_VARIABLE] = "1" if pose_set_only else "0"
     environment["BAKEDANUKI_UTIL_ROOT"] = str(util_root)
     environment["PYTHONPATH"] = os.pathsep.join(
         (
@@ -2972,6 +4485,11 @@ def main() -> int:
     restart_group = parser.add_mutually_exclusive_group()
     restart_group.add_argument("--prepare-restart", action="store_true")
     restart_group.add_argument("--restart-from", type=Path)
+    restart_group.add_argument("--name-only", action="store_true")
+    restart_group.add_argument("--connections-only", action="store_true")
+    restart_group.add_argument("--custom-filters-only", action="store_true")
+    parser.add_argument("--child-set-only", action="store_true")
+    parser.add_argument("--pose-set-only", action="store_true")
     arguments = parser.parse_args()
     util_root = arguments.util_root or Path(
         os.environ.get(
@@ -2985,6 +4503,11 @@ def main() -> int:
         arguments.timeout,
         prepare_restart=arguments.prepare_restart,
         restart_from=arguments.restart_from,
+        name_only=arguments.name_only,
+        connections_only=arguments.connections_only,
+        custom_filters_only=arguments.custom_filters_only,
+        child_set_only=arguments.child_set_only,
+        pose_set_only=arguments.pose_set_only,
     )
 
 

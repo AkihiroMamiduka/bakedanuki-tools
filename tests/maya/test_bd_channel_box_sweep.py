@@ -28,7 +28,7 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     cast(Callable[..., str], cmds.file)(new=True, force=True)
     for name in ("sweepA", "sweepB"):
         cmds.createNode("transform", name=name)
-    cmds.select("sweepA", "sweepB", replace=True)
+    cmds.select("sweepB", "sweepA", replace=True)
     widget = ChannelBoxWidget()
     widget.resize(380, 460)
     widget.mode_combo.setCurrentIndex(1)

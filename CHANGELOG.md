@@ -7,6 +7,165 @@
 
 ## [Unreleased]
 
+### Changed
+
+- bdChannelBoxの数値欄を150 pxから156 px、共通入力列を216 pxから222 pxへ広げた。
+  Maya 2027でも20文字程度の数値が入力欄内に収まるようにし、sceneと保存設定は変更しない。
+- bdChannelBoxの3つの値設定メニューから開くWindowを、単独起動できる
+  `bd_tools.bd_child_compensated_set`と`bd_tools.bd_rotation_preserving_pose`へ分離。
+  bdChannelBoxは公開`show()`を呼ぶ入口とし、共通の選択監視・XYZ入力部品は
+  `bd_tools._shared`へ移した。旧`bd_channel_box`配下のWindow moduleとdialogは削除。
+  両WindowのworkspaceControl IDとMayaの復元経路を新package名に変更したため、
+  旧ドック配置は引き継がれない。子維持ツールの設定先も
+  `bd_child_compensated_set/ui.ini`へ変更し、旧`bd_channel_box/ui.ini`のタブ・
+  入力空間・補償設定・浮動サイズは移行しない。sceneの移行は不要。
+- bdChannelBoxの「回転をセット（姿勢を維持）」を独立したdockable Windowへ変更。
+  Mayaへのドッキングと再起動時の配置復元に対応し、初回の浮動表示だけ右クリック位置へ
+  配置する。`rotation_set_ui.show()`の戻り値は入力ページからdockable Windowへ変更し、
+  入力ページは`rotation_page`から参照する。scene・保存設定の移行は不要。
+- bdChannelBoxの「移動・回転をセット（子を維持）」と「回転をセット（姿勢を維持）」
+  では、設定対象が一意な場合は短名を表示し、同名ノードやインスタンスの場合は
+  選択中のフルパスを表示する。操作対象のフルパスやscene・保存設定は変更しない。
+- bdChannelBoxの「回転をセット（子を維持）」で、Jointの設定先候補を
+  `jointOrient`→`rotate`→`rotateAxis`、子Jointの補償先候補を
+  `jointOrient`→`rotate`の順に変更。Transformの設定先候補と補償先の初期値
+  `rotate`は維持する。選択と保存は属性名で扱うため設定の移行は不要。
+- bdChannelBoxの「移動・回転をセット（子を維持）」で、移動・回転それぞれの入力空間、
+  回転の子の維持範囲と子Jointの補償属性を`bd_channel_box/ui.ini`へ保存し、
+  再表示・Maya再起動時に復元する。既存設定はそのまま使え、未保存項目には従来の
+  初期値を適用する。sceneの移行は不要。
+- bdChannelBoxの「移動をセット（子を維持）」と「回転をセット（子を維持）」を
+  1つのdockable Windowの「移動」「回転」タブへ統合。右クリックした属性に対応する
+  タブを開き、浮動時のタブ別サイズと選択タブをMaya再起動後も復元する。
+  タブ別サイズは浮動枠の寸法で保持し、切替を繰り返しても縮まない。
+  回転メニューから初回起動しても、未表示の移動タブの初期サイズを上書きしない。
+  ドック中のサイズはMayaの配置に従い、scene・既存設定の移行は不要。
+- bdChannelBoxの3つの即時設定Windowでは、XYZ値・Step欄のEnter確定を欄内で受理し、
+  Outlinerのノード名編集へ伝播させない。XYZの行間を2論理pxに縮め、縦リサイズ後も維持。
+- bdChannelBoxの子を維持する設定Windowでは、入力空間の候補をWorld→Localの順にし、
+  初期選択はLocalのまま維持。「回転をセット（姿勢を維持）」では属性ラベルと選択欄を
+  横に並べた2行とし、設定対象との間に仕切り線を追加。
+- bdChannelBoxの「移動をセット（子を維持）」「回転をセット（子を維持）」
+  「回転をセット（姿勢を維持）」を、Mayaの選択に追従するモデルレスWindowへ変更。
+  対象は現在選択の末尾にある基準ノード1個とし、選択変更時は未確定の文字入力を破棄して
+  実値を読み直す。XYZのEnter／フォーカス移動による確定、ホイール・上下操作を即時反映し、
+  各軸にbdChannelBox本体と独立したStep欄を設ける。OK／Cancelでの確定は廃止。
+  既存の`bdUtilCommands`を使用し、scene・保存設定の移行は不要。
+- bdChannelBoxの「回転をセット（姿勢を維持）」は画面上部の基準ノード1個だけを
+  対象にする。複数選択中のほかのノードへは適用しない。既存のscene・保存設定の
+  移行は不要。
+- bdChannelBoxの回転属性行では、姿勢維持の回転設定と回転集約を丸め項目より上へ移動。
+  回転設定Windowはクリック位置を中心に画面内へ配置し、設定先と補償先を縦2行に並べる。
+  XYZ欄は初回マウスフォーカス時に全選択する。scene・保存設定の移行は不要。
+
+### Added
+
+- bdChannelBoxの移動・回転属性行へ「移動をセット（子を維持）」と
+  「回転をセット（子を維持）」を追加。基準ノードのXYZをlocal属性値またはworldの
+  位置・最終姿勢で入力し、直接の子を補償する。ダイアログ内の空間切替では編集中の
+  目標値を換算し、sceneは変更しない。回転では子の座標も維持するかと子Jointの
+  姿勢補償先を選べる。ダイアログの初期サイズは移動・回転で個別に調整でき、
+  回転側の選択欄はラベル幅を揃えて縦に配置する。
+  `bdUtilCommands`で1回のUndoに対応する。scene・保存設定の
+  移行は不要。
+- bdChannelBoxの回転属性行へ「回転をセット（姿勢を維持）」を追加。ダイアログで
+  設定先・補償先・XYZ目標値を指定し、`bdUtilCommands`で基準ノードの
+  現在姿勢を保ったまま変更する。Jointでは各設定先に二つの補償先を用意する。
+  1回Undoに対応。scene・保存設定の移行は不要。
+- bdChannelBoxの値編集行へ、`translate`、`rotate`、`rotateAxis`、`jointOrient`の
+  XYZを子のworld座標・姿勢を保持して丸めるメニューを追加。表示単位で丸め、
+  桁数候補は右クリックした行の表示桁数までとする。`bdUtilCommands`で
+  選択ノードを一度のUndoにまとめ、`jointOrient`はJointだけを対象にする。
+  scene・保存設定の移行は不要。
+- bdChannelBoxの回転属性行へ「回転を集約」を追加。選択したTransform／Jointの現在回転を
+  `rotate`、`rotateAxis`、Jointでは`jointOrient`へ集約し、local matrixを維持する。
+  lock・入力接続の対象外処理、1回Undo、同値時の無Undoに対応する。scene・設定の移行は不要。
+- bdChannelBoxの値編集行へfloat系属性用「小数点の四捨五入」を追加。
+  選択属性または表示状態別の全属性について、各選択ノードの実値を表示単位で個別に丸める。
+  桁数候補の上限はその行の現在の表示桁数とし、Maya設定の変更は表示更新後に反映する。
+  1回Undo、同値時の無Undoに対応。scene・保存設定の移行は不要。
+- bdChannelBoxのカスタムフィルター設定モードの表示順一覧でCtrl／Shift複数選択に対応。
+  選択属性を相対順と間隔を保って一段ずつ上下に移動し、「除外」も選択全件へ適用する。
+  JSON形式と保存設定の移行は不要。保存前の操作はsceneとUndo履歴を変更しない。
+- bdChannelBoxのカスタムフィルター設定モードで、属性名のCtrl／Shiftクリックと
+  ドラッグによる複数選択に対応。選択中の行のラジオは選択属性すべてに、選択外の行は
+  その1行だけに適用する。検索・標準フィルターで隠れた選択は外し、候補一覧の余白で
+  選択を解除できる。JSON形式と保存設定の移行は不要。
+- bdChannelBoxのカスタムフィルター設定モードで、表示順一覧と属性候補の境界をドラッグして
+  表示範囲を調整できる。標準Attribute Filterと検索に一致する候補を、スクロール外も含め
+  一括で含める／含めないに変更できる。編集は保存までJSONの作業中データに留まり、
+  sceneとUndo履歴を変更しない。JSON形式と保存設定の移行は不要。
+- bdChannelBoxの管理画面から共有カスタムフィルターJSONを新規作成して自動登録できる。
+  新しい「カスタムフィルター設定」モードで、基準ノード型の属性所属とJSON内の表示順を
+  編集・保存できる。保存前の変更確認と共有ファイルの外部変更検出に対応する。
+  `node_types`が空のJSONも有効になり、既存定義の移行は不要。設定モードはsceneと
+  Undo履歴を変更しない。既存JSONの形式と登録設定はそのまま利用できる。
+
+### Changed
+
+- bdChannelBoxは対象objectが50ノード以上の選択で、全モードのノード固有の表示・編集を
+  休止し、理由と49ノード以下への減らし方を画面に表示する。component・plugは数えず、
+  DAG instanceの重複は同一nodeとして扱う。49ノード以下へ戻すと自動再開する。
+  Mayaの選択・scene・Undoと保存設定の移行は不要。対応するutilと同時更新し、
+  `bd_tools.reload_package(reload_util=True)`で反映する。
+- bdChannelBoxの通常時間キーへの値入力をMayaのAuto Keyへ連動させ、SDKとAnimation Layerの
+  値入力を許可。Auto Key OFFでは一時値だけを変更し、ONではMayaのレイヤ選択に従って
+  既存アニメーションへキーを設定する。SDKはAuto Keyによらず一時値の変更のみ。
+  数値、上下、Slider、bool、enum、整列、各Paste経路へ同じ方針を適用する。
+  constraintはLayerなどの上流にある場合も除外し、一般のpairBlend、Mute、Clip、
+  unitConversion、expression等は入力不可を維持する。tooltipに入力方針とレイヤ設定先を表示。
+  以前の「常に現在キーを更新」に相当する操作にはMayaのAuto KeyをONにする。
+  scene・保存設定の変換は不要。対応するutilと同時更新し、
+  `bd_tools.reload_package(reload_util=True)`で反映する。
+- bdChannelBoxの基準ノード名欄を、閲覧中は周囲の背景になじむ枠なし表示に変更。
+  編集可能なフォーカス中と外部改名との競合中は従来の入力外観を使用する。
+  読み取り専用時も文字の選択・コピーは可能。scene・保存設定の移行は不要。
+  `bd_tools.reload_package()`で反映できる。
+- bdChannelBoxの基準ノード名欄の右に、複数選択時だけ「2 ノード」などの件数を表示する。
+  件数は属性編集の対象となるノード数で、名前欄は従来どおり末尾の基準ノードだけを改名する。
+  scene・保存設定の移行は不要。`bd_tools.reload_package()`で反映できる。
+- bdChannelBoxの上部に、選択末尾の基準ノードだけを改名する名前欄を追加。
+  同名衝突はMayaの確定名を表示し、Undo／Redo・外部改名・編集不可状態にも追従する。
+  選択切替では旧ノードの未確定入力を破棄し、名前欄のEnterをOutlinerへ伝播させない。
+  選択中の名前表示Widgetは`header_label`から`node_name_edit`へ移るため、
+  Widgetを直接参照するコードは移行する。scene・保存設定の移行は不要。
+  `bd_tools.reload_package()`で反映できる。
+- bdChannelBoxの基準ノードを、対象objectを抽出した現在の選択リストの先頭から末尾へ変更。
+  ノード名・属性行・表示値・編集可否・接続色、値を揃える操作、値のコピー元、
+  表示条件付きペーストとフリーズメニューの判定を同じ末尾ノードへ統一する。
+  component・plugの除外と同一nodeの重複除去、Mayaの選択履歴設定は従来どおり。
+  選択リスト自体の順序を維持し、複数ノードのアニメーションカーブは元の選択順で対応させる。
+  `ChannelBoxController.representative_node_name`で基準名（未選択時は`None`）を取得できる。
+  行の`target_names`は基準優先の順となるため、選択順が必要な利用側はcontrollerの
+  `node_names`を使用する。
+  Maya本体で配置リセット後に再生成されたメニュー区切りを取得し直し、
+  フリーズメニューの準備時に削除済みQActionを参照する問題も修正。
+  旧仕様で先頭に選んでいた基準ノードは最後に選択する。scene・保存設定の移行は不要で、
+  `bd_tools.reload_package()`で反映できる。
+- bdChannelBoxの値編集行メニューで「この値に揃える」を
+  「表示ノードの値に揃える > 選択属性／全て／Keyable + ChannelBox／Keyable／
+  ChannelBox／Hide」へ変更し、アニメーションレイヤ操作と値のコピー・ペーストの間へ移動。
+  広い対象範囲は表示ノードの属性状態で決め、検索・表示フィルター・行選択に依存しない。
+  属性ごとの未丸め値と従来の編集可否・Undoを維持し、OSクリップボードには触れない。
+  sceneの値は変更され得るが、保存設定の移行は不要。
+- bdChannelBoxの値編集行と画面余白の右クリックメニューから「表示を更新」を削除。
+  通常の値変更は引き続き自動同期し、属性構成の手動再読込が必要な場合はノードを
+  一度選択解除して選び直す。内部の`refresh()`は維持するが、行Widgetの`refresh_requested`と
+  両メニューの`refresh_action`は廃止。scene・保存設定の移行は不要。
+- bdChannelBoxの「表示・ロック」モードでは行の右クリックメニューを廃止し、
+  右クリックによる属性選択も行わない。表示・ロックは行内のボタン、
+  アニメーションレイヤ操作は値編集モードの行メニューで行う。
+  状態行Widgetのメニュー関連属性はなくなるが、scene・保存設定の移行は不要。
+- bdChannelBoxのカーブ貼り付け項目を「選択属性」「コピー元と同じ属性」の順に変更。
+  属性値の「ペースト」は行メニューと「編集」メニューの両方で2階層へ浅くし、
+  「選択属性」の後に「コピー元と同じ属性：全て／Keyable + ChannelBox／Keyable／
+  ChannelBox／Hide」を並べる。貼り付け動作と保存設定に変更はなく、移行は不要。
+- bdChannelBoxのアニメーションカーブ貼り付けで、属性の型とenum定義の一致制限を撤廃。
+  double・角度・距離・bool・enum間でも、キー設定可能な同名属性または選択属性へ貼り付ける。
+  ツール独自の値変換・丸めは加えず、Mayaの`pasteKey`の評価に任せる。
+  異種型の同名属性を持つ複数ノードも個別に対象判定する。sceneのカーブは変更され得るが、
+  保存設定の移行は不要。`bd_tools.reload_package()`で反映できる。
+
 ### Added
 
 - `bakedanuki`メニューの起動時表示設定に対応。OFFの次回起動では`bd_tools`の自動登録を
@@ -20,6 +179,71 @@
   開発reloadでは登録済み項目を新しいcallbackで戻す。
   共有メニュー基盤を備えた`bakedanuki-util`との同時更新が必要。
   scene・保存設定の移行は不要。
+- bdChannelBoxのAttribute Filterに、ノード型別の正式属性pathを定義したJSONファイルを
+  任意数登録できるカスタムフィルターを追加。登録順の並べ替え、ON/OFF、削除、再読込に対応し、
+  有効なファイルを標準5項目の末尾へ表示する。登録パス・順序・ON/OFFはユーザー設定へ保存し、
+  JSON本体とsceneには書き込まない。属性はJSONの記載順で表示状態に依存せず選び、
+  ノード型は完全一致で照合する。未定義ノード型ではKeyable + ChannelBoxへ切り替える。
+  既存のフィルター選択と設定はそのまま利用でき、移行操作は不要。
+  `bd_tools.reload_package()`で反映できる。
+- bdChannelBoxの属性行メニューで、アニメーションカーブ操作の直後に
+  「アニメーションレイヤ：追加／除去 > 選択属性／全 Keyable」を追加。
+  アニメーションレイヤエディタで選択中の実レイヤすべてを対象にし、値編集・状態編集の
+  両モードで利用できる。除去するとそのレイヤ上のキーも失われるが、1回のUndoで戻せる。
+  sceneのレイヤ所属とキーに影響するが設定移行は不要。`bd_tools.reload_package()`で反映できる。
+- bdChannelBoxの値編集行メニューに「フリーズ > 移動／回転／スケール／全て」を追加。
+  基準ノードがtransform系の場合だけ表示し、選択中のtransform系ノードへ
+  Maya標準の`makeIdentity -apply true`を適用する。jointの移動は対象外。
+  形状・子階層とsceneの値に影響するが保存設定の移行は不要。
+  `bd_tools.reload_package()`で反映できる。
+- bdChannelBoxの値編集行メニューに「アニメーションカーブ：カット >
+  選択属性／全アニメーション属性」を追加。全時間の曲線をMaya標準のキー用clipboardと
+  画面内の貼り付け情報へコピーしてから削除する。型の異なる同名属性も対象にし、
+  共有曲線は除外する。sceneの曲線と値に影響するが保存設定の移行は不要。
+  `bd_tools.reload_package()`で反映できる。
+- bdChannelBoxの値編集行メニューに「アニメーションカーブ：削除 >
+  選択属性／全アニメーション属性」を追加。選択属性は同名の全選択ノードと明示した
+  Hide属性、全属性側は各ノードのKeyable／ChannelBox表示属性を対象にする。
+  Maya標準の`cutKey -clear`で全時間のキーを削除し、キー用clipboardは保持する。
+  出力先を共有する曲線は除外し、一操作を1回のUndoで戻せる。sceneの曲線と値に
+  影響するが保存設定の移行は不要。`bd_tools.reload_package()`で反映できる。
+- bdChannelBoxの値編集行メニューへ「アニメーションカーブ：コピー／ペースト」を追加。
+  選択属性または各選択ノードのKeyable／ChannelBox表示属性の全時間のキーをコピーし、
+  コピー元と同じ正式pathまたは選択属性へ現在時刻から貼り付ける。複数カーブは
+  別名属性へ順序だけで割り当てず、複数ノードのコピーは選択順で一対一に対応させる。
+  Mayaのキー用clipboardを更新するが、属性値用のOS clipboardは変更しない。
+  貼り付けは1回のUndoで戻せる。sceneのキーとカーブに影響し、保存設定の移行は不要。
+  `bd_tools.reload_package()`で反映できる。
+- bdChannelBoxの値編集行メニューへ「ミュート」「ミュート解除」を追加し、
+  それぞれ「選択属性」「全アニメーション属性」から操作できるようにする。
+  全属性側は選択ノードのKeyable／ChannelBox表示属性を画面の検索・フィルターと独立して扱い、
+  選択属性側はHide属性も明示的に対象にできる。未接続・変更不可の属性は静かに除外する。
+  解除時に`force`を使わずミュート状態のキーを保持し、一操作を1回のUndoへまとめる。
+  sceneにはMayaのmuteノードが作成され得る。保存設定の移行は不要で、
+  `bd_tools.reload_package()`で反映できる。
+- bdChannelBoxの値編集行メニューに「キーフレーム／ブレイクダウンフレーム >
+  選択属性／全 Keyable」を追加。現在時刻の既存キーも選んだ種別へ切り替える。
+  全Keyableは選択ノード自身のKeyable属性、選択属性は選択行と各ノードの対応属性を現在時刻に
+  キー設定する。キーを打てない属性は静かに除外し、通常接続にpairBlendを暗黙に挿入しない。
+  状態編集モードには表示しない。scene・保存設定の移行は不要。
+  toolsのみの変更で、`bd_tools.reload_package()`で反映できる。
+- bdChannelBoxの接続色へDriven Key、Expression、Animation Layer、
+  Animation Clip（Time Editor）、Muted、Key Altered、Nonkeyableを追加。
+  直結元の実接続、muteの有効状態、現在値とカーブ評価値、keyableフラグで判定する。
+  ロック色を優先し、実接続はtooltipへ残す。scene・保存設定の移行は不要。
+  `MayaPlugInputState`の網羅的な分岐には新状態を追加し、対応する
+  `bakedanuki-util`へ更新してください。
+- bdChannelBoxの接続色へpairBlendの淡い緑、constraintの淡い青を追加。
+  属性自身かcompound親へ直結するノード型で判定し、属性名には依存しない。
+  自身または親がロックされた場合は青みのある灰色を優先し、元の接続状態は
+  tooltipへ残す。scene・保存設定の移行は不要。新しい`bakedanuki-util`が必要。
+- bdChannelBoxの値編集行へ、入力接続を示す6pxの色帯を追加。現在キーは赤、
+  時間カーブ上で現在キーがない場合は淡い赤、その他の入力接続は淡い黄、
+  未接続はMayaの通常背景色とする。色帯の上下に各1pxの余白を設ける。
+  基準ノードの状態を描画し、複数ノードの混在はtooltipへ表示する。
+  時刻・キー・接続の変更とUndo／Redoに追従し、値入力可否とは独立する。
+  scene・保存設定の移行は不要。対応する`bakedanuki-util`が必要。
+
 - 開いているbdChannelBoxを`bd_tools.reload_package()`の後に自動再表示する。
   `reload_util=True`にも対応し、閉じていたWindowは再表示しない。
   汎用の開閉記録・再表示は`bakedanuki-util`のMaya UI基盤を利用する。
@@ -37,6 +261,36 @@
 - Maya上部の共有メニュー表示名を`bd`から`bakedanuki`へ変更した。
   `bdChannelBox`の起動経路は`bakedanuki > tools > bdChannelBox`となる。
   内部UI識別子と保存設定は維持する。
+- bdChannelBoxのキー操作を2階層へ整理し、選択属性を全Keyableより先に表示する。
+  コピーの両メニューとStep設定も選択属性を先に揃える。操作対象、scene、保存設定は
+  変更せず、`bd_tools.reload_package()`で反映できる。
+- bdChannelBoxの属性行の右クリックメニューで、「ロック／解除」を「ロック」、
+  「Keyable／ChannelBox／Hide」を「表示」のサブメニューへ整理する。
+  操作対象・Undo・scene・保存設定の変更はなく、`bd_tools.reload_package()`で反映できる。
+- bdChannelBoxの属性行では、属性名・値・Step・Slider・bool・enum・stringと
+  表示／ロック入力欄のどこから右クリックしても、その行の操作メニューを開く。
+  一括数値入力中も入力元の行メニューを開き、未確定値はフォーカス移動として確定する。
+  Qt標準の右クリック編集メニューは表示しない。キーボードでの文字編集は維持する。
+  scene・保存設定の移行は不要。toolsのみの変更で、`bd_tools.reload_package()`で反映できる。
+- bdChannelBoxで、対応する既存アニメーション属性の値を編集できるようにする。
+  直接接続された単独の時間カーブを対象とし、値が変わる場合に現在時刻のキーを追加・更新する。
+  値欄・上下・Slider・bool・enum・「この値に揃える」・Pasteで同じ方針を使い、
+  未接続属性は通常の値設定を維持する。Auto KeyのON/OFFには依存しない。
+  書込み後は評価済みplugを再取得し、通常値との混在編集も一回のUndoで戻せる。
+  Slider中の時刻変更で操作を確定終了し、未確定数値を次の時刻へ持ち越さない。
+  lockや未対応の接続、Animation Layer・SDK・pairBlendなどは表示専用を維持する。
+  既存scene・保存設定の移行は不要だが、これまで表示専用だった対応キー付き属性が編集可能になる。
+  対応する`bakedanuki-util`への更新と`bd_tools.reload_package(reload_util=True)`が必要。
+- bdChannelBoxのfloat値欄を90 pxから150 pxへ広げ、
+  `1234.123456789123456`の20文字程度を一度に見渡せるようにする。
+  Slider付き値欄にも同じ幅を適用し、Step／Sliderの60 pxと欄間6 pxは維持する。
+  共通入力列は216 pxとなり、enum・stringもこの幅を使用する。
+  属性名を見やすくするため初期Window幅を380 px、最小幅を340 pxに設定する。
+  表示小数桁数とMayaの数値精度は変更しない。
+  toolsのみの変更で、scene・保存設定の移行は不要。`bd_tools.reload_package()`で反映できる。
+- bdChannelBoxの表示・ロック行で`hide`と`lock`の間の伸縮余白をなくし、
+  操作欄の幅をボタンの必要幅に合わせる。空いた幅を属性名欄へ戻し、
+  パネルを狭くした際も名前が見やすいようにする。scene・保存設定の移行は不要。
 - bdChannelBoxのstring入力は、編集中に基準または後続ノードの値が外部変更された場合、
   未確定入力を破棄して基準ノードの最新値へ同期する。入力可能なままの状態通知では入力を
   維持し、同期だけでsceneやUndo履歴は変更しない。設定とsceneの移行は不要。
@@ -56,7 +310,7 @@
   `number`／`distance`／`angle`の組で、現在の表示単位における数値だけを保持する。
   初期値と同じStepは保存せず、radiusは0.1、angleは15、その他は1へ戻る。
   値編集行と画面余白の右クリックメニューへ`Step設定`を追加し、
-  `初期値に戻す: 全ての属性`、`初期値に戻す: 選択属性`の順で表示する。
+  `初期値に戻す: 選択属性`、`初期値に戻す: 全ての属性`の順で表示する。
   全属性は画面外の保存値も削除し、選択属性は選択中でStep欄を持つ行だけを戻す。
   成功通知と確認dialogは表示せず、scene・Undo履歴・`reset_layout()`へ影響しない。
   対応する`bakedanuki-util`への更新と`bd_tools.reload_package(reload_util=True)`が必要。
@@ -76,7 +330,7 @@
   変更する。既存の状態Bindingと一括操作APIを使うtoolsのみの変更で、
   scene・保存設定の移行は不要。
 - bdChannelBoxの「編集」メニューと値編集モードの属性名メニューへ、
-  `コピー > 全属性／選択属性`と`ペースト > コピー元と同じ属性／選択属性`を追加。
+  `コピー > 選択属性／全属性`と`ペースト > コピー元と同じ属性／選択属性`を追加。
   Copyは基準nodeの全対応属性または選択属性の未丸め値と型・単位・enum定義を
   OSクリップボードへ保存する。「コピー元と同じ属性」は`全て`に加え、貼り付け時の
   基準nodeを使う`keyable + channelbox`／`keyable`／`channelbox`／`hide`で

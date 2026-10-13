@@ -3,16 +3,23 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 from functools import partial
-from typing import Literal, Protocol, cast
+from pathlib import Path
+from typing import Literal, Protocol, TypeAlias, cast
 
+from maya import cmds
+
+from bd_util import Nodes
 from bd_util.maya.ui import (
     ChannelDisplayState,
     MayaBoolPlugsBinding,
     MayaEnumPlugsBinding,
     MayaEditSession,
     MayaFloatPlugsBinding,
+    MayaNodeNameBinding,
+    MayaPlugInputState,
     MayaStringPlugsBinding,
     get_channel_box_precision,
 )
@@ -36,42 +43,113 @@ from .controller import (
     ChannelBoxController,
     ChannelRow,
     ChannelStateRow,
+    ROTATION_ATTRIBUTE_PATHS,
+    RoundTransformKind,
+    RotationDestination,
 )
+from .custom_filter_registry import CustomFilterRegistry
+from .custom_filter_editor import create_custom_filter
+from .custom_filter_setup import CustomFilterSetupPanel
+from .custom_filters import CustomFilterError, CustomFilterSelection
 from .table import ChannelTableView, TableRow
 
 __all__ = [
     "AttributeRowWidget",
     "AttributeStateRowWidget",
+    "CustomFilterManagerDialog",
     "ChannelBoxWidget",
 ]
 
-_VALUE_FIELD_WIDTH = 90
+# 小数点を含む20文字程度の値を、上下ボタンと併せて表示する
+_VALUE_FIELD_WIDTH = 156
 _AUXILIARY_FIELD_WIDTH = 60
 _FIELD_SPACING = 6
 _NAME_EDITOR_SPACING = 0
 _EDITOR_WIDTH = _VALUE_FIELD_WIDTH + _FIELD_SPACING + _AUXILIARY_FIELD_WIDTH
-_STATE_EDITOR_WIDTH = 200
 _NAME_FIELD_PREFERRED_WIDTH = 92
 _NAME_FIELD_RIGHT_MARGIN = 4
+_INPUT_STATE_WIDTH = 6
+_INPUT_STATE_VERTICAL_INSET = 1
+_NAME_CONFLICT_MESSAGE = (
+    "ノード名が外部で変更されました。"
+    "Enterで入力名を適用するか、Escapeで取り消してください。"
+)
+_SELECTION_LIMIT_MESSAGE = (
+    "対象ノードが50個以上あります。\n"
+    "多数のノードを対象にすると、処理が重くレスポンスが悪い為、"
+    "bdChannelBoxの表示・編集を休止しています。\n"
+    "49個以下に減らすと再開します。"
+)
+_NAME_IDLE_STYLE = (
+    "background-color: palette(window); "
+    "color: palette(window-text); "
+    "border: none; "
+    "padding-left: 3px; padding-right: 3px;"
+)
+_IndicatorState = MayaPlugInputState | Literal["locked"]
+_INPUT_STATE_COLORS: dict[_IndicatorState, str] = {
+    "nonkeyable": "#949494",
+    "keyed": "#CD2729",
+    "animated": "#DD727A",
+    "key_altered": "#FDCBC4",
+    "driven_key": "#5099DA",
+    "expression": "#CBA5F1",
+    "animation_layer": "#4DB6AC",
+    "animation_clip": "#FFCC80",
+    "muted": "#BFA182",
+    "pair_blend": "#ACF1AC",
+    "constraint": "#A3CBF0",
+    "connected": "#F1F1A5",
+    "locked": "#5C6874",
+}
+_INPUT_STATE_LABELS: dict[MayaPlugInputState, str] = {
+    "unconnected": "入力接続なし",
+    "nonkeyable": "入力接続なし・キー設定不可",
+    "keyed": "現在時刻にキーあり",
+    "animated": "アニメーションあり・現在時刻にキーなし",
+    "key_altered": "キーの評価値と現在値が異なります",
+    "driven_key": "Driven Keyの入力接続あり",
+    "expression": "Expressionの入力接続あり",
+    "animation_layer": "Animation Layerの入力接続あり",
+    "animation_clip": "Animation Clipの入力接続あり",
+    "muted": "入力接続がミュートされています",
+    "pair_blend": "pairBlendの入力接続あり",
+    "constraint": "constraintの入力接続あり",
+    "connected": "その他の入力接続あり",
+}
 _PASTE_FILTER_OPTIONS: tuple[tuple[ChannelAttributeFilter, str, str], ...] = (
     ("all", "全て", "コピーした全項目を"),
     (
         "visible",
-        "keyable + channelbox",
+        "Keyable + ChannelBox",
         "基準ノードでkeyableまたはchannelboxのコピー項目を",
     ),
-    ("keyable", "keyable", "基準ノードでkeyableのコピー項目を"),
+    ("keyable", "Keyable", "基準ノードでkeyableのコピー項目を"),
     (
         "channel_box",
-        "channelbox",
+        "ChannelBox",
         "基準ノードで非keyableかつchannelboxのコピー項目を",
     ),
     (
         "hidden",
-        "hide",
+        "Hide",
         "基準ノードでkeyableでもchannelboxでもないコピー項目を",
     ),
 )
+_RoundScope: TypeAlias = ChannelAttributeFilter | Literal["selected"]
+_ROUND_DIGIT_EXAMPLE = "123456789012345"
+_XYZ_ROUND_GROUPS: tuple[RoundTransformKind, ...] = (
+    "translate",
+    "rotate",
+    "rotateAxis",
+    "jointOrient",
+)
+_XYZ_ROUND_ATTRIBUTE_KINDS: dict[str, RoundTransformKind] = {
+    f"{group}.{group}{axis}": group
+    for group in _XYZ_ROUND_GROUPS
+    for axis in "XYZ"
+}
+_JointChildCompensationAttr: TypeAlias = Literal["rotate", "jointOrient"]
 _DISPLAY_OPTIONS: tuple[tuple[ChannelDisplayState, str, str], ...] = (
     ("keyable", "key", "Keyable: キー設定可能"),
     ("channel_box", "ch", "ChannelBox: キー設定不可・Channel Boxに表示"),
@@ -87,6 +165,13 @@ _SEARCH_VISIBILITY_OPTIONS: tuple[tuple[_SearchVisibility, str, str], ...] = (
     ),
     ("always", "常に表示", "全てのAttribute Filterで検索欄を表示します。"),
 )
+_ATTRIBUTE_FILTER_OPTIONS: tuple[tuple[str, ChannelAttributeFilter], ...] = (
+    ("全て", "all"),
+    ("keyable + channelbox", "visible"),
+    ("keyable", "keyable"),
+    ("channelbox", "channel_box"),
+    ("hide", "hidden"),
+)
 
 
 class _MenuActions(Protocol):
@@ -95,6 +180,50 @@ class _MenuActions(Protocol):
     def addAction(self, action: qt.QAction, /) -> None:
         """作成済みのQActionをメニューへ追加する。"""
         ...
+
+
+def _create_animation_layer_menu(
+    parent: qt.QMenu, operation: Literal["add", "remove"]
+) -> tuple[qt.QMenu, qt.QAction, qt.QAction]:
+    """選択レイヤへの属性追加・除去メニューを両表示モードへ共通に作る。"""
+    adding = operation == "add"
+    title = (
+        "アニメーションレイヤ：追加"
+        if adding
+        else "アニメーションレイヤ：除去"
+    )
+    menu = qt.QMenu(title, parent)
+    menu.setToolTipsVisible(True)
+    selected = qt.QAction("選択属性", menu)
+    selected.setObjectName(f"animation_layer_{operation}_selected")
+    selected.setToolTip(
+        "選択属性を選択中のアニメーションレイヤへ追加"
+        if adding
+        else "選択属性を選択中のレイヤから除去（そのレイヤ上のキーも削除）"
+    )
+    all_keyable = qt.QAction("全 Keyable", menu)
+    all_keyable.setObjectName(f"animation_layer_{operation}_all_keyable")
+    all_keyable.setToolTip(
+        "各選択ノードの全Keyable属性を選択中のレイヤへ追加"
+        if adding
+        else "各選択ノードの全Keyable属性を選択中のレイヤから除去"
+        "（そのレイヤ上のキーも削除）"
+    )
+    actions = cast(_MenuActions, menu)
+    actions.addAction(selected)
+    actions.addAction(all_keyable)
+    return menu, selected, all_keyable
+
+
+def _use_row_context_menu(editor: qt.QWidget) -> None:
+    """入力部品の右クリックを属性行へ渡し、値編集は維持する。"""
+    find_children = cast(
+        Callable[[type[qt.QWidget]], list[qt.QWidget]],
+        getattr(editor, "findChildren"),
+    )
+    for widget in (editor, *find_children(qt.QWidget)):
+        if not widget.isWindow():
+            widget.setContextMenuPolicy(qt.Qt.ContextMenuPolicy.NoContextMenu)
 
 
 class _AttributeNameLabel(qt.QLabel):
@@ -133,6 +262,50 @@ class _AttributeNameLabel(qt.QLabel):
         painter.end()
 
 
+class _InputStateIndicator(qt.QWidget):
+    """属性名と値欄の間に接続種類とロックを示す細い帯。"""
+
+    def __init__(self, parent: qt.QWidget) -> None:
+        """入力部品や選択paletteに依存しない描画領域を作る。"""
+        super().__init__(parent)
+        self._state: _IndicatorState = "unconnected"
+        self.setFixedWidth(_INPUT_STATE_WIDTH)
+        self.setSizePolicy(
+            qt.QSizePolicy.Policy.Fixed, qt.QSizePolicy.Policy.Expanding
+        )
+
+    @property
+    def input_state(self) -> _IndicatorState:
+        """最後に描画した接続・ロックの表示状態を返す。"""
+        return self._state
+
+    def set_input_state(self, state: _IndicatorState) -> None:
+        """表示状態が変わった場合だけ帯を再描画する。"""
+        if state == self._state:
+            return
+        self._state = state
+        self.update()
+
+    def paintEvent(self, event: qt.QtGui.QPaintEvent) -> None:
+        """通常背景を塗り、状態色だけを上下1px内側に描く。"""
+        del event
+        painter = qt.QPainter(self)
+        painter.fillRect(
+            self.rect(), self.palette().color(qt.QPalette.ColorRole.Window)
+        )
+        if self._state != "unconnected":
+            painter.fillRect(
+                self.rect().adjusted(
+                    0,
+                    _INPUT_STATE_VERTICAL_INSET,
+                    0,
+                    -_INPUT_STATE_VERTICAL_INSET,
+                ),
+                qt.QColor(_INPUT_STATE_COLORS[self._state]),
+            )
+        painter.end()
+
+
 class _LockCheckBox(qt.QCheckBox):
     """混在を表示しつつ、明示入力ではロックか解除だけを選ぶ。"""
 
@@ -149,7 +322,6 @@ class AttributeRowWidget(qt.QWidget):
     """右揃えの属性名と入力Viewを並べ、詳細と操作を必要時に表示する。"""
 
     step_changed = qt.Signal(float)
-    refresh_requested = qt.Signal()
 
     def __init__(
         self,
@@ -175,10 +347,191 @@ class AttributeRowWidget(qt.QWidget):
         self.name_label.setAlignment(
             qt.Qt.AlignmentFlag.AlignRight | qt.Qt.AlignmentFlag.AlignVCenter
         )
+        self.input_indicator = _InputStateIndicator(self)
         self.context_menu = qt.QMenu(self)
-        self.align_action = qt.QAction("この値に揃える", self)
-        self.align_action.setToolTip("編集可能な対象を基準ノードの値に揃える")
+        self.align_menu = qt.QMenu("表示ノードの値に揃える", self.context_menu)
+        self.align_action = qt.QAction("選択属性", self)
+        self.align_action.setObjectName("align_selected")
+        self.align_action.setToolTip(
+            "選択した各属性を表示ノードの同じ属性の値へ揃える"
+        )
         self.align_action.triggered.connect(self._align_values)
+        align_actions = cast(_MenuActions, self.align_menu)
+        align_actions.addAction(self.align_action)
+        self.align_filtered_actions: dict[
+            ChannelAttributeFilter, qt.QAction
+        ] = {}
+        for display_filter, label, _description in _PASTE_FILTER_OPTIONS:
+            action = qt.QAction(label, self)
+            action.setObjectName(f"align_{display_filter}")
+            action.setToolTip(
+                f"表示ノードの{label}に該当する各属性値へ、"
+                "他の選択ノードの同じ属性を揃える"
+            )
+            self.align_filtered_actions[display_filter] = action
+            align_actions.addAction(action)
+        self.keyframe_menu = qt.QMenu("キーフレーム", self.context_menu)
+        self.set_key_all_keyable_action = qt.QAction("全 Keyable", self)
+        self.set_key_all_keyable_action.setObjectName("set_key_all_keyable")
+        self.set_key_all_keyable_action.setToolTip(
+            "選択ノード自身の全Keyable属性に現在時刻のキーを設定"
+        )
+        self.set_key_selected_action = qt.QAction("選択属性", self)
+        self.set_key_selected_action.setObjectName("set_key_selected")
+        self.set_key_selected_action.setToolTip(
+            "選択した属性に現在時刻のキーを設定"
+        )
+        keyframe_actions = cast(_MenuActions, self.keyframe_menu)
+        keyframe_actions.addAction(self.set_key_selected_action)
+        keyframe_actions.addAction(self.set_key_all_keyable_action)
+        self.breakdown_menu = qt.QMenu(
+            "ブレイクダウンフレーム", self.context_menu
+        )
+        self.set_breakdown_all_keyable_action = qt.QAction("全 Keyable", self)
+        self.set_breakdown_all_keyable_action.setObjectName(
+            "set_breakdown_all_keyable"
+        )
+        self.set_breakdown_all_keyable_action.setToolTip(
+            "選択ノード自身の全Keyable属性に現在時刻のブレイクダウンを設定"
+        )
+        self.set_breakdown_selected_action = qt.QAction("選択属性", self)
+        self.set_breakdown_selected_action.setObjectName(
+            "set_breakdown_selected"
+        )
+        self.set_breakdown_selected_action.setToolTip(
+            "選択した属性に現在時刻のブレイクダウンを設定"
+        )
+        breakdown_actions = cast(_MenuActions, self.breakdown_menu)
+        breakdown_actions.addAction(self.set_breakdown_selected_action)
+        breakdown_actions.addAction(self.set_breakdown_all_keyable_action)
+        self.mute_menu = qt.QMenu("ミュート", self.context_menu)
+        self.mute_selected_action = qt.QAction("選択属性", self)
+        self.mute_selected_action.setObjectName("mute_selected")
+        self.mute_selected_action.setToolTip(
+            "選択属性の入力接続をミュート（Hide属性も対象）"
+        )
+        self.mute_all_animation_action = qt.QAction(
+            "全アニメーション属性", self
+        )
+        self.mute_all_animation_action.setObjectName("mute_all_animation")
+        self.mute_all_animation_action.setToolTip(
+            "各選択ノードのKeyable／ChannelBox表示属性の入力接続をミュート"
+            "（画面の検索・表示条件に依存しません）"
+        )
+        mute_actions = cast(_MenuActions, self.mute_menu)
+        mute_actions.addAction(self.mute_selected_action)
+        mute_actions.addAction(self.mute_all_animation_action)
+        self.unmute_menu = qt.QMenu("ミュート解除", self.context_menu)
+        self.unmute_selected_action = qt.QAction("選択属性", self)
+        self.unmute_selected_action.setObjectName("unmute_selected")
+        self.unmute_selected_action.setToolTip(
+            "選択属性のミュートを解除（Hide属性も対象）"
+        )
+        self.unmute_all_animation_action = qt.QAction(
+            "全アニメーション属性", self
+        )
+        self.unmute_all_animation_action.setObjectName("unmute_all_animation")
+        self.unmute_all_animation_action.setToolTip(
+            "各選択ノードのKeyable／ChannelBox表示属性のミュートを解除"
+            "（画面の検索・表示条件に依存しません）"
+        )
+        unmute_actions = cast(_MenuActions, self.unmute_menu)
+        unmute_actions.addAction(self.unmute_selected_action)
+        unmute_actions.addAction(self.unmute_all_animation_action)
+        self.animation_copy_menu = qt.QMenu(
+            "アニメーションカーブ：コピー", self.context_menu
+        )
+        self.animation_copy_selected_action = qt.QAction("選択属性", self)
+        self.animation_copy_selected_action.setObjectName(
+            "animation_copy_selected"
+        )
+        self.animation_copy_selected_action.setToolTip(
+            "選択属性の全時間のカーブをMayaのキー用clipboardへコピー"
+        )
+        self.animation_copy_all_action = qt.QAction(
+            "全アニメーション属性", self
+        )
+        self.animation_copy_all_action.setObjectName("animation_copy_all")
+        self.animation_copy_all_action.setToolTip(
+            "各選択ノードのKeyable／ChannelBox表示属性のカーブをコピー"
+        )
+        animation_copy_actions = cast(_MenuActions, self.animation_copy_menu)
+        animation_copy_actions.addAction(self.animation_copy_selected_action)
+        animation_copy_actions.addAction(self.animation_copy_all_action)
+        self.animation_paste_menu = qt.QMenu(
+            "アニメーションカーブ：ペースト", self.context_menu
+        )
+        self.animation_paste_same_action = qt.QAction(
+            "コピー元と同じ属性", self
+        )
+        self.animation_paste_same_action.setObjectName("animation_paste_same")
+        self.animation_paste_same_action.setToolTip(
+            "コピー元と同じ正式属性pathへ現在時刻からカーブを挿入"
+        )
+        self.animation_paste_selected_action = qt.QAction("選択属性", self)
+        self.animation_paste_selected_action.setObjectName(
+            "animation_paste_selected"
+        )
+        self.animation_paste_selected_action.setToolTip(
+            "一曲線は型を問わず選択属性へ、複数曲線は同じ正式pathへ挿入"
+        )
+        animation_paste_actions = cast(_MenuActions, self.animation_paste_menu)
+        animation_paste_actions.addAction(self.animation_paste_selected_action)
+        animation_paste_actions.addAction(self.animation_paste_same_action)
+        self.animation_cut_menu = qt.QMenu(
+            "アニメーションカーブ：カット", self.context_menu
+        )
+        self.animation_cut_selected_action = qt.QAction("選択属性", self)
+        self.animation_cut_selected_action.setObjectName(
+            "animation_cut_selected"
+        )
+        self.animation_cut_selected_action.setToolTip(
+            "選択属性の全時間のカーブをコピーして削除（Hide属性も対象）"
+        )
+        self.animation_cut_all_action = qt.QAction(
+            "全アニメーション属性", self
+        )
+        self.animation_cut_all_action.setObjectName("animation_cut_all")
+        self.animation_cut_all_action.setToolTip(
+            "各選択ノードのKeyable／ChannelBox表示属性のカーブをカット"
+        )
+        animation_cut_actions = cast(_MenuActions, self.animation_cut_menu)
+        animation_cut_actions.addAction(self.animation_cut_selected_action)
+        animation_cut_actions.addAction(self.animation_cut_all_action)
+        self.animation_delete_menu = qt.QMenu(
+            "アニメーションカーブ：削除", self.context_menu
+        )
+        self.animation_delete_selected_action = qt.QAction("選択属性", self)
+        self.animation_delete_selected_action.setObjectName(
+            "animation_delete_selected"
+        )
+        self.animation_delete_selected_action.setToolTip(
+            "選択属性の全時間のキーを削除（Hide属性も対象）"
+        )
+        self.animation_delete_all_action = qt.QAction(
+            "全アニメーション属性", self
+        )
+        self.animation_delete_all_action.setObjectName("animation_delete_all")
+        self.animation_delete_all_action.setToolTip(
+            "各選択ノードのKeyable／ChannelBox表示属性の全時間のキーを削除"
+        )
+        animation_delete_actions = cast(
+            _MenuActions, self.animation_delete_menu
+        )
+        animation_delete_actions.addAction(
+            self.animation_delete_selected_action
+        )
+        animation_delete_actions.addAction(self.animation_delete_all_action)
+        (
+            self.animation_layer_add_menu,
+            self.animation_layer_add_selected_action,
+            self.animation_layer_add_all_keyable_action,
+        ) = _create_animation_layer_menu(self.context_menu, "add")
+        (
+            self.animation_layer_remove_menu,
+            self.animation_layer_remove_selected_action,
+            self.animation_layer_remove_all_keyable_action,
+        ) = _create_animation_layer_menu(self.context_menu, "remove")
         self.copy_menu = qt.QMenu("コピー", self.context_menu)
         self.copy_all_values_action = qt.QAction("全属性", self)
         self.copy_all_values_action.setObjectName("copy_all_values")
@@ -191,20 +544,14 @@ class AttributeRowWidget(qt.QWidget):
             "基準ノードで選択中の属性値をOSクリップボードへコピー"
         )
         copy_actions = cast(_MenuActions, self.copy_menu)
-        copy_actions.addAction(self.copy_all_values_action)
         copy_actions.addAction(self.copy_selected_values_action)
+        copy_actions.addAction(self.copy_all_values_action)
         self.paste_menu = qt.QMenu("ペースト", self.context_menu)
-        self.paste_copied_values_menu = qt.QMenu(
-            "コピー元と同じ属性", self.paste_menu
-        )
         self.paste_copied_values_actions: dict[
             ChannelAttributeFilter, qt.QAction
         ] = {}
-        copied_paste_actions = cast(
-            _MenuActions, self.paste_copied_values_menu
-        )
         for display_filter, label, description in _PASTE_FILTER_OPTIONS:
-            action = qt.QAction(label, self)
+            action = qt.QAction(f"コピー元と同じ属性：{label}", self)
             action.setObjectName(
                 "paste_copied_values"
                 if display_filter == "all"
@@ -213,7 +560,6 @@ class AttributeRowWidget(qt.QWidget):
             action.setToolTip(
                 f"{description}選択ノードの同じ正式pathへ貼り付け"
             )
-            copied_paste_actions.addAction(action)
             self.paste_copied_values_actions[display_filter] = action
         self.paste_copied_values_action = self.paste_copied_values_actions[
             "all"
@@ -225,23 +571,158 @@ class AttributeRowWidget(qt.QWidget):
         self.paste_selected_values_action.setToolTip(
             "コピーした値を選択属性へ貼り付け"
         )
-        self.paste_menu.addMenu(self.paste_copied_values_menu)
-        self.paste_menu.addSeparator()
         paste_actions = cast(_MenuActions, self.paste_menu)
         paste_actions.addAction(self.paste_selected_values_action)
-        self.refresh_action = qt.QAction("表示を更新", self)
-        self.refresh_action.triggered.connect(self.refresh_requested.emit)
-        menu_actions = cast(_MenuActions, self.context_menu)
-        menu_actions.addAction(self.align_action)
+        for action in self.paste_copied_values_actions.values():
+            paste_actions.addAction(action)
+        self.round_menu: qt.QMenu | None = None
+        self.round_scope_menus: dict[_RoundScope, qt.QMenu] = {}
+        self.round_menu_decimals: int | None = None
+        if isinstance(row.binding, MayaFloatPlugsBinding):
+            self.round_menu = qt.QMenu("小数点の四捨五入", self.context_menu)
+            for scope, label in (
+                ("selected", "選択属性"),
+                *((key, title) for key, title, _ in _PASTE_FILTER_OPTIONS),
+            ):
+                submenu = qt.QMenu(label, self.round_menu)
+                self.round_scope_menus[cast(_RoundScope, scope)] = submenu
+                self.round_menu.addMenu(submenu)
+        self.xyz_round_kind: RoundTransformKind | None = (
+            _XYZ_ROUND_ATTRIBUTE_KINDS.get(row.attribute.path)
+            if isinstance(row.binding, MayaFloatPlugsBinding)
+            else None
+        )
+        self.xyz_round_menus: dict[bool, qt.QMenu] = {}
+        self.xyz_round_leaf_menus: dict[
+            tuple[bool, _JointChildCompensationAttr], qt.QMenu
+        ] = {}
+        self.xyz_round_menu_decimals: int | None = None
+        if self.xyz_round_kind == "translate":
+            menu = qt.QMenu(
+                "translateXYZ 小数点の四捨五入（子の座標を保持）",
+                self.context_menu,
+            )
+            self.xyz_round_menus[False] = menu
+            self.xyz_round_leaf_menus[(False, "rotate")] = menu
+        elif self.xyz_round_kind is not None:
+            for preserve_translation, label in (
+                (False, "子の姿勢を保持"),
+                (True, "子の座標/姿勢を保持"),
+            ):
+                menu = qt.QMenu(
+                    f"{self.xyz_round_kind}XYZ 小数点の四捨五入（{label}）",
+                    self.context_menu,
+                )
+                self.xyz_round_menus[preserve_translation] = menu
+                for child_attr in ("rotate", "jointOrient"):
+                    child_menu = qt.QMenu(
+                        f"子 joint は、{child_attr} で調整", menu
+                    )
+                    self.xyz_round_leaf_menus[
+                        (preserve_translation, child_attr)
+                    ] = child_menu
+                    menu.addMenu(child_menu)
+        self.rotation_set_target: RotationDestination | None = (
+            cast(RotationDestination, row.attribute.path.split(".", 1)[0])
+            if row.attribute.path in ROTATION_ATTRIBUTE_PATHS
+            else None
+        )
+        self.child_set_action: qt.QAction | None = None
+        if self.xyz_round_kind is not None:
+            self.child_set_action = qt.QAction(
+                (
+                    "移動をセット（子を維持）"
+                    if self.xyz_round_kind == "translate"
+                    else "回転をセット（子を維持）"
+                ),
+                self,
+            )
+            self.child_set_action.setObjectName(
+                "set_transform_compensate_children"
+            )
+            self.child_set_action.setToolTip(
+                "基準ノードのみのXYZを設定し、直接の子の維持範囲を指定"
+            )
+        self.rotation_set_action: qt.QAction | None = None
+        if self.rotation_set_target is not None:
+            self.rotation_set_action = qt.QAction(
+                "回転をセット（姿勢を維持）", self
+            )
+            self.rotation_set_action.setObjectName(
+                "set_rotation_preserving_pose"
+            )
+            self.rotation_set_action.setToolTip(
+                "設定先と補償先を選び、基準ノードのみの姿勢を保ってXYZを設定"
+            )
+        self.rotation_menu: qt.QMenu | None = None
+        self.rotation_actions: dict[RotationDestination, qt.QAction] = {}
+        if row.attribute.path in ROTATION_ATTRIBUTE_PATHS:
+            self.rotation_menu = qt.QMenu("回転を集約", self.context_menu)
+            for destination in ("rotate", "rotateAxis", "jointOrient"):
+                action = qt.QAction(
+                    f"{destination} に集約", self.rotation_menu
+                )
+                action.setObjectName(f"consolidate_rotation_{destination}")
+                action.setToolTip(
+                    "選択中の各ノードの現在回転を"
+                    f"{destination}へ集約し、ほかの回転属性をゼロにする"
+                )
+                self.rotation_actions[destination] = action
+                cast(_MenuActions, self.rotation_menu).addAction(action)
+        self.freeze_menu = qt.QMenu("フリーズ", self.context_menu)
+        self.freeze_translate_action = qt.QAction("移動", self)
+        self.freeze_translate_action.setObjectName("freeze_translate")
+        self.freeze_rotate_action = qt.QAction("回転", self)
+        self.freeze_rotate_action.setObjectName("freeze_rotate")
+        self.freeze_scale_action = qt.QAction("スケール", self)
+        self.freeze_scale_action.setObjectName("freeze_scale")
+        self.freeze_all_action = qt.QAction("全て", self)
+        self.freeze_all_action.setObjectName("freeze_all")
+        freeze_actions = cast(_MenuActions, self.freeze_menu)
+        for action in (
+            self.freeze_translate_action,
+            self.freeze_rotate_action,
+            self.freeze_scale_action,
+            self.freeze_all_action,
+        ):
+            freeze_actions.addAction(action)
+        self.context_menu.addMenu(self.keyframe_menu)
+        self.context_menu.addMenu(self.breakdown_menu)
+        self.context_menu.addMenu(self.mute_menu)
+        self.context_menu.addMenu(self.unmute_menu)
         self.context_menu.addSeparator()
+        self.context_menu.addMenu(self.animation_copy_menu)
+        self.context_menu.addMenu(self.animation_paste_menu)
+        self.context_menu.addMenu(self.animation_cut_menu)
+        self.context_menu.addMenu(self.animation_delete_menu)
+        self.context_menu.addSeparator()
+        self.context_menu.addMenu(self.animation_layer_add_menu)
+        self.context_menu.addMenu(self.animation_layer_remove_menu)
+        self.context_menu.addSeparator()
+        self.context_menu.addMenu(self.align_menu)
         self.context_menu.addMenu(self.copy_menu)
         self.context_menu.addMenu(self.paste_menu)
+        if self.child_set_action is not None:
+            cast(_MenuActions, self.context_menu).addAction(
+                self.child_set_action
+            )
+        if self.rotation_set_action is not None:
+            cast(_MenuActions, self.context_menu).addAction(
+                self.rotation_set_action
+            )
+        if self.rotation_menu is not None:
+            self.context_menu.addMenu(self.rotation_menu)
+        if self.round_menu is not None:
+            self.context_menu.addMenu(self.round_menu)
+        for xyz_menu in self.xyz_round_menus.values():
+            self.context_menu.addMenu(xyz_menu)
         self.context_menu.addSeparator()
-        menu_actions.addAction(self.refresh_action)
+        self.context_menu.addMenu(self.freeze_menu)
         self.editor = self._create_editor(
             single_step,
             wheel_editing_without_focus,
         )
+        _use_row_context_menu(self.editor)
         # 入力グループを固定幅にし、余剰幅は属性名側へ配分する
         self.editor.setFixedWidth(_EDITOR_WIDTH)
         if isinstance(
@@ -259,11 +740,30 @@ class AttributeRowWidget(qt.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(_NAME_EDITOR_SPACING)
         layout.addWidget(self.name_label, 1)
+        layout.addWidget(self.input_indicator)
         layout.addWidget(self.editor)
         self._update_state()
 
+    @property
+    def freeze_separator_action(self) -> qt.QAction:
+        """配置リセットで再生成される区切りを、現在のメニューから取得する。"""
+        actions = self.context_menu.actions()
+        freeze_action = self.freeze_menu.menuAction()
+        for previous, action in zip(actions, actions[1:]):
+            if action == freeze_action and previous.isSeparator():
+                return previous
+        raise RuntimeError("フリーズメニュー直前の区切りがありません")
+
+    def round_decimal_limit(self) -> int:
+        """この行の値欄に現在表示している小数桁数を返す。"""
+        if isinstance(
+            self.editor, (FloatSliderSpinBox, FloatValueStepSpinBox)
+        ):
+            return self.editor.spin_box.decimals()
+        raise RuntimeError("数値属性の行ではありません")
+
     def contextMenuEvent(self, event: qt.QtGui.QContextMenuEvent) -> None:
-        """属性名や行の余白から操作を開き、値欄の標準メニューを維持する。"""
+        """属性行のどこからでも共通の操作メニューを開く。"""
         self.context_menu.popup(event.globalPos())
         event.accept()
 
@@ -365,12 +865,41 @@ class AttributeRowWidget(qt.QWidget):
             self.step_changed.emit(self.editor.singleStep())
 
     def _update_state(self) -> None:
-        """混在だけを小さな印で示し、対象数と除外理由をtooltipへまとめる。"""
+        """代表の接続・ロック色と混在を表示し、理由をtooltipへまとめる。"""
         binding = self.row.binding
         editable = binding.view_model.set_value_command.can_execute
         count = binding.writable_count if editable else 0
         details = [self.row.attribute.nice_name, self.row.attribute.path]
         details.append(f"編集対象: {count}/{self.selection_count} 件")
+        visible_targets = tuple(
+            target
+            for target in binding.target_states
+            if target.is_available and target.input_state is not None
+        )
+        input_states: tuple[MayaPlugInputState, ...] = tuple(
+            cast(MayaPlugInputState, target.input_state)
+            for target in visible_targets
+        )
+        if input_states:
+            representative = input_states[0]
+            self.input_indicator.set_input_state(
+                "locked" if visible_targets[0].is_locked else representative
+            )
+            details.append(
+                "基準の接続状態: " + _INPUT_STATE_LABELS[representative]
+            )
+            if visible_targets[0].is_locked:
+                details.append("基準のロック状態: ロックされています")
+            if any(state != representative for state in input_states[1:]):
+                counts = ", ".join(
+                    f"{_INPUT_STATE_LABELS[state]} {input_states.count(state)}件"
+                    for state in _INPUT_STATE_LABELS
+                    if state in input_states
+                )
+                details.append("接続状態は選択ノード間で混在: " + counts)
+            lock_states = tuple(target.is_locked for target in visible_targets)
+            if any(locked != lock_states[0] for locked in lock_states[1:]):
+                details.append("ロック状態は選択ノード間で混在")
         if binding.is_mixed:
             details.append(
                 "• 選択ノード間で値が異なります（基準ノードの値を表示）"
@@ -380,6 +909,8 @@ class AttributeRowWidget(qt.QWidget):
         )
         reasons = list(self.row.excluded)
         for target in binding.target_states:
+            if target.edit_description:
+                details.append(f"{target.name}: {target.edit_description}")
             if target.reason:
                 reasons.append(f"{target.name}: {target.reason}")
         details.extend(reasons)
@@ -394,15 +925,16 @@ class AttributeRowWidget(qt.QWidget):
             )
             if not binding.definition.items:
                 details.append("enumの選択肢がないため入力できません")
-            details.append("定義変更後の対象の再判定: 表示を更新")
-        details.append("属性名を右クリック: この値に揃える / 表示を更新")
+            details.append("定義変更後の対象の再判定: 選択を解除して選び直す")
+        details.append("属性行を右クリック: 表示ノードの値に揃える")
         tooltip = "\n".join(details)
         self.name_label.setToolTip(tooltip)
+        self.input_indicator.setToolTip(tooltip)
         self.editor.setToolTip(tooltip)
         self.align_action.setEnabled(editable and binding.is_mixed and defined)
 
     def _align_values(self) -> None:
-        """メニューから明示した場合だけ、対象を基準ノードの値へ揃える。"""
+        """選択属性を明示した場合だけ、表示ノードの値へ揃える。"""
         if self._align_callback is not None:
             self._align_callback()
             return
@@ -414,9 +946,7 @@ class AttributeRowWidget(qt.QWidget):
 
 
 class AttributeStateRowWidget(qt.QWidget):
-    """200pxの操作欄へ表示状態のラジオボタンとロックを配置する。"""
-
-    refresh_requested = qt.Signal()
+    """表示状態のラジオボタンとロックを余白なく横へ並べる。"""
 
     def __init__(
         self,
@@ -442,12 +972,7 @@ class AttributeStateRowWidget(qt.QWidget):
         self.name_label.setAlignment(
             qt.Qt.AlignmentFlag.AlignRight | qt.Qt.AlignmentFlag.AlignVCenter
         )
-        self.context_menu = qt.QMenu(self)
-        self.refresh_action = qt.QAction("表示を更新", self)
-        self.refresh_action.triggered.connect(self.refresh_requested.emit)
-        cast(_MenuActions, self.context_menu).addAction(self.refresh_action)
         self.editor = qt.QWidget(self)
-        self.editor.setFixedWidth(_STATE_EDITOR_WIDTH)
         self.display_buttons: dict[ChannelDisplayState, qt.QRadioButton] = {}
         self._display_group = qt.QtWidgets.QButtonGroup(self.editor)
         self._display_group.setExclusive(True)
@@ -469,8 +994,10 @@ class AttributeStateRowWidget(qt.QWidget):
         self.lock_check_box.setAccessibleName(
             f"{row.attribute.nice_name} ロック"
         )
-        controls.addStretch(1)
         controls.addWidget(self.lock_check_box)
+        _use_row_context_menu(self.editor)
+        # 操作部品に必要な幅だけを確保し、属性名へ残りを配分する
+        self.editor.setFixedWidth(controls.sizeHint().width())
         layout = qt.QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(_NAME_EDITOR_SPACING)
@@ -483,8 +1010,7 @@ class AttributeStateRowWidget(qt.QWidget):
         self._update_state()
 
     def contextMenuEvent(self, event: qt.QtGui.QContextMenuEvent) -> None:
-        """属性名から状態を再取得するメニューを開く。"""
-        self.context_menu.popup(event.globalPos())
+        """状態行の右クリックを受け止め、親画面のメニューも開かない。"""
         event.accept()
 
     def _update_state(self) -> None:
@@ -614,17 +1140,307 @@ class AttributeStateRowWidget(qt.QWidget):
             self._update_state()
 
 
+class _NodeNameLineEdit(StringLineEdit):
+    """基準ノード名だけを、閲覧中はラベルに近い外観で表示する。"""
+
+    def __init__(
+        self, binding: MayaNodeNameBinding, parent: qt.QWidget
+    ) -> None:
+        """通常の入力外観の高さを保ち、状態変化に応じて背景を切り替える。"""
+        super().__init__(binding, parent)
+        self.setMinimumHeight(self.sizeHint().height())
+        self._appearance_ready = True
+        self.conflict_changed.connect(self._sync_appearance)
+        self._sync_appearance()
+
+    def focusInEvent(self, arg__1: qt.QtGui.QFocusEvent) -> None:
+        """フォーカス時の正本更新後に、既定の入力外観を復元する。"""
+        super().focusInEvent(arg__1)
+        if qt.isValid(self):
+            self._sync_appearance()
+
+    def focusOutEvent(self, arg__1: qt.QtGui.QFocusEvent) -> None:
+        """確定処理後に閲覧外観へ戻し、競合中の下書きは強調する。"""
+        super().focusOutEvent(arg__1)
+        if qt.isValid(self):
+            self._sync_appearance()
+
+    def setReadOnly(self, arg__1: bool) -> None:
+        """名前ロックや参照状態の変化を、閲覧外観へ反映する。"""
+        super().setReadOnly(arg__1)
+        if getattr(self, "_appearance_ready", False):
+            self._sync_appearance()
+
+    def _sync_appearance(self, *_args: object) -> None:
+        """編集可能なフォーカス中と競合中だけ既定の入力外観にする。"""
+        editing = not self.isReadOnly() and (
+            self.hasFocus() or self.hasConflict()
+        )
+        style = "" if editing else _NAME_IDLE_STYLE
+        if self.styleSheet() != style:
+            self.setStyleSheet(style)
+
+
+class CustomFilterManagerDialog(qt.QDialog):
+    """共有 JSON の登録、表示切替、順序、読込状態を管理する。"""
+
+    created = qt.Signal(str)
+
+    def __init__(
+        self, registry: CustomFilterRegistry, parent: qt.QWidget
+    ) -> None:
+        """登録一覧と操作ボタンを構成し、registryの変更へ追従する。"""
+        super().__init__(parent)
+        self.registry = registry
+        self.setObjectName("bdChannelBoxCustomFilterManager")
+        self.setWindowTitle("カスタムフィルター管理")
+        self.resize(600, 390)
+        self.list_widget = qt.QListWidget(self)
+        self.list_widget.setObjectName("customFilterRegistrationList")
+        self.list_widget.setAccessibleName("カスタムフィルター登録一覧")
+        self.details_label = qt.QLabel(self)
+        self.details_label.setObjectName("customFilterRegistrationDetails")
+        self.details_label.setWordWrap(True)
+        self.details_label.setMaximumHeight(90)
+        self.details_label.setTextInteractionFlags(
+            qt.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.new_button = qt.QPushButton("新規作成...", self)
+        self.new_button.setObjectName("createCustomFilterButton")
+        self.add_button = qt.QPushButton("追加...", self)
+        self.remove_button = qt.QPushButton("削除", self)
+        self.move_up_button = qt.QPushButton("上へ", self)
+        self.move_down_button = qt.QPushButton("下へ", self)
+        self.reload_button = qt.QPushButton("再読込", self)
+        self.reload_all_button = qt.QPushButton("すべて再読込", self)
+        buttons = qt.QHBoxLayout()
+        for button in (
+            self.new_button,
+            self.add_button,
+            self.remove_button,
+            self.move_up_button,
+            self.move_down_button,
+            self.reload_button,
+            self.reload_all_button,
+        ):
+            buttons.addWidget(button)
+        layout = qt.QVBoxLayout(self)
+        layout.addWidget(
+            qt.QLabel("チェックした登録を Attribute Filter に表示します", self)
+        )
+        layout.addWidget(self.list_widget, 1)
+        layout.addWidget(self.details_label)
+        layout.addLayout(buttons)
+
+        self.list_widget.itemChanged.connect(self._change_enabled)
+        self.list_widget.currentRowChanged.connect(self._sync_selection)
+        self.new_button.clicked.connect(self._create_file)
+        self.add_button.clicked.connect(self._add_files)
+        self.remove_button.clicked.connect(self._remove_selected)
+        self.move_up_button.clicked.connect(self._move_up)
+        self.move_down_button.clicked.connect(self._move_down)
+        self.reload_button.clicked.connect(self._reload_selected)
+        self.reload_all_button.clicked.connect(self.registry.reload_all)
+        self.registry.changed.connect(self._refresh)
+        self._refresh()
+
+    def _selected_path(self) -> str | None:
+        """選択行に保存した正規化済みパスを返す。"""
+        item = cast(qt.QListWidgetItem | None, self.list_widget.currentItem())
+        if item is None:
+            return None
+        value: object = item.data(qt.Qt.ItemDataRole.UserRole)
+        return value if isinstance(value, str) else None
+
+    def _select_path(self, path: str) -> None:
+        """追加・移動後も対象の登録を選択して詳細を表示する。"""
+        for index in range(self.list_widget.count()):
+            item = cast(
+                qt.QListWidgetItem | None, self.list_widget.item(index)
+            )
+            if (
+                item is not None
+                and item.data(qt.Qt.ItemDataRole.UserRole) == path
+            ):
+                self.list_widget.setCurrentRow(index)
+                return
+
+    def _refresh(self) -> None:
+        """登録の順序と読込状態を一覧へ反映する。"""
+        selected = self._selected_path()
+        old_row = self.list_widget.currentRow()
+        blocked = self.list_widget.blockSignals(True)
+        try:
+            self.list_widget.clear()
+            for entry in self.registry.entries:
+                name = (
+                    entry.definition.name
+                    if entry.definition is not None
+                    else Path(entry.path).name + "（読込エラー）"
+                )
+                item = qt.QListWidgetItem(name, self.list_widget)
+                item.setData(qt.Qt.ItemDataRole.UserRole, entry.path)
+                item.setFlags(
+                    item.flags() | qt.Qt.ItemFlag.ItemIsUserCheckable
+                )
+                item.setCheckState(
+                    qt.Qt.CheckState.Checked
+                    if entry.enabled
+                    else qt.Qt.CheckState.Unchecked
+                )
+                item.setToolTip(entry.path)
+            if selected is not None:
+                self._select_path(selected)
+            if self.list_widget.currentRow() < 0 and self.list_widget.count():
+                self.list_widget.setCurrentRow(
+                    min(max(old_row, 0), self.list_widget.count() - 1)
+                )
+        finally:
+            self.list_widget.blockSignals(blocked)
+        self._sync_selection()
+
+    def _sync_selection(self, _row: int = -1) -> None:
+        """現在行のパスとエラーを示し、使用できる操作だけを有効にする。"""
+        path = self._selected_path()
+        index = self.list_widget.currentRow()
+        entry = next(
+            (item for item in self.registry.entries if item.path == path), None
+        )
+        has_selection = entry is not None
+        self.remove_button.setEnabled(has_selection)
+        self.move_up_button.setEnabled(has_selection and index > 0)
+        self.move_down_button.setEnabled(
+            has_selection and index < self.list_widget.count() - 1
+        )
+        self.reload_button.setEnabled(has_selection)
+        self.reload_all_button.setEnabled(bool(self.registry.entries))
+        if entry is None:
+            details = "JSON ファイルを追加してください"
+        else:
+            status = (
+                f"読込エラー: {entry.error}"
+                if entry.error is not None
+                else "読込済み"
+            )
+            details = f"ファイル: {entry.path}\n{status}"
+        if self.registry.storage_error is not None:
+            details += f"\n{self.registry.storage_error}"
+        self.details_label.setText(details)
+        self.details_label.setToolTip(details)
+
+    def _change_enabled(self, item: qt.QListWidgetItem) -> None:
+        """チェックの変更を個人設定と ComboBox へ反映する。"""
+        value: object = item.data(qt.Qt.ItemDataRole.UserRole)
+        if isinstance(value, str):
+            self.registry.set_enabled(
+                value, item.checkState() == qt.Qt.CheckState.Checked
+            )
+
+    def _add_files(self) -> None:
+        """任意数の共有 JSON をファイル選択から末尾へ追加する。"""
+        paths, _selected_filter = qt.QFileDialog.getOpenFileNames(
+            self,
+            "カスタムフィルター定義を追加",
+            "",
+            "JSON ファイル (*.json);;すべてのファイル (*)",
+        )
+        if not paths:
+            return
+        added = self.registry.add_paths(paths)
+        if added:
+            self._select_path(added[-1])
+            self._sync_selection()
+
+    def _create_file(self) -> None:
+        """名前と保存先を選び、空の定義を作成して末尾へ登録する。"""
+        dialog = qt.QDialog(self)
+        dialog.setWindowTitle("カスタムフィルターを新規作成")
+        name_edit = qt.QLineEdit(dialog)
+        name_edit.setObjectName("newCustomFilterName")
+        buttons = qt.QDialogButtonBox(
+            qt.QDialogButtonBox.StandardButton.Ok
+            | qt.QDialogButtonBox.StandardButton.Cancel,
+            dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout = qt.QVBoxLayout(dialog)
+        layout.addWidget(qt.QLabel("フィルター名:", dialog))
+        layout.addWidget(name_edit)
+        layout.addWidget(buttons)
+        accepted = dialog.exec() == qt.QDialog.DialogCode.Accepted
+        name = name_edit.text() if accepted else ""
+        dialog.deleteLater()
+        if not accepted:
+            return
+        if not name.strip():
+            qt.QMessageBox.warning(
+                self, "作成できません", "名前を入力してください。"
+            )
+            return
+        path, _selected_filter = qt.QFileDialog.getSaveFileName(
+            self,
+            "カスタムフィルター定義の保存先",
+            f"{name.strip()}.json",
+            "JSON ファイル (*.json)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".json"):
+            path += ".json"
+        try:
+            created = create_custom_filter(path, name)
+        except CustomFilterError as error:
+            qt.QMessageBox.warning(self, "作成できません", str(error))
+            return
+        added = self.registry.add_paths((created,))
+        if added:
+            self._select_path(added[-1])
+            self.created.emit(added[-1])
+
+    def _remove_selected(self) -> None:
+        """選択した登録だけを削除する。"""
+        path = self._selected_path()
+        if path is not None:
+            self.registry.remove(path)
+
+    def _move_up(self) -> None:
+        """選択した登録を一段上へ移動する。"""
+        path = self._selected_path()
+        if path is not None:
+            self.registry.move(path, -1)
+
+    def _move_down(self) -> None:
+        """選択した登録を一段下へ移動する。"""
+        path = self._selected_path()
+        if path is not None:
+            self.registry.move(path, 1)
+
+    def _reload_selected(self) -> None:
+        """選択した共有 JSON の内容と読込エラーを更新する。"""
+        path = self._selected_path()
+        if path is not None:
+            self.registry.reload(path)
+
+
 class ChannelBoxWidget(qt.QWidget):
     """基準ノードの情報と、スクロール可能な属性入力欄を表示する。"""
 
     def __init__(self, parent: qt.QWidget | None = None) -> None:
         """画面を作成してから選択監視を開始する。"""
         super().__init__(parent)
+        self.custom_filter_registry = CustomFilterRegistry(self)
+        self.custom_filter_dialog: CustomFilterManagerDialog | None = None
+        self._active_custom_filters: dict[str, CustomFilterSelection] = {}
+        self._setup_mode_active = False
         self.step_profile = FloatStepProfile(self)
         self._changing_steps = False
         self.row_widgets: tuple[
             AttributeRowWidget | AttributeStateRowWidget, ...
         ] = ()
+        self.node_name_edit: StringLineEdit | None = None
+        self._node_name_binding: MayaNodeNameBinding | None = None
+        self._node_name_id: str | None = None
         self._scroll_anchor: tuple[str, int] | None = None
         self._table_node_ids: tuple[str, ...] = ()
         self._scroll_timer = qt.QTimer(self)
@@ -653,21 +1469,15 @@ class ChannelBoxWidget(qt.QWidget):
         )
         self.copy_selected_values_action.setEnabled(False)
         copy_actions = cast(_MenuActions, self.copy_menu)
-        copy_actions.addAction(self.copy_all_values_action)
         copy_actions.addAction(self.copy_selected_values_action)
+        copy_actions.addAction(self.copy_all_values_action)
         self.edit_menu.addMenu(self.copy_menu)
         self.paste_menu = qt.QMenu("ペースト", self.edit_menu)
-        self.paste_copied_values_menu = qt.QMenu(
-            "コピー元と同じ属性", self.paste_menu
-        )
         self.paste_copied_values_actions: dict[
             ChannelAttributeFilter, qt.QAction
         ] = {}
-        copied_paste_actions = cast(
-            _MenuActions, self.paste_copied_values_menu
-        )
         for display_filter, label, description in _PASTE_FILTER_OPTIONS:
-            action = qt.QAction(label, self)
+            action = qt.QAction(f"コピー元と同じ属性：{label}", self)
             object_name = (
                 "pasteCopiedValuesAction"
                 if display_filter == "all"
@@ -680,7 +1490,6 @@ class ChannelBoxWidget(qt.QWidget):
                 f"{description}選択ノードの同じ正式pathへ貼り付け"
             )
             action.setEnabled(False)
-            copied_paste_actions.addAction(action)
             self.paste_copied_values_actions[display_filter] = action
         self.paste_copied_values_action = self.paste_copied_values_actions[
             "all"
@@ -693,10 +1502,10 @@ class ChannelBoxWidget(qt.QWidget):
             "コピーした値を選択属性へ貼り付け"
         )
         self.paste_selected_values_action.setEnabled(False)
-        self.paste_menu.addMenu(self.paste_copied_values_menu)
-        self.paste_menu.addSeparator()
         paste_actions = cast(_MenuActions, self.paste_menu)
         paste_actions.addAction(self.paste_selected_values_action)
+        for action in self.paste_copied_values_actions.values():
+            paste_actions.addAction(action)
         self.edit_menu.addMenu(self.paste_menu)
         self.settings_menu = qt.QMenu("設定", self.menu_bar)
         self.menu_bar.addMenu(self.settings_menu)
@@ -738,26 +1547,35 @@ class ChannelBoxWidget(qt.QWidget):
             self.search_visibility_actions[value] = action
         self.settings_menu.addSeparator()
         self.settings_menu.addMenu(self.search_visibility_menu)
+        self.manage_custom_filters_action = qt.QAction(
+            "カスタムフィルター管理...", self
+        )
+        self.manage_custom_filters_action.setObjectName(
+            "manageCustomFiltersAction"
+        )
+        cast(_MenuActions, self.settings_menu).addAction(
+            self.manage_custom_filters_action
+        )
         self.mode_combo = qt.QComboBox(self)
         self.mode_combo.addItem("値編集", "values")
         self.mode_combo.addItem("表示・ロック", "states")
+        self.mode_combo.addItem(
+            "カスタムフィルター設定", "custom_filter_setup"
+        )
         self.mode_combo.setAccessibleName("表示モード")
         self.filter_combo = qt.QComboBox(self)
-        for label, value in (
-            ("全て", "all"),
-            ("keyable + channelbox", "visible"),
-            ("keyable", "keyable"),
-            ("channelbox", "channel_box"),
-            ("hide", "hidden"),
-        ):
-            self.filter_combo.addItem(label, value)
+        self._populate_filter_combo()
         self.filter_combo.setAccessibleName("属性の表示フィルター")
         self.filter_combo.setToolTip(
-            "先頭の選択ノードの表示状態で絞り込みます。\n"
-            "channelboxは非keyableでChannel Boxに表示する属性です。"
+            "既定の5種類は末尾の基準ノードの表示状態で絞り込みます。\n"
+            "Customは登録したJSONの属性pathを使用します。"
         )
         self.mode_label = qt.QLabel("Mode:", self)
         self.filter_label = qt.QLabel("Attribute Filter:", self)
+        self.filter_fallback_label = qt.QLabel(self)
+        self.filter_fallback_label.setObjectName("customFilterFallbackNotice")
+        self.filter_fallback_label.setWordWrap(True)
+        self.filter_fallback_label.hide()
         self.search_label = qt.QLabel("Attribute Search:", self)
         self.search_edit = qt.QLineEdit(self)
         self.search_edit.setObjectName("attributeSearchEdit")
@@ -794,6 +1612,22 @@ class ChannelBoxWidget(qt.QWidget):
         self.header_label.setSizePolicy(
             qt.QSizePolicy.Policy.Ignored, qt.QSizePolicy.Policy.Preferred
         )
+        self.selection_count_label = qt.QLabel(self)
+        self.selection_count_label.setObjectName("nodeSelectionCountLabel")
+        self.selection_count_label.setAlignment(
+            qt.Qt.AlignmentFlag.AlignCenter
+        )
+        self.selection_count_label.setFrameShape(qt.QFrame.Shape.StyledPanel)
+        self.selection_count_label.setMargin(3)
+        self.selection_count_label.setSizePolicy(
+            qt.QSizePolicy.Policy.Fixed, qt.QSizePolicy.Policy.Preferred
+        )
+        self.selection_count_label.setFocusPolicy(qt.Qt.FocusPolicy.NoFocus)
+        self.selection_count_label.hide()
+        self.header_layout = qt.QHBoxLayout()
+        self.header_layout.setContentsMargins(0, 0, 0, 0)
+        self.header_layout.addWidget(self.header_label)
+        self.header_layout.addWidget(self.selection_count_label)
         self.context_menu = qt.QMenu(self)
         self.step_settings_menu = qt.QMenu("Step設定", self)
         self.reset_all_steps_action = qt.QAction(
@@ -815,19 +1649,18 @@ class ChannelBoxWidget(qt.QWidget):
             "選択中でStep欄を持つ属性の保存設定を削除して初期値へ戻す"
         )
         step_actions = cast(_MenuActions, self.step_settings_menu)
-        step_actions.addAction(self.reset_all_steps_action)
         step_actions.addAction(self.reset_selected_steps_action)
-        self.refresh_action = qt.QAction("表示を更新", self)
-        self.refresh_action.setToolTip("属性の構成と入力範囲を読み直す")
-        self.refresh_action.triggered.connect(self.refresh)
+        step_actions.addAction(self.reset_all_steps_action)
         self.context_menu.addMenu(self.step_settings_menu)
-        self.context_menu.addSeparator()
-        cast(_MenuActions, self.context_menu).addAction(self.refresh_action)
         self.message_label = qt.QLabel(self)
         self.message_label.setWordWrap(True)
         self.message_label.hide()
         self.table_view = ChannelTableView(self)
         self.scroll_area = self.table_view
+        self.setup_panel = CustomFilterSetupPanel(
+            self.custom_filter_registry, self
+        )
+        self.setup_panel.hide()
         self.empty_label = qt.QLabel("", self)
         self.empty_label.setWordWrap(True)
         layout = qt.QVBoxLayout(self)
@@ -835,9 +1668,11 @@ class ChannelBoxWidget(qt.QWidget):
         layout.setSpacing(6)
         layout.setMenuBar(self.menu_bar)
         layout.addLayout(controls_layout)
-        layout.addWidget(self.header_label)
+        layout.addWidget(self.filter_fallback_label)
+        layout.addLayout(self.header_layout)
         layout.addWidget(self.empty_label)
         layout.addWidget(self.scroll_area, 1)
+        layout.addWidget(self.setup_panel, 1)
         layout.addWidget(self.message_label)
 
         # 選択・表示更新と、ユーザーによる値変更の経路を分離する
@@ -853,6 +1688,9 @@ class ChannelBoxWidget(qt.QWidget):
             sweep.finished.connect(self.controller.state_edit_session.finish)
             self.controller.state_edit_session.finished.connect(sweep.finish)
         self.controller.rows_changed.connect(self._rebuild_rows)
+        self.controller.selection_invalidated.connect(
+            self._dispose_node_name_editor
+        )
         self.controller.rows_about_to_change.connect(
             self._cancel_transient_input
         )
@@ -860,6 +1698,11 @@ class ChannelBoxWidget(qt.QWidget):
         self.controller.operation_reported.connect(self._show_operation_report)
         self.controller.mode_changed.connect(self._sync_mode)
         self.controller.filter_changed.connect(self._sync_filter)
+        self.custom_filter_registry.changed.connect(
+            self._custom_filters_changed
+        )
+        self.setup_panel.error_occurred.connect(self._show_error)
+        self.controller.time_changed.connect(self._interrupt_value_input)
         self.mode_combo.currentIndexChanged.connect(self._change_mode)
         self.filter_combo.currentIndexChanged.connect(self._change_filter)
         self.copy_all_values_action.triggered.connect(self._copy_all_values)
@@ -890,9 +1733,91 @@ class ChannelBoxWidget(qt.QWidget):
             action.toggled.connect(
                 partial(self._change_search_visibility, value)
             )
+        self.manage_custom_filters_action.triggered.connect(
+            self._show_custom_filter_manager
+        )
         self.search_edit.textChanged.connect(self._queue_search_filter)
         self._sync_filter()
         self.controller.refresh()
+
+    def _populate_filter_combo(self) -> None:
+        """既定の5件に続き、有効で正常な共有フィルターを登録順に並べる。"""
+        self.filter_combo.clear()
+        for label, value in _ATTRIBUTE_FILTER_OPTIONS:
+            self.filter_combo.addItem(label, value)
+        active: dict[str, CustomFilterSelection] = {}
+        available = [
+            entry
+            for entry in self.custom_filter_registry.entries
+            if entry.enabled and entry.definition is not None
+        ]
+        counts = Counter(
+            entry.definition.name
+            for entry in available
+            if entry.definition is not None
+        )
+        for index, entry in enumerate(available, start=1):
+            definition = entry.definition
+            if definition is None:
+                continue
+            label = f"Custom: {definition.name}"
+            if counts[definition.name] > 1:
+                label += f" ({Path(entry.path).name}, {index})"
+            selection = CustomFilterSelection(entry.path, definition)
+            active[entry.path] = selection
+            if not self._setup_mode_active:
+                self.filter_combo.addItem(label, selection)
+                self.filter_combo.setItemData(
+                    self.filter_combo.count() - 1,
+                    "定義ファイル: "
+                    + entry.path
+                    + "\n基準ノードの型に定義がない場合は、"
+                    "keyable + channelbox へ戻ります。",
+                    qt.Qt.ItemDataRole.ToolTipRole,
+                )
+        self._active_custom_filters = active
+
+    def _custom_filters_changed(self) -> None:
+        """登録変更を ComboBox と両モードの選択へ安全に反映する。"""
+        if self.controller.is_disposed:
+            return
+        previous = self._active_custom_filters
+        blocked = self.filter_combo.blockSignals(True)
+        try:
+            self._populate_filter_combo()
+        finally:
+            self.filter_combo.blockSignals(blocked)
+        for path in previous.keys() - self._active_custom_filters.keys():
+            self.controller.clear_custom_filter(path)
+        for path, selection in self._active_custom_filters.items():
+            if previous.get(path) != selection:
+                self.controller.replace_custom_filter(selection)
+        self._sync_filter()
+
+    def _show_custom_filter_manager(self) -> None:
+        """設定メニューから同じ管理画面を再利用して表示する。"""
+        dialog = self.custom_filter_dialog
+        if dialog is None or not qt.isValid(dialog):
+            dialog = CustomFilterManagerDialog(
+                self.custom_filter_registry, self
+            )
+            dialog.created.connect(self._edit_created_filter)
+            self.custom_filter_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _edit_created_filter(self, path: str) -> None:
+        """新規定義を作成したら設定モードで編集対象にする。"""
+        if self.controller.mode != "custom_filter_setup":
+            self.controller.set_mode("custom_filter_setup")
+        self.setup_panel.set_target(path)
+        if (
+            self.custom_filter_dialog is not None
+            and self.setup_panel.target_combo.currentData() == path
+        ):
+            self.custom_filter_dialog.hide()
+            self.activateWindow()
 
     def _set_wheel_editing_without_focus(self, enabled: bool) -> None:
         """表示中の全値入力行へ、メニューで選んだホイール方針を反映する。"""
@@ -925,7 +1850,9 @@ class ChannelBoxWidget(qt.QWidget):
 
     def _sync_search_visibility(self) -> None:
         """検索欄を表示方針へ揃え、見えない検索条件を無効化する。"""
-        visible = self._search_should_be_visible()
+        visible = (
+            not self._setup_mode_active and self._search_should_be_visible()
+        )
         self.search_label.setVisible(visible)
         self.search_edit.setVisible(visible)
         self._search_timer.stop()
@@ -969,12 +1896,26 @@ class ChannelBoxWidget(qt.QWidget):
 
     def _change_mode(self, index: int) -> None:
         """編集中の値を通常のフォーカス移動で確定してから表示を切り替える。"""
+        mode = self.mode_combo.itemData(index)
+        if mode not in ("values", "states", "custom_filter_setup"):
+            return
+        if (
+            self.controller.mode == "custom_filter_setup"
+            and mode != "custom_filter_setup"
+            and not self.setup_panel.confirm_leave()
+        ):
+            self._sync_mode()
+            return
         self._prepare_view_change()
-        self.controller.set_mode("states" if index == 1 else "values")
+        self.controller.set_mode(mode)
 
     def _change_filter(self, index: int) -> None:
         """編集中の値を確定し、現在のモードのフィルターを切り替える。"""
         value = self.filter_combo.itemData(index)
+        if isinstance(value, CustomFilterSelection):
+            self._prepare_view_change()
+            self.controller.set_attribute_filter(value)
+            return
         if value in ("all", "visible", "keyable", "channel_box", "hidden"):
             self._prepare_view_change()
             self.controller.set_attribute_filter(value)
@@ -995,24 +1936,66 @@ class ChannelBoxWidget(qt.QWidget):
 
     def _sync_mode(self) -> None:
         """controllerからのモード変更を属性へ入力せず表示へ反映する。"""
+        setup = self.controller.mode == "custom_filter_setup"
+        limited = self.controller.selection_limit_exceeded
+        self._setup_mode_active = setup
         blocked = self.mode_combo.blockSignals(True)
         try:
             self.mode_combo.setCurrentIndex(
-                1 if self.controller.mode == "states" else 0
+                self.mode_combo.findData(self.controller.mode)
             )
         finally:
             self.mode_combo.blockSignals(blocked)
+        self.header_label.setVisible(not setup and not limited)
+        if setup:
+            self.selection_count_label.hide()
+        self.table_view.setVisible(not setup and not limited)
+        self.empty_label.setVisible(not setup or limited)
+        self.setup_panel.setVisible(setup and not limited)
+        blocked = self.filter_combo.blockSignals(True)
+        try:
+            self._populate_filter_combo()
+        finally:
+            self.filter_combo.blockSignals(blocked)
+        self._sync_filter()
 
     def _sync_filter(self) -> None:
         """モードごとのフィルター選択を再入力せずComboBoxへ反映する。"""
+        selected = self.controller.attribute_filter
+        if isinstance(selected, CustomFilterSelection):
+            # QtのitemData比較はPython objectの同値より同一性を優先する場合がある
+            index = next(
+                (
+                    index
+                    for index in range(self.filter_combo.count())
+                    if (
+                        isinstance(
+                            candidate := self.filter_combo.itemData(index),
+                            CustomFilterSelection,
+                        )
+                        and candidate.path == selected.path
+                    )
+                ),
+                -1,
+            )
+        else:
+            index = self.filter_combo.findData(selected)
         blocked = self.filter_combo.blockSignals(True)
         try:
-            self.filter_combo.setCurrentIndex(
-                self.filter_combo.findData(self.controller.attribute_filter)
-            )
+            self.filter_combo.setCurrentIndex(index)
         finally:
             self.filter_combo.blockSignals(blocked)
         self._sync_search_visibility()
+
+    def _sync_filter_fallback_notice(self) -> None:
+        """カスタム定義に基準ノード型がない場合だけ代替条件を示す。"""
+        node_type = self.controller.custom_filter_fallback_node_type
+        self.filter_fallback_label.setText(
+            f"{node_type} 型: keyable + channelbox（JSON に未定義）"
+            if node_type is not None
+            else ""
+        )
+        self.filter_fallback_label.setVisible(node_type is not None)
 
     def _remember_scroll_anchor(self) -> None:
         """表示先頭の属性pathを記録して、設定行の増減後も位置を保つ。"""
@@ -1041,7 +2024,7 @@ class ChannelBoxWidget(qt.QWidget):
                 return
 
     def contextMenuEvent(self, event: qt.QtGui.QContextMenuEvent) -> None:
-        """画面の余白から、値を書き込まない表示更新を開く。"""
+        """画面の余白からStep設定を開く。"""
         self.context_menu.popup(event.globalPos())
         event.accept()
 
@@ -1069,15 +2052,141 @@ class ChannelBoxWidget(qt.QWidget):
         self.message_label.clear()
         self.message_label.hide()
 
+    def _show_name_conflict(self, conflicted: bool) -> None:
+        """外部改名と未確定入力の競合を、既存の通知欄へ示す。"""
+        if conflicted:
+            self.message_label.setText(_NAME_CONFLICT_MESSAGE)
+            self.message_label.show()
+        elif self.message_label.text() == _NAME_CONFLICT_MESSAGE:
+            self._clear_message()
+
+    def _dispose_node_name_editor(self) -> None:
+        """旧ノードへフォーカス移動で書き込む前に名前入力を停止する。"""
+        editor, self.node_name_edit = self.node_name_edit, None
+        binding, self._node_name_binding = self._node_name_binding, None
+        self._node_name_id = None
+        if editor is not None and qt.isValid(editor):
+            editor.setInputEnabled(False)
+        if binding is not None:
+            binding.dispose()
+        if editor is not None and qt.isValid(editor):
+            self.header_layout.removeWidget(editor)
+            editor.hide()
+            editor.deleteLater()
+        self.header_label.show()
+        self.selection_count_label.hide()
+
+    def _sync_node_name_editor(self) -> None:
+        """基準ノードの実体が変わった場合だけ名前入力欄を接続し直す。"""
+        names = self.controller.node_names
+        representative = self.controller.representative_node_name
+        node_id = self.controller.node_ids[-1] if names else None
+        binding = self._node_name_binding
+        editor = self.node_name_edit
+        if (
+            representative is not None
+            and node_id == self._node_name_id
+            and binding is not None
+            and not binding.is_disposed
+            and editor is not None
+            and qt.isValid(editor)
+        ):
+            binding.refresh()
+        else:
+            self._dispose_node_name_editor()
+            if representative is not None and node_id is not None:
+                # Mayaの一意なpathから取得し、選択末尾の実体だけを接続する
+                binding = MayaNodeNameBinding(
+                    Nodes().existing(representative), parent=self
+                )
+                try:
+                    editor = _NodeNameLineEdit(binding, self)
+                except Exception:
+                    binding.dispose()
+                    raise
+                editor.setObjectName("nodeNameEdit")
+                editor.setAccessibleName("基準ノード名")
+                editor.edit_failed.connect(self._show_error)
+                editor.conflict_changed.connect(self._show_name_conflict)
+                self.header_layout.insertWidget(1, editor, 1)
+                self.node_name_edit = editor
+                self._node_name_binding = binding
+                self._node_name_id = node_id
+                self.header_label.hide()
+        if representative is not None and self.node_name_edit is not None:
+            selection_tooltip = (
+                f"選択: {len(names)} ノード（末尾が基準）\n" + "\n".join(names)
+            )
+            self.node_name_edit.setToolTip(selection_tooltip)
+            if len(names) > 1:
+                self.selection_count_label.setText(f"{len(names)} ノード")
+                self.selection_count_label.setAccessibleName(
+                    f"{len(names)} ノード選択中"
+                )
+                self.selection_count_label.setToolTip(selection_tooltip)
+                self.selection_count_label.show()
+            else:
+                self.selection_count_label.hide()
+        else:
+            self.header_label.setText("ノードを選択してください")
+            self.header_label.setToolTip("")
+            self.selection_count_label.hide()
+
     def _cancel_transient_input(self) -> None:
         """Bindingを破棄する前に、古い選択への入力とメニューを終了する。"""
         self._search_timer.stop()
         self.table_view.finish_numeric_edit(commit=False)
         self.context_menu.close()
         for widget in self.row_widgets:
-            widget.context_menu.close()
+            if isinstance(widget, AttributeRowWidget):
+                widget.context_menu.close()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
+
+    def _interrupt_value_input(self, was_editing: bool) -> None:
+        """時刻変更前のドラッグと未確定数値を、新しい時刻へ持ち越さない。"""
+        self.table_view.finish_numeric_edit(commit=False)
+        if was_editing:
+            for widget in self.row_widgets:
+                if isinstance(widget.editor, FloatSliderSpinBox):
+                    widget.editor.slider.finish_edit()
+
+        # 再生中の全行走査を避け、フォーカス行に未確定文字がある場合だけ読む
+        focused = cast(
+            Callable[[], qt.QWidget | None],
+            getattr(qt.QApplication, "focusWidget"),
+        )()
+        if focused is None or not self.isAncestorOf(focused):
+            return
+        owner: qt.QWidget | None = focused
+        while owner is not None and not isinstance(owner, AttributeRowWidget):
+            owner = cast(
+                Callable[[], qt.QWidget | None], getattr(owner, "parentWidget")
+            )()
+        if owner is None:
+            return
+        editor = owner.editor
+        if isinstance(editor, EnumComboBox):
+            editor.hidePopup()
+        if not isinstance(editor, (FloatValueStepSpinBox, FloatSliderSpinBox)):
+            return
+        children = cast(
+            Callable[[type[qt.QLineEdit]], list[qt.QLineEdit]],
+            getattr(editor.spin_box, "findChildren"),
+        )(qt.QLineEdit)
+        if not any(child.isModified() for child in children):
+            return
+        binding = owner.row.binding
+        assert isinstance(binding, MayaFloatPlugsBinding)
+        binding.refresh()
+        # 入力通知を止めて再描画し、未確定文字だけを破棄する
+        blocker = qt.QtCore.QSignalBlocker(editor.spin_box)
+        try:
+            editor.spin_box.setValue(
+                binding.view_model.presentation.to_display(binding.value)
+            )
+        finally:
+            del blocker
 
     def _apply_numeric_input(self, keys: object, value: float) -> None:
         """Qtの明示入力通知を受け、凍結した選択行へ一度だけ書き込む。"""
@@ -1230,7 +2339,38 @@ class ChannelBoxWidget(qt.QWidget):
         selected = self._action_keys(key)
         try:
             if action == "align":
+                self._clear_message()
                 self.controller.align_selected_values(selected)
+            elif action in ("key_selected", "breakdown_selected"):
+                self._clear_message()
+                self.controller.set_keyframes_selected(
+                    selected, breakdown=action == "breakdown_selected"
+                )
+            elif action in ("mute_selected", "unmute_selected"):
+                self._clear_message()
+                self.controller.set_muted_selected(
+                    selected, muted=action == "mute_selected"
+                )
+            elif action == "animation_copy_selected":
+                self._clear_message()
+                self.controller.copy_animation_curves_selected(selected)
+            elif action == "animation_paste_selected":
+                self._clear_message()
+                self.controller.paste_animation_curves_to_selected(selected)
+            elif action == "animation_cut_selected":
+                self._clear_message()
+                self.controller.cut_animation_curves_selected(selected)
+            elif action == "animation_delete_selected":
+                self._clear_message()
+                self.controller.delete_animation_curves_selected(selected)
+            elif action in (
+                "animation_layer_add_selected",
+                "animation_layer_remove_selected",
+            ):
+                self._clear_message()
+                self.controller.edit_animation_layers_selected(
+                    selected, add=action == "animation_layer_add_selected"
+                )
             elif action == "copy_selected":
                 self.controller.copy_selected_values(selected)
             elif action == "paste_selected":
@@ -1242,6 +2382,76 @@ class ChannelBoxWidget(qt.QWidget):
                 self.controller.set_selected_display(selected, action)
             else:
                 raise ValueError(f"未対応の選択操作です: {action}")
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _set_keyframes_all_keyable(self, breakdown: bool = False) -> None:
+        """選択ノードの全Keyable属性に現在時刻の指定種別のキーを設定する。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.set_keyframes_all_keyable(breakdown=breakdown)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _edit_animation_layers_all_keyable(self, add: bool) -> None:
+        """選択ノードの全Keyable属性を選択レイヤへ追加・除去する。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.edit_animation_layers_all_keyable(add=add)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _set_muted_all_visible(self, muted: bool) -> None:
+        """各選択ノードのChannel Box表示属性を一括ミュート・解除する。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.set_muted_all_visible(muted=muted)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _copy_animation_curves_all_visible(self) -> None:
+        """各選択ノードのChannel Box表示属性の全時間の曲線をコピーする。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.copy_animation_curves_all_visible()
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _paste_animation_curves_same_attributes(self) -> None:
+        """コピー元と同じ正式属性パスへ曲線を貼り付ける。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.paste_animation_curves_same_attributes()
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _cut_animation_curves_all_visible(self) -> None:
+        """各選択ノードのChannel Box表示属性の全時間のキーをカットする。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.cut_animation_curves_all_visible()
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _delete_animation_curves_all_visible(self) -> None:
+        """各選択ノードのChannel Box表示属性の全時間のキーを削除する。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.delete_animation_curves_all_visible()
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
@@ -1277,6 +2487,123 @@ class ChannelBoxWidget(qt.QWidget):
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
+    def _align_filtered_values(
+        self, display_filter: ChannelAttributeFilter
+    ) -> None:
+        """表示ノードの属性状態に合う全属性を同ノードの値へ揃える。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.align_filtered_values(display_filter)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _prepare_round_menu(self, widget: AttributeRowWidget) -> None:
+        """開いた数値行の表示桁数まで、各対象範囲の候補を遅延生成する。"""
+        decimals = widget.round_decimal_limit()
+        if widget.round_menu_decimals == decimals:
+            return
+        for scope, submenu in widget.round_scope_menus.items():
+            submenu.clear()
+            for digits in range(decimals + 1):
+                label = (
+                    "0（整数）"
+                    if digits == 0
+                    else f"0.{_ROUND_DIGIT_EXAMPLE[:digits]}"
+                )
+                item = qt.QAction(label, submenu)
+                item.setObjectName(f"round_{scope}_{digits}")
+                item.setToolTip(
+                    f"各属性の現在の実値を小数{digits}桁へ四捨五入"
+                )
+                item.triggered.connect(
+                    partial(self._round_values, widget, scope, digits)
+                )
+                cast(_MenuActions, submenu).addAction(item)
+        widget.round_menu_decimals = decimals
+
+    def _round_values(
+        self, widget: AttributeRowWidget, scope: _RoundScope, decimals: int
+    ) -> None:
+        """選択範囲内の各数値属性を現在値から個別に四捨五入する。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            if scope == "selected":
+                key = (widget.row.attribute.path, widget.row.attribute.kind)
+                self.controller.round_selected_values(
+                    self._action_keys(key), decimals
+                )
+            else:
+                self.controller.round_filtered_values(scope, decimals)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _prepare_xyz_round_menu(self, widget: AttributeRowWidget) -> None:
+        """開いた行の表示桁数に合わせてXYZ丸め候補を遅延生成する。"""
+        decimals = widget.round_decimal_limit()
+        if widget.xyz_round_menu_decimals == decimals:
+            return
+        kind = widget.xyz_round_kind
+        if kind is None:
+            return
+
+        # 各子補償方法へ同じ桁数候補を設ける
+        for (
+            preserve_translation,
+            child_attr,
+        ), submenu in widget.xyz_round_leaf_menus.items():
+            submenu.clear()
+            for digits in range(decimals + 1):
+                label = (
+                    "0（整数）"
+                    if digits == 0
+                    else f"0.{_ROUND_DIGIT_EXAMPLE[:digits]}"
+                )
+                item = qt.QAction(label, submenu)
+                item.setObjectName(
+                    f"round_{kind}_xyz_"
+                    f"{'position_pose' if preserve_translation else 'pose'}_"
+                    f"{child_attr}_{digits}"
+                )
+                item.setToolTip(
+                    f"選択ノードの{kind}XYZを小数{digits}桁へ四捨五入"
+                )
+                item.triggered.connect(
+                    partial(
+                        self._round_transform_xyz,
+                        kind,
+                        digits,
+                        preserve_translation,
+                        child_attr,
+                    )
+                )
+                cast(_MenuActions, submenu).addAction(item)
+        widget.xyz_round_menu_decimals = decimals
+
+    def _round_transform_xyz(
+        self,
+        kind: RoundTransformKind,
+        decimals: int,
+        preserve_translation: bool,
+        joint_child_compensation_attr: _JointChildCompensationAttr,
+    ) -> None:
+        """選択中の各Transform／Jointの指定XYZを子補償付きで丸める。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.round_transform_xyz(
+                kind,
+                decimals,
+                compensate_child_translate=preserve_translation,
+                joint_child_compensation_attr=joint_child_compensation_attr,
+            )
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
     def _paste_copied_values_to_selected(self) -> None:
         """OS clipboardの項目数に応じた規則で選択属性へ貼り付ける。"""
         self.state_sweep.finish()
@@ -1289,8 +2616,78 @@ class ChannelBoxWidget(qt.QWidget):
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
+    def _freeze_transforms(
+        self, component: Literal["translate", "rotate", "scale", "all"]
+    ) -> None:
+        """選択中のtransform系ノードへ指定成分のフリーズを適用する。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.freeze_transforms(component)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _consolidate_rotation(self, destination: RotationDestination) -> None:
+        """選択中の各ノードの現在回転を指定属性へ集約する。"""
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        try:
+            self.controller.consolidate_rotation(destination)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _open_rotation_set_window(
+        self, initial_target: RotationDestination
+    ) -> None:
+        """右クリックした属性を初期設定先にして姿勢維持Windowを開く。"""
+        from .. import bd_rotation_preserving_pose
+
+        click_position = qt.QCursor.pos()
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        self.controller.state_edit_session.finish()
+        self.controller.finish_value_edit()
+        try:
+            bd_rotation_preserving_pose.show(initial_target, click_position)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
+    def _open_child_compensated_set_window(
+        self, initial_target: RoundTransformKind
+    ) -> None:
+        """右クリックした属性を初期設定先にして子補償Windowを開く。"""
+        from .. import bd_child_compensated_set
+
+        click_position = qt.QCursor.pos()
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        self._clear_message()
+        self.controller.state_edit_session.finish()
+        self.controller.finish_value_edit()
+        try:
+            if initial_target == "translate":
+                bd_child_compensated_set.show(
+                    "translate", "translate", click_position
+                )
+            else:
+                bd_child_compensated_set.show(
+                    "rotation", initial_target, click_position
+                )
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+
     def _prepare_edit_menu(self) -> None:
         """現在のnode・行選択・clipboardに合わせて編集メニューを準備する。"""
+        if self.controller.mode == "custom_filter_setup":
+            self.copy_all_values_action.setEnabled(False)
+            self.copy_selected_values_action.setEnabled(False)
+            self.paste_selected_values_action.setEnabled(False)
+            for action in self.paste_copied_values_actions.values():
+                action.setEnabled(False)
+            return
         has_nodes = bool(self.controller.node_names)
         has_value_selection = self.controller.mode == "values" and bool(
             self.table_view.selected_keys()
@@ -1300,7 +2697,6 @@ class ChannelBoxWidget(qt.QWidget):
         self.copy_selected_values_action.setEnabled(
             has_nodes and has_value_selection
         )
-        self.paste_copied_values_menu.setEnabled(can_paste)
         for action in self.paste_copied_values_actions.values():
             action.setEnabled(can_paste)
         self.paste_selected_values_action.setEnabled(
@@ -1395,69 +2791,145 @@ class ChannelBoxWidget(qt.QWidget):
             self._changing_steps = False
         self._prepare_step_settings_menu()
 
-    def _prepare_row_menu(
-        self, widget: AttributeRowWidget | AttributeStateRowWidget
-    ) -> None:
+    def _prepare_row_menu(self, widget: AttributeRowWidget) -> None:
         """右クリックした行を選択対象に含め、全選択の状態でメニューを準備する。"""
         key = (widget.row.attribute.path, widget.row.attribute.kind)
         if key not in self.table_view.selected_keys():
             self.table_view.select_key(key)
-        if isinstance(widget, AttributeRowWidget):
-            selected = set(self.table_view.selected_keys())
-            has_nodes = bool(self.controller.node_names)
-            has_selection = bool(selected)
-            can_paste = has_nodes and self.controller.can_paste_values()
-            widget.copy_all_values_action.setEnabled(has_nodes)
-            widget.copy_selected_values_action.setEnabled(
-                has_nodes and has_selection
+        has_nodes = bool(self.controller.node_names)
+        has_selection = bool(self.table_view.selected_keys())
+        has_layers = bool(self.controller.selected_animation_layers())
+        for menu, selected_action, all_action in (
+            (
+                widget.animation_layer_add_menu,
+                widget.animation_layer_add_selected_action,
+                widget.animation_layer_add_all_keyable_action,
+            ),
+            (
+                widget.animation_layer_remove_menu,
+                widget.animation_layer_remove_selected_action,
+                widget.animation_layer_remove_all_keyable_action,
+            ),
+        ):
+            menu.setEnabled(has_nodes and has_layers)
+            selected_action.setEnabled(
+                has_nodes and has_layers and has_selection
             )
-            widget.paste_copied_values_menu.setEnabled(can_paste)
-            for action in widget.paste_copied_values_actions.values():
-                action.setEnabled(can_paste)
-            widget.paste_selected_values_action.setEnabled(
-                can_paste and has_selection
-            )
-            self._set_paste_selected_tooltip(
-                widget.paste_selected_values_action
-            )
-            widget.align_action.setEnabled(
+            all_action.setEnabled(has_nodes and has_layers)
+        selected = set(self.table_view.selected_keys())
+        can_paste = has_nodes and self.controller.can_paste_values()
+        can_paste_animation = (
+            has_nodes and self.controller.can_paste_animation_curves()
+        )
+        widget.animation_copy_selected_action.setEnabled(
+            has_nodes and has_selection
+        )
+        widget.animation_copy_all_action.setEnabled(has_nodes)
+        widget.animation_paste_same_action.setEnabled(can_paste_animation)
+        widget.animation_paste_selected_action.setEnabled(
+            can_paste_animation and has_selection
+        )
+        widget.animation_cut_selected_action.setEnabled(
+            has_nodes and has_selection
+        )
+        widget.animation_cut_all_action.setEnabled(has_nodes)
+        widget.animation_delete_selected_action.setEnabled(
+            has_nodes and has_selection
+        )
+        widget.animation_delete_all_action.setEnabled(has_nodes)
+        widget.copy_all_values_action.setEnabled(has_nodes)
+        widget.copy_selected_values_action.setEnabled(
+            has_nodes and has_selection
+        )
+        for action in widget.paste_copied_values_actions.values():
+            action.setEnabled(can_paste)
+        widget.paste_selected_values_action.setEnabled(
+            can_paste and has_selection
+        )
+        if widget.round_menu is not None:
+            widget.round_scope_menus["selected"].setEnabled(
                 any(
                     isinstance(row, ChannelRow)
+                    and isinstance(row.binding, MayaFloatPlugsBinding)
                     and (row.attribute.path, row.attribute.kind) in selected
-                    and row.binding.is_mixed
-                    and row.binding.view_model.set_value_command.can_execute
-                    and (
-                        not isinstance(row.binding, MayaEnumPlugsBinding)
-                        or row.binding.is_value_defined
-                    )
                     for row in self.controller.rows
                 )
             )
+        for xyz_menu in widget.xyz_round_menus.values():
+            xyz_menu.menuAction().setVisible(
+                self.controller.has_transform_context()
+            )
+        if widget.child_set_action is not None:
+            widget.child_set_action.setVisible(
+                self.controller.can_set_child_compensated_value()
+            )
+        if widget.rotation_set_action is not None:
+            widget.rotation_set_action.setVisible(
+                self.controller.can_set_rotation_preserving_pose()
+            )
+        if widget.rotation_menu is not None:
+            widget.rotation_menu.menuAction().setVisible(
+                self.controller.can_consolidate_rotation()
+            )
+            widget.rotation_actions["jointOrient"].setVisible(
+                bool(
+                    self.controller.representative_node_name
+                    and cmds.nodeType(self.controller.representative_node_name)
+                    == "joint"
+                )
+            )
+        self._set_paste_selected_tooltip(widget.paste_selected_values_action)
+        show_freeze = self.controller.has_transform_context()
+        widget.freeze_separator_action.setVisible(show_freeze)
+        widget.freeze_menu.menuAction().setVisible(show_freeze)
+        widget.freeze_translate_action.setEnabled(
+            self.controller.can_freeze_translation()
+        )
+        widget.align_action.setEnabled(
+            any(
+                isinstance(row, ChannelRow)
+                and (row.attribute.path, row.attribute.kind) in selected
+                and row.binding.is_mixed
+                and row.binding.view_model.set_value_command.can_execute
+                and (
+                    not isinstance(row.binding, MayaEnumPlugsBinding)
+                    or row.binding.is_value_defined
+                )
+                for row in self.controller.rows
+            )
+        )
+        widget.align_menu.setEnabled(len(self.controller.node_names) > 1)
+        for action in widget.align_filtered_actions.values():
+            action.setEnabled(len(self.controller.node_names) > 1)
         self._prepare_step_settings_menu()
 
-    def _add_selection_menu(
-        self, widget: AttributeRowWidget | AttributeStateRowWidget
-    ) -> None:
-        """値編集と状態編集の両モードに、選択属性の状態操作を追加する。"""
+    def _add_selection_menu(self, widget: AttributeRowWidget) -> None:
+        """値編集の行メニューに、選択属性の状態操作を追加する。"""
         key = (widget.row.attribute.path, widget.row.attribute.kind)
         menu = widget.context_menu
         menu.addSeparator()
-        if isinstance(widget, AttributeRowWidget):
-            menu.addMenu(self.step_settings_menu)
-            menu.addSeparator()
-        for action, label in (
-            ("lock", "ロック"),
-            ("unlock", "ロック解除"),
-            ("keyable", "Keyable"),
-            ("channel_box", "ChannelBox"),
-            ("hidden", "Hide"),
+        menu.addMenu(self.step_settings_menu)
+        menu.addSeparator()
+        for title, actions in (
+            ("ロック", (("lock", "ロック"), ("unlock", "解除"))),
+            (
+                "表示",
+                (
+                    ("keyable", "Keyable"),
+                    ("channel_box", "ChannelBox"),
+                    ("hidden", "Hide"),
+                ),
+            ),
         ):
-            item = qt.QAction(label, menu)
-            item.setObjectName(f"selected_{action}")
-            item.triggered.connect(
-                partial(self._run_selected_action, action, key)
-            )
-            cast(_MenuActions, menu).addAction(item)
+            group = qt.QMenu(title, menu)
+            for action, label in actions:
+                item = qt.QAction(label, group)
+                item.setObjectName(f"selected_{action}")
+                item.triggered.connect(
+                    partial(self._run_selected_action, action, key)
+                )
+                cast(_MenuActions, group).addAction(item)
+            menu.addMenu(group)
         menu.aboutToShow.connect(partial(self._prepare_row_menu, widget))
 
     def _rebuild_rows(self) -> None:
@@ -1465,20 +2937,50 @@ class ChannelBoxWidget(qt.QWidget):
         self.state_sweep.clear()
         self.lock_sweep.clear()
         for widget in self.row_widgets:
-            widget.context_menu.close()
+            if isinstance(widget, AttributeRowWidget):
+                widget.context_menu.close()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
             widget.hide()
         self.row_widgets = ()
         names = self.controller.node_names
-        if names:
-            self.header_label.setText(names[0].rsplit("|", 1)[-1])
-            self.header_label.setToolTip(
-                f"選択: {len(names)} ノード（先頭が基準）\n" + "\n".join(names)
+        if self.controller.selection_limit_exceeded:
+            # 旧対象のViewを消し、どのモードでも上限の理由を表示する
+            self._dispose_node_name_editor()
+            self.header_label.hide()
+            self.table_view.set_rows([], preserve_selection=False)
+            self._table_node_ids = ()
+            self._scroll_anchor = None
+            self.setup_panel.set_node(None, None, ())
+            self.table_view.hide()
+            self.setup_panel.hide()
+            self.filter_fallback_label.hide()
+            self.empty_label.setText(_SELECTION_LIMIT_MESSAGE)
+            self.empty_label.show()
+            self._prepare_edit_menu()
+            return
+        if self.controller.mode == "custom_filter_setup":
+            self.setup_panel.show()
+            self._dispose_node_name_editor()
+            self.header_label.hide()
+            self.selection_count_label.hide()
+            self.table_view.set_rows([])
+            self._table_node_ids = self.controller.node_ids
+            node_name = self.controller.representative_node_name
+            node_type = (
+                cast(str, cmds.nodeType(node_name))
+                if node_name is not None
+                else None
             )
-        else:
-            self.header_label.setText("ノードを選択してください")
-            self.header_label.setToolTip("")
+            self.setup_panel.set_node(
+                node_name, node_type, self.controller.setup_attributes
+            )
+            self.filter_fallback_label.hide()
+            self.empty_label.hide()
+            self._prepare_edit_menu()
+            return
+        self.table_view.show()
+        self._sync_node_name_editor()
         widgets: list[AttributeRowWidget | AttributeStateRowWidget] = []
         try:
             for row in self.controller.rows:
@@ -1515,8 +3017,90 @@ class ChannelBoxWidget(qt.QWidget):
                             self.wheel_editing_action.isChecked()
                         ),
                     )
+                    for (
+                        display_filter,
+                        action,
+                    ) in widget.align_filtered_actions.items():
+                        action.triggered.connect(
+                            partial(
+                                self._align_filtered_values,
+                                display_filter,
+                            )
+                        )
                     widget.step_changed.connect(
                         partial(self._apply_step_value, key)
+                    )
+                    widget.set_key_all_keyable_action.triggered.connect(
+                        partial(self._set_keyframes_all_keyable, False)
+                    )
+                    widget.set_key_selected_action.triggered.connect(
+                        partial(self._run_selected_action, "key_selected", key)
+                    )
+                    widget.set_breakdown_all_keyable_action.triggered.connect(
+                        partial(self._set_keyframes_all_keyable, True)
+                    )
+                    widget.set_breakdown_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action,
+                            "breakdown_selected",
+                            key,
+                        )
+                    )
+                    widget.mute_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action, "mute_selected", key
+                        )
+                    )
+                    widget.mute_all_animation_action.triggered.connect(
+                        partial(self._set_muted_all_visible, True)
+                    )
+                    widget.unmute_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action, "unmute_selected", key
+                        )
+                    )
+                    widget.unmute_all_animation_action.triggered.connect(
+                        partial(self._set_muted_all_visible, False)
+                    )
+                    widget.animation_copy_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action,
+                            "animation_copy_selected",
+                            key,
+                        )
+                    )
+                    widget.animation_copy_all_action.triggered.connect(
+                        self._copy_animation_curves_all_visible
+                    )
+                    widget.animation_paste_same_action.triggered.connect(
+                        self._paste_animation_curves_same_attributes
+                    )
+                    widget.animation_paste_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action,
+                            "animation_paste_selected",
+                            key,
+                        )
+                    )
+                    widget.animation_cut_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action,
+                            "animation_cut_selected",
+                            key,
+                        )
+                    )
+                    widget.animation_cut_all_action.triggered.connect(
+                        self._cut_animation_curves_all_visible
+                    )
+                    widget.animation_delete_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action,
+                            "animation_delete_selected",
+                            key,
+                        )
+                    )
+                    widget.animation_delete_all_action.triggered.connect(
+                        self._delete_animation_curves_all_visible
                     )
                     widget.copy_all_values_action.triggered.connect(
                         self._copy_all_values
@@ -1545,9 +3129,73 @@ class ChannelBoxWidget(qt.QWidget):
                             key,
                         )
                     )
+                    if widget.round_menu is not None:
+                        widget.round_menu.aboutToShow.connect(
+                            partial(self._prepare_round_menu, widget)
+                        )
+                    for xyz_menu in widget.xyz_round_menus.values():
+                        xyz_menu.aboutToShow.connect(
+                            partial(self._prepare_xyz_round_menu, widget)
+                        )
+                    if (
+                        widget.child_set_action is not None
+                        and widget.xyz_round_kind is not None
+                    ):
+                        widget.child_set_action.triggered.connect(
+                            partial(
+                                self._open_child_compensated_set_window,
+                                widget.xyz_round_kind,
+                            )
+                        )
+                    if (
+                        widget.rotation_set_action is not None
+                        and widget.rotation_set_target is not None
+                    ):
+                        widget.rotation_set_action.triggered.connect(
+                            partial(
+                                self._open_rotation_set_window,
+                                widget.rotation_set_target,
+                            )
+                        )
+                    for destination, action in widget.rotation_actions.items():
+                        action.triggered.connect(
+                            partial(self._consolidate_rotation, destination)
+                        )
+                    widget.freeze_translate_action.triggered.connect(
+                        partial(self._freeze_transforms, "translate")
+                    )
+                    widget.freeze_rotate_action.triggered.connect(
+                        partial(self._freeze_transforms, "rotate")
+                    )
+                    widget.freeze_scale_action.triggered.connect(
+                        partial(self._freeze_transforms, "scale")
+                    )
+                    widget.freeze_all_action.triggered.connect(
+                        partial(self._freeze_transforms, "all")
+                    )
                     self._configure_value_input(widget, key)
-                widget.refresh_requested.connect(self.refresh)
-                self._add_selection_menu(widget)
+                if isinstance(widget, AttributeRowWidget):
+                    self._add_selection_menu(widget)
+                    widget.animation_layer_add_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action,
+                            "animation_layer_add_selected",
+                            key,
+                        )
+                    )
+                    widget.animation_layer_add_all_keyable_action.triggered.connect(
+                        partial(self._edit_animation_layers_all_keyable, True)
+                    )
+                    widget.animation_layer_remove_selected_action.triggered.connect(
+                        partial(
+                            self._run_selected_action,
+                            "animation_layer_remove_selected",
+                            key,
+                        )
+                    )
+                    widget.animation_layer_remove_all_keyable_action.triggered.connect(
+                        partial(self._edit_animation_layers_all_keyable, False)
+                    )
                 widgets.append(widget)
         except Exception:
             self.controller.dispose()
@@ -1573,6 +3221,14 @@ class ChannelBoxWidget(qt.QWidget):
                         and isinstance(widget.editor, StringLineEdit)
                         else None
                     ),
+                    input_indicator=(
+                        widget.input_indicator
+                        if isinstance(widget, AttributeRowWidget)
+                        else None
+                    ),
+                    select_on_right_click=isinstance(
+                        widget, AttributeRowWidget
+                    ),
                 )
                 for widget in widgets
             ],
@@ -1580,6 +3236,7 @@ class ChannelBoxWidget(qt.QWidget):
             == self.controller.node_ids,
         )
         self._table_node_ids = self.controller.node_ids
+        self._sync_filter_fallback_notice()
         self._prepare_edit_menu()
         self._apply_search_filter()
         # 行の配置が確定してから、残っている属性のスクロール位置を復元する
@@ -1589,7 +3246,9 @@ class ChannelBoxWidget(qt.QWidget):
         self, visible_count: int, *, searching: bool
     ) -> None:
         """ノード・表示条件・検索結果の空状態を区別して表示する。"""
-        if not self.controller.node_names:
+        if self.controller.selection_limit_exceeded:
+            message = _SELECTION_LIMIT_MESSAGE
+        elif not self.controller.node_names:
             message = (
                 "Maya ノードを選択すると、入力可能な種類の属性を表示します。"
             )
@@ -1602,7 +3261,13 @@ class ChannelBoxWidget(qt.QWidget):
         else:
             message = ""
         self.empty_label.setText(message)
-        self.empty_label.setVisible(bool(message))
+        self.empty_label.setVisible(
+            bool(message)
+            and (
+                self.controller.selection_limit_exceeded
+                or not self._setup_mode_active
+            )
+        )
 
     def _apply_step_value(
         self, source_key: tuple[str, str], value: float
@@ -1651,13 +3316,19 @@ class ChannelBoxWidget(qt.QWidget):
 
     def dispose(self) -> None:
         """画面の入力と監視を即時に終了する。"""
+        if self.custom_filter_dialog is not None:
+            self.custom_filter_dialog.close()
+            self.custom_filter_dialog.deleteLater()
+            self.custom_filter_dialog = None
+        self._dispose_node_name_editor()
         self.state_sweep.dispose()
         self.lock_sweep.dispose()
         self._scroll_timer.stop()
         self._search_timer.stop()
         self.context_menu.close()
         for widget in self.row_widgets:
-            widget.context_menu.close()
+            if isinstance(widget, AttributeRowWidget):
+                widget.context_menu.close()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
         self.controller.dispose()

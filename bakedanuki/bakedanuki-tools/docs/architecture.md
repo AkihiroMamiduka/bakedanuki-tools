@@ -61,15 +61,31 @@ bd_tools/
 
 最初の実装は `bd_tools.bd_channel_box` です。`ui.py` がWindow、`widget.py` が入力行、
 `table.py`が一覧内の属性選択と数値直接入力、`controller.py` が選択ノード・対応属性と
-操作対象を組み立てます。汎用の属性列挙と一括編集はutilへ配置します。
+操作対象を組み立てます。`custom_filters.py`は共有JSONの形式と読込みを、
+`custom_filter_registry.py`はツール固有の登録順・有効状態と個人設定を扱います。
+`custom_filter_editor.py`は共有JSONの作業中データと競合検出・原子的保存を、
+`custom_filter_setup.py`はノード型ごとの属性選択・順序・保存UIを扱います。
+表示順一覧の複数選択はsetup UIが保持し、選択全件の移動・除外は作業中データへ
+一度で適用します。移動後も正式pathで同じ属性の選択を復元します。
+汎用の属性列挙と一括編集はutilへ配置します。
 bdChannelBoxは `MayaDockableWindowController` を使い、固定workspaceControl IDと
 `bd_tools.bd_channel_box.ui.restore` を維持します。初回は右ドック、close時は完全破棄とし、
 workspace配置の復元・resetはutil、入力と選択監視の終了はtoolsが所有します。
+`bd_child_compensated_set`は移動・回転の共通2タブWindow、
+`bd_rotation_preserving_pose`は姿勢維持の回転Windowを所有します。どちらも独立した
+`MayaDockableWindowController`と公開`show()`を持ち、bdChannelBoxは右クリックから
+起動する際にだけ各公開入口を呼びます。新ツールからbdChannelBoxをimportしません。
+共通の選択監視・XYZ入力部品と画面内配置計算は`bd_tools._shared`に置き、
+Maya操作・Undoは`bd_util`のコマンドを使います。Mayaが両Windowのドック配置を保持し、
+子維持ツールの選択タブ・入力条件・浮動タブ別サイズは同ツールの`ui.ini`へ保存します。
+選択変更・Undo／Redo・scene切替の監視は各画面の寿命に結び付け、現在選択の末尾にある
+基準ノード1個の実値へ同期します。表示更新とStep設定はscene・Undo履歴を変更しません。
 値とstepの複合View、属性path・数値種別ごとのprofileと保存基盤はutilへ配置します。
 属性別の初期step、profileの識別子、操作対象の選別はbdChannelBoxが所有します。
 step設定はuser preferencesへ保存し、sceneの値・Undo履歴へ含めません。
 属性名の整列、混在の印、対象情報のtooltip、選択属性を操作する右クリックメニューも
-bdChannelBoxが所有し、値欄のQt標準編集メニューとは独立して提供します。
+bdChannelBoxが所有します。値編集モードでは値欄のQt標準編集メニューを表示せず、
+属性行のどこを右クリックしても同じツール用メニューを開きます。
 一覧は`QTableView`へ1属性1セルを置き、delegateが既存の属性行Widgetをpersistent editorとして
 常時表示します。modelは行と選択を管理し、値は既存Bindingから同期します。
 Maya本体がviewportを交換する場合に備え、行の親は構築時に`viewport()`から取得し、
@@ -88,6 +104,12 @@ Value先行の選択、単位の非表示、固定幅と右寄せはtoolsの表�
 stringにはutilの`StringLineEdit`を使い、bdChannelBoxでは確定したMaya値が編集中に
 変化した場合の追従を有効にします。入力保持を既定とする汎用Viewと、Maya値を優先する
 bdChannelBoxの表示方針を分けます。
+ノード名は属性stringとは異なる正本なので、utilの`MayaNodeNameBinding`と
+`StringLineEdit`を組み合わせます。Maya名の採番、外部改名の監視、Undo／Redoへの追従、
+編集可否はutilへ委譲し、toolsの`_NodeNameLineEdit`は閲覧・入力・競合時の外観だけを
+切り替えます。controllerは選択リスト末尾を基準とし、WidgetはそのnodeのUUIDで
+名前欄の寿命を判定します。同じ実体の改名や属性行の再構築では入力欄を維持し、
+選択実体が変わると旧入力を停止・破棄してから新しいBindingへ接続します。
 float値欄とStep欄ではutilの`select_all_on_mouse_focus`を有効にし、初回クリックで
 入力文字を置換できる状態にします。再クリックと横ドラッグは通常の文字編集へ渡します。
 属性行の優先順もtoolsの表示方針です。`bd_channel_box/config.py`の
@@ -95,7 +117,22 @@ float値欄とStep欄ではutilの`select_all_on_mouse_focus`を有効にし、�
 既定ではvisibility・translate・rotate・scaleの10属性、残りの指定22属性、
 drawOverride配下、その他の順に安定ソートしてから行を構築します。
 drawOverride内では設定に含めたoverrideEnabledを先頭にし、残りの相対順を維持します。
-両モードと全フィルターで共有し、utilの列挙順とscene内の属性順は変更しません。
+両モードと標準5フィルターで共有し、utilの列挙順とscene内の属性順は変更しません。
+カスタムフィルターではJSONの属性配列順を用い、登録ファイルの順序はComboBoxの
+カスタム項目の順序にだけ適用します。
+設定モードでは表示順と候補を縦の分割領域に配置し、Qt側の境界移動で各領域の高さを
+調整します。候補の一括変更は現在の標準フィルターと検索に一致する属性pathをまとめて
+作業中のJSON定義へ反映し、候補行の表示更新を操作後に行います。候補外の既存pathと
+別ノード型の定義は保持し、sceneのBindingとUndoは使用しません。
+候補の複数選択はUI内に正式pathの集合として持ち、属性名への入力だけで更新します。
+選択中の行のラジオ操作は選択したpathを候補の表示順で既存の一括編集へ渡し、
+選択外のラジオはその1件だけを渡します。選択色とtooltipは変更した行だけを更新し、
+行の再構築とJSON書込みを選択中に行いません。
+`CustomFilterDraft`は設定画面の生存中だけ作業中データを保持し、保存時に共有JSONの
+外部変更を確認して書き込みます。登録定義の再読込は保存後に行います。モードと編集対象の
+切替は未保存確認を通しますが、Window終了・配置reset・package reloadの破棄経路は
+確認を通さず作業中データを捨てます。この経路を変更する場合はworkspaceControlの終了、
+配置reset、reloadの各lifecycleとcallbackの解除を併せて検証します。
 通常の値変更では並べ替えや行の再構築を行いません。
 今後対応型を追加するときも、toolsで汎用BindingやViewを複製せずutilを拡張します。
 空の directory は作りません。個別ツール同士の
@@ -108,7 +145,8 @@ UI 基盤は `bd_util.ui` と `bd_util.maya.ui` を利用します。
 - Qt class は `bd_util.ui.qt` 経由で使用する。
 - 通常 Window は `MayaWindowController` で重複表示を防ぐ。
 - dockable UI は `MayaDockableWindowController` と固定 `control_id` を使用する。
-- `settings_path` は `<tool_name>/windows/<window_name>` のように固定する。
+- `settings_path` はツール名を先頭にした固定 path にする。
+  例: `bd_child_compensated_set/main`。
 - Maya callback は Window owner に関連付ける。
 - import 時には UI を表示せず、明示的な `show()` で表示する。
 - reload 前には controller、workspaceControl、callback を完全に破棄する。
@@ -148,7 +186,8 @@ utilを直接利用します。画面寸法の定数はtools内部の調整箇�
 `MayaFloatValueEdit` / `MayaFloatOffsetEdit` / `MayaBoolValueEdit` /
 `MayaEnumValueEdit` / `MayaStringValueEdit`へまとめます。
 `apply_plugs_values()`が全件の事前検証、書込み失敗時の復旧、1回のUndoを所有します。
-数値直接入力は各行の表示単位で換算し、「この値に揃える」は各行自身の基準ノード値を使います。
+数値直接入力は各行の表示単位で換算し、「表示ノードの値に揃える」は各属性の
+表示ノードの未丸め値を使います。
 上下操作は操作元Stepによる表示増減量を各数値の現在値へ加え、Slider・bool・enum・stringは互換属性を
 操作後の値へ揃えます。Sliderの連続入力は`MayaEditSession`で1回のUndoへまとめます。
 Step欄の入力はtoolsが選択を解釈し、同欄を持つ各Viewへ同じ表示stepを設定します。
@@ -170,14 +209,14 @@ JSONのversion・size検証、OS clipboard、全対象の事前検証と一括�
 enumも同じ責務分担です。実定義の取得と比較用の値型はutilの`read_enum_definition()`と
 `EnumDefinition`を使用します。controllerが代表と定義の一致する対象を選び、
 `MayaEnumPlugsBinding`へ渡します。混在・Undo・定義変更時の入力停止はutil、
-除外理由の表示と「表示を更新」による再選別はtoolsが担当します。
+除外理由の表示と、ノードの選択し直しによる対象の再選別はtoolsが担当します。
 
 表示・ロック状態はutilの`MayaChannelStateBinding`を使用します。状態の読取り、
 複数対象の混在と操作可否、外部変更の監視、表示・ロックごとの一括操作、
 Maya標準Undoへの登録はutilが所有します。値入力不可でもロック解除や表示変更を
 操作できるよう、値用Bindingと状態用Bindingの可否判定を分離します。
-toolsは値編集／表示・ロックのモード、基準属性の表示状態による5種類のフィルターと
-モードごとの選択保持、非表示属性を含む編集対象の選別、
+toolsは値編集／表示・ロックのモード、基準属性の表示状態による5種類の標準フィルターと
+ノード型別のカスタムフィルター、モードごとの選択保持、非表示属性を含む編集対象の選別、
 状態RadioButton・ロックCheckBox、名前の省略表示と共通列幅を所有します。
 フィルターは両モードへ適用し、後続ノードとの対応付けは表示状態で除外しません。
 表示フラグの通知時はQtの次のイベントで再評価し、状態の一括操作中にBindingを破棄しません。

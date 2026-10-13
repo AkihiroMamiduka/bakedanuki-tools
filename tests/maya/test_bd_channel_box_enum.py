@@ -59,6 +59,8 @@ def enum_editor(
 ) -> Iterator[ChannelBoxWidget]:
     """同じ定義で異なる現在値を持つ3ノードを表示する。"""
     assert qt_application is not None
+    auto_key = bool(cmds.autoKeyframe(query=True, state=True))
+    cmds.autoKeyframe(state=False)
     file_command = cast(Callable[..., str], cmds.file)
     file_command(new=True, force=True)
     for name, value in zip(_NODES, (5, 0, -2)):
@@ -71,7 +73,7 @@ def enum_editor(
             keyable=True,
         )
         _set(name + ".mode", value)
-    cmds.select(*_NODES, replace=True)
+    cmds.select(*reversed(_NODES), replace=True)
     cmds.flushUndo()
     widget = ChannelBoxWidget()
     widget.show()
@@ -82,6 +84,7 @@ def enum_editor(
     widget.deleteLater()
     _events()
     file_command(new=True, force=True)
+    cmds.autoKeyframe(state=auto_key)
 
 
 def test_enum_initial_refresh_and_same_index_only_read(
@@ -91,13 +94,48 @@ def test_enum_initial_refresh_and_same_index_only_read(
     combo = _combo(enum_editor)
     assert combo.currentText() == "Preview"
     assert combo.currentIndex() == 2
-    assert combo.width() == 156
+    assert combo.width() == 222
     item = combo.currentData()
     assert isinstance(item, EnumItem) and item.value == 5
     assert _row(enum_editor).name_label.text().startswith("• ")
     assert "3/3" in combo.toolTip()
     combo.setCurrentIndex(combo.currentIndex())
     enum_editor.refresh()
+    _events()
+    assert _values() == [5, 0, -2]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_three_node_selection_uses_last_enum_as_reference(
+    enum_editor: ChannelBoxWidget,
+) -> None:
+    """三ノード選択の末尾を基準に表示し、その値へ明示的に揃える。"""
+    assert enum_editor.controller.node_names == (
+        "|enumC",
+        "|enumB",
+        "|enumA",
+    )
+    assert enum_editor.controller.representative_node_name == "|enumA"
+    cmds.select(*_NODES, replace=True)
+    _events()
+    assert enum_editor.controller.node_names == (
+        "|enumA",
+        "|enumB",
+        "|enumC",
+    )
+    assert enum_editor.controller.representative_node_name == "|enumC"
+    assert enum_editor.node_name_edit is not None
+    assert enum_editor.node_name_edit.text() == "enumC"
+    assert _row(enum_editor).row.target_names == (
+        "|enumC",
+        "|enumA",
+        "|enumB",
+    )
+    assert _combo(enum_editor).currentText() == "Negative"
+    cmds.flushUndo()
+    _row(enum_editor).align_action.trigger()
+    assert _values() == [-2, -2, -2]
+    cmds.undo()
     _events()
     assert _values() == [5, 0, -2]
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
@@ -218,20 +256,32 @@ def test_enum_undefined_representative_can_be_replaced_but_not_aligned(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
+@pytest.mark.parametrize("auto_key", [False, True])
 def test_enum_lock_and_animation_respect_representative_policy(
-    enum_editor: ChannelBoxWidget,
+    enum_editor: ChannelBoxWidget, auto_key: bool
 ) -> None:
-    """後続lockを除外し、基準へのアニメーション接続で行を停止する。"""
+    """後続lockを除外し、キー付き基準と未接続の後続へ同じ項目を適用する。"""
     cmds.setAttr("enumB.mode", lock=True)
     _events()
     assert "2/3" in _combo(enum_editor).toolTip()
     _combo(enum_editor).setCurrentIndex(3)
     assert _values() == [10, 0, 10]
     cmds.setKeyframe("enumA.mode")
+    cmds.autoKeyframe(state=auto_key)
     _events()
-    assert not _combo(enum_editor).isEnabled()
-    assert not _row(enum_editor).align_action.isEnabled()
-    assert "0/3" in _combo(enum_editor).toolTip()
+    assert _combo(enum_editor).isEnabled()
+    assert "2/3" in _combo(enum_editor).toolTip()
+    cmds.flushUndo()
+    _combo(enum_editor).setCurrentIndex(2)
+    assert _values() == [5, 0, 5]
+    assert cmds.keyframe("enumA.mode", query=True, valueChange=True) == [
+        5 if auto_key else 10
+    ]
+    assert not cmds.listConnections("enumC.mode", source=True)
+    cmds.undo()
+    _events()
+    assert _values() == [10, 0, 10]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_enum_display_flags_builtin_compound_and_array_scope(
