@@ -40,12 +40,22 @@ Maya 本体でも操作確認します。
     --util-root D:\develop\bakedanuki_dev\bakedanuki-util
 ```
 
-`bakedanuki > tools`の3項目の表示順・クリック、メニューセット切替、同じ項目の
+既定の`bakedanuki > tools`にある3項目の表示順・クリック、メニューセット切替、同じ項目の
 再登録とreload後の再登録を確認します。各項目のクリックで対応するdockable Windowが
 開くことも確認します。専用profileにもユーザー側の
 `userSetup.py`を配置し、Module側のhookと両方が実行されたことを確認します。
-同じprofileでMayaを3回起動し、チェックOFF後の次回起動では`bakedanuki`がないこと、
-共通installerによる再有効化、その次の起動での再表示も確認します。
+同じprofileでMayaを4回起動し、初回の個人用`config.toml`作成、チェックOFF後の次回起動では
+`bakedanuki`がないこと、共通installerによる再有効化、その次の起動での再表示を
+確認します。4回目の起動では、外部TOMLで指定した既存メニュー配下へ登録し、Pythonの
+`postMenuCommand`による遅延生成を先に完了させ、既存項目の末尾へ追加されることを
+確認します。実際に親メニューを開いても一度だけのcallbackが再実行されないこと、
+reload後の再登録、表示設定の変更、tools所有項目の解除後も親と既存項目が残ることも
+確認します。
+さらに独立profileで標準Windowsメニューへの起動時登録を確認します。起動前から
+`parent_menu = "MayaWindow|mainWindowMenu"`を設定し、標準項目とその順序を維持して
+末尾へ追加されること、再登録・reload・解除で標準callbackとその実行設定を保つことを
+検証します。`--phase native`だけでも実行でき、各段階のメニュー画像と項目・callbackの
+JSONを`native-*.png`と`native-*.json`へ保存します。
 正常終了後は、出力先profileの`menuSetPrefs.mel`にbakedanukiのメニュー項目が
 保存されていないことを手動で確認します。従来の
 `test_bd_channel_box_maya.py`は`userSetup.py`を読み込まないため、

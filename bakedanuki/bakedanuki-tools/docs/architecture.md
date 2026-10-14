@@ -26,7 +26,8 @@ import しません。この制約により、tools は rig の導入有無に�
 - 値型、node 操作、undo を扱う共通基盤
 - Qt binding facade
 - Window、workspaceControl、callback、UI 状態保存の共通 lifecycle
-- Maya上部の`bakedanuki`メニュー、categoryとownerごとの項目登録・解除
+- Maya上部または設定された既存メニュー配下の`bakedanuki`メニュー、categoryと
+  ownerごとの項目登録・解除、起動設定TOMLの読込み
 
 ### `bd_tools`
 
@@ -34,7 +35,7 @@ import しません。この制約により、tools は rig の導入有無に�
 - UI とユーザー操作
 - ツール固有のユースケースと設定
 - `bd_util` の汎用 API を組み合わせた Maya scene 操作
-- `tools` categoryとbdChannelBox項目、起動時登録hook
+- `tools` categoryと3ツールの項目、起動時登録hookと設定TOMLの初回作成
 
 ### `bd_rig`
 

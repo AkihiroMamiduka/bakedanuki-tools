@@ -35,11 +35,17 @@ bakedanuki/
 共通の `installer.py` を Maya の viewport へドラッグ&ドロップするか、
 `bakedanuki/modules` を `MAYA_MODULE_PATH` へ追加してください。
 
-interactive Mayaの起動後、上部メニューバーの`bakedanuki > tools`から
+interactive Mayaの起動後、既定では上部メニューバーの`bakedanuki > tools`から
 `bdChannelBox`、「移動・回転をセット（子を維持）」、
 「回転をセット（姿勢を維持）」を開けます。各Module内の`userSetup.py`が
 メニュー登録を予約します。
 この起動処理はユーザー自身の`userSetup.py`やsceneを書き換えません。
+`prefs/bakedanuki/config.toml`は、初回起動時にコメント例付きで自動作成されます。
+`[menu]`の`parent_menu`で既存メニューのUIパスを
+指定した場合、`bakedanuki > tools`をそのメニューの下へ配置します。
+個人用ファイルの場所、組織・プロジェクト用のTOMLを起動環境から指定する方法、
+親メニューを作成する順序は`bakedanuki-util/docs/ui/README.md`の
+「起動設定とメニュー配置」を参照してください。
 `bakedanuki`内の「Maya 起動時に bakedanuki メニューを表示」をOFFにすると、次回起動からメニューの
 自動登録をスキップします。現在のメニューはそのセッション中に残ります。
 再び表示するには共通の`installer.py`をviewportへドロップしてONへ戻し、Mayaを

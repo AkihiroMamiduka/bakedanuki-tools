@@ -17,6 +17,7 @@ _OUTPUT_VARIABLE = "BAKEDANUKI_TOOLS_MENU_QA_OUTPUT"
 _USER_SETUP_MARKER = "BAKEDANUKI_TOOLS_MENU_QA_USER_SETUP_MARKER"
 _PHASE_VARIABLE = "BAKEDANUKI_TOOLS_MENU_QA_PHASE"
 _INSTALLER_VARIABLE = "BAKEDANUKI_TOOLS_MENU_QA_INSTALLER"
+_CONFIG_VARIABLE = "BAKEDANUKI_CONFIG_FILE"
 _OPTION_LABEL = "Maya 起動時に bakedanuki メニューを表示"
 _TOOL_LABELS = (
     "bdChannelBox",
@@ -198,6 +199,19 @@ def _run_in_maya() -> None:
                 raise AssertionError(
                     "ユーザーの userSetup.py が実行されていません"
                 )
+            config = (
+                Path(cmds.internalVar(userPrefDir=True))
+                / "bakedanuki"
+                / "config.toml"
+            )
+            if (
+                not config.is_file()
+                or "[menu]\n# parent_menu"
+                not in config.read_text(encoding="utf-8")
+            ):
+                raise AssertionError(
+                    "個人用の起動設定TOMLが自動作成されていません"
+                )
             _menu_state()
             current_set = cmds.menuSet(query=True, currentMenuSet=True)
             other_sets = [
@@ -271,16 +285,250 @@ def _run_in_maya() -> None:
         except Exception:
             finish(False, traceback.format_exc())
 
+    def check_nested() -> None:
+        """既存メニューへの登録・reload・解除をMaya本体で確認する。"""
+        try:
+            import bd_tools
+
+            main_window = mel.eval("$bdMenuNestedWindow=$gMainWindow")
+            parent = cmds.menu(
+                "customToolsMenu",
+                parent=main_window,
+                label="tools",
+                tearOff=False,
+            )
+            parent = cmds.menuItem(
+                "freeToolsMenu",
+                parent=parent,
+                label="free_tools",
+                subMenu=True,
+                tearOff=False,
+            )
+            existing_item = f"{parent}|existingCustomItem"
+            build_count = 0
+
+            def populate_parent(*_args: object) -> None:
+                """標準メニュー同様、初めて開いた空メニューへ既存項目を作る。"""
+                nonlocal build_count
+                build_count += 1
+                if cmds.menu(parent, query=True, numberOfItems=True):
+                    return
+                cmds.menuItem(
+                    "existingCustomItem",
+                    parent=parent,
+                    label="Existing custom item",
+                )
+
+            cmds.menu(
+                parent,
+                edit=True,
+                postMenuCommand=populate_parent,
+                postMenuCommandOnce=True,
+            )
+
+            def check_parent_items(*, installed: bool) -> None:
+                """追加した項目だけが変化し、遅延生成が一度だけ行われたか確認する。"""
+                names = cmds.menu(parent, query=True, itemArray=True) or []
+                items = [
+                    name if "|" in name else f"{parent}|{name}"
+                    for name in names
+                ]
+                expected = (
+                    [existing_item, root] if installed else [existing_item]
+                )
+                if items != expected or build_count != 1:
+                    raise AssertionError(
+                        "Python callbackの既存項目・順序・実行回数が不正です: "
+                        f"items={items}, build_count={build_count}"
+                    )
+
+            config = Path(os.environ[_CONFIG_VARIABLE])
+            config.write_text(
+                f'[menu]\nparent_menu = "{parent}"\n',
+                encoding="utf-8",
+            )
+            root = f"{parent}|bdUtilMainMenu"
+            if not bd_tools.install_menu():
+                raise AssertionError("既存メニューへの登録に失敗しました")
+            if not cmds.menuItem(root, exists=True):
+                raise AssertionError("bakedanuki submenuがありません")
+            check_parent_items(installed=True)
+            pointer = omui.MQtUtil.findControl(parent)
+            if not pointer:
+                raise AssertionError("配置先 submenu の QMenu がありません")
+            parent_menu = qt.wrapInstance(int(pointer), qt.QMenu)
+            parent_menu.popup(qt.QPoint(50, 70))
+            qt.QApplication.processEvents()
+            if not parent_menu.grab().save(str(output / "nested-lazy.png")):
+                raise AssertionError("配置先 submenu の画像保存に失敗しました")
+            parent_menu.hide()
+            check_parent_items(installed=True)
+            category = _find_labeled_menu(root, "tools")
+            for label in _TOOL_LABELS:
+                _find_labeled_menu(category, label)
+            from bd_util.maya.ui import set_menu_auto_install_enabled
+
+            set_menu_auto_install_enabled(True)
+            option = _find_labeled_menu(root, _OPTION_LABEL)
+            if not cmds.menuItem(option, query=True, checkBox=True):
+                raise AssertionError(
+                    "入れ子メニューの表示設定が更新されません"
+                )
+
+            bd_tools.uninstall_menu()
+            menu_exists = cmds.menu(root, exists=True)
+            item_exists = cmds.menuItem(root, exists=True)
+            if menu_exists or item_exists:
+                roots = [
+                    path
+                    for path in cmds.lsUI(menus=True, long=True) or []
+                    if path.endswith("bdUtilMainMenu")
+                ]
+                raise AssertionError(
+                    "tools解除後にbakedanuki submenuが残りました: "
+                    f"menu={menu_exists}, item={item_exists}, roots={roots}"
+                )
+            if not cmds.menu(parent, exists=True):
+                raise AssertionError("既存の親メニューが削除されました")
+            check_parent_items(installed=False)
+            if not bd_tools.install_menu():
+                raise AssertionError("同じ親への再登録に失敗しました")
+            check_parent_items(installed=True)
+
+            bd_tools.reload_package(reload_util=True)
+            if not cmds.menuItem(root, exists=True):
+                raise AssertionError("reloadでbakedanuki submenuが消えました")
+            check_parent_items(installed=True)
+            bd_tools.uninstall_menu()
+            if cmds.menuItem(root, exists=True):
+                raise AssertionError(
+                    "tools解除後にbakedanuki submenuが残りました"
+                )
+            if not cmds.menu(parent, exists=True):
+                raise AssertionError("既存の親メニューが削除されました")
+            check_parent_items(installed=False)
+            finish(True, "nested placement, reload, owner cleanup: passed")
+        except Exception:
+            finish(False, traceback.format_exc())
+
+    def check_native_menu() -> None:
+        """遅延生成される標準メニューの末尾への追加と項目維持を確認する。"""
+        try:
+            import bd_tools
+
+            from bd_util.maya.ui import is_menu_auto_install_enabled
+
+            parent = "MayaWindow|mainWindowMenu"
+            root = f"{parent}|bdUtilMainMenu"
+            if not is_menu_auto_install_enabled():
+                raise AssertionError("標準メニュー検証の自動登録がOFFです")
+            pointer = omui.MQtUtil.findControl(parent)
+            if not pointer:
+                raise AssertionError("Windows メニューの QMenu がありません")
+            native_menu = qt.wrapInstance(int(pointer), qt.QMenu)
+
+            def snapshot(name: str, *, installed: bool) -> dict[str, object]:
+                """標準メニューを実際に開き、項目と既存callbackを記録する。"""
+                native_menu.popup(qt.QPoint(50, 70))
+                qt.QApplication.processEvents()
+                image_path = output / f"native-{name}.png"
+                if not native_menu.grab().save(str(image_path)):
+                    raise AssertionError(
+                        "標準メニューの画像保存に失敗しました"
+                    )
+                native_menu.hide()
+                names = cmds.menu(parent, query=True, itemArray=True) or []
+                items = [
+                    name if "|" in name else f"{parent}|{name}"
+                    for name in names
+                ]
+                state = {
+                    "items": items,
+                    "labels": [
+                        cmds.menuItem(item, query=True, label=True)
+                        for item in items
+                    ],
+                    "post_menu_command": cmds.menu(
+                        parent, query=True, postMenuCommand=True
+                    ),
+                    "post_menu_command_once": cmds.menu(
+                        parent, query=True, postMenuCommandOnce=True
+                    ),
+                }
+                (output / f"native-{name}.json").write_text(
+                    json.dumps(state, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                existing_items = [item for item in items if item != root]
+                if len(existing_items) < 10:
+                    raise AssertionError(
+                        "Windows の標準項目が生成されていません: "
+                        f"{state['labels']}"
+                    )
+                if installed:
+                    if items[-1] != root or items.count(root) != 1:
+                        raise AssertionError(
+                            "bakedanuki が末尾に一つだけ登録されていません"
+                        )
+                    category = _find_labeled_menu(root, "tools")
+                    for label in _TOOL_LABELS:
+                        _find_labeled_menu(category, label)
+                elif root in items:
+                    raise AssertionError("解除後も bakedanuki が残っています")
+                state["items"] = existing_items
+                state["labels"] = [
+                    cmds.menuItem(item, query=True, label=True)
+                    for item in existing_items
+                ]
+                return state
+
+            # 起動前に設定した配置先で標準項目が生成されていることを確認する
+            original = snapshot("startup", installed=True)
+            callback = original["post_menu_command"]
+            if (
+                not isinstance(callback, str)
+                or "buildViewMenu" not in callback
+            ):
+                raise AssertionError("Windows の標準callbackがありません")
+            if not original["post_menu_command_once"]:
+                raise AssertionError("Windows の遅延生成フラグが失われました")
+
+            # 再登録・reload・解除を通じて項目順序とcallbackを維持する
+            bd_tools.install_menu()
+            bd_tools.install_menu()
+            if snapshot("reinstalled", installed=True) != original:
+                raise AssertionError(
+                    "再登録で標準項目かcallbackが変化しました"
+                )
+            bd_tools.reload_package(reload_util=True)
+            if snapshot("reloaded", installed=True) != original:
+                raise AssertionError(
+                    "reloadで標準項目かcallbackが変化しました"
+                )
+            bd_tools.uninstall_menu()
+            if snapshot("removed", installed=False) != original:
+                raise AssertionError("解除で標準項目かcallbackが変化しました")
+            finish(
+                True,
+                "native Windows menu, append, reload, owner cleanup: passed",
+            )
+        except Exception:
+            finish(False, traceback.format_exc())
+
     # Maya の起動処理が完了してからメニューを検査する
     checks = {
         "initial": check_startup,
         "disabled": check_disabled,
         "reenabled": check_reenabled,
+        "nested": check_nested,
+        "native": check_native_menu,
     }
     qt.QTimer.singleShot(5000, checks[phase])
 
 
-def _run_launcher(maya_version: str, util_root: Path, timeout: int) -> int:
+def _run_launcher(
+    maya_version: str, util_root: Path, timeout: int, phases: tuple[str, ...]
+) -> int:
     """専用 profile と Module path で Maya を起動する。"""
     repository = Path(__file__).resolve().parents[1]
     executable = Path(
@@ -308,6 +556,7 @@ def _run_launcher(maya_version: str, util_root: Path, timeout: int) -> int:
     environment = os.environ.copy()
     environment.pop("QT_QPA_PLATFORM", None)
     environment.pop("MAYA_SKIP_USERSETUP_PY", None)
+    environment.pop(_CONFIG_VARIABLE, None)
     environment["MAYA_APP_DIR"] = str(output / "prefs")
     environment["MAYA_ENV_DIR"] = str(output / "env")
     environment["MAYA_PROJECT"] = str(output / "project")
@@ -352,8 +601,49 @@ def _run_launcher(maya_version: str, util_root: Path, timeout: int) -> int:
     startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     startup_info.wShowWindow = subprocess.SW_HIDE
 
-    for phase in ("initial", "disabled", "reenabled"):
+    for phase in phases:
         environment[_PHASE_VARIABLE] = phase
+        environment["MAYA_APP_DIR"] = str(output / "prefs")
+        environment.pop(_CONFIG_VARIABLE, None)
+        if phase == "native":
+            # 過去のphaseの表示設定や既存メニュー状態を引き継がない
+            native_profile = output / "prefs-native" / maya_version
+            native_scripts = native_profile / "scripts"
+            native_scripts.mkdir(parents=True)
+            (native_scripts / "userSetup.py").write_text(
+                (user_scripts / "userSetup.py").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            (native_profile / "Maya.env").write_text(
+                development_module_paths, encoding="utf-8"
+            )
+            config = output / "native-windows.toml"
+            config.write_text(
+                '[menu]\nparent_menu = "MayaWindow|mainWindowMenu"\n',
+                encoding="utf-8",
+            )
+            environment["MAYA_APP_DIR"] = str(output / "prefs-native")
+            environment[_CONFIG_VARIABLE] = str(config)
+        if phase == "nested":
+            settings = list((output / "prefs").rglob("menu.json"))
+            if not settings:
+                setting = (
+                    output
+                    / "prefs"
+                    / maya_version
+                    / "prefs"
+                    / "bakedanuki"
+                    / "menu.json"
+                )
+                setting.parent.mkdir(parents=True, exist_ok=True)
+            elif len(settings) == 1:
+                setting = settings[0]
+            else:
+                raise AssertionError("起動時表示設定の保存先が不明です")
+            setting.write_text(
+                '{"show_menu_on_startup": false}\n', encoding="utf-8"
+            )
+            environment[_CONFIG_VARIABLE] = str(output / "project-a.toml")
         result_name = (
             "result.json" if phase == "initial" else f"result-{phase}.json"
         )
@@ -446,11 +736,21 @@ def main() -> int:
     )
     parser.add_argument("--util-root", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=180)
+    parser.add_argument(
+        "--phase",
+        action="append",
+        choices=("initial", "disabled", "reenabled", "nested", "native"),
+    )
     arguments = parser.parse_args()
+    phases = tuple(
+        arguments.phase
+        or ("initial", "disabled", "reenabled", "nested", "native")
+    )
     return _run_launcher(
         arguments.maya_version,
         arguments.util_root.resolve(),
         arguments.timeout,
+        phases,
     )
 
 

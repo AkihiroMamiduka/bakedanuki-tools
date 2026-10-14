@@ -212,6 +212,12 @@ def test_startup_skips_batch_and_defers_interactive_install(
     fake_utils = ModuleType("maya.utils")
     fake_util_ui = ModuleType("bd_util.maya.ui")
     auto_install_enabled = [True]
+    ensured: list[bool] = []
+
+    def ensure_config_file() -> Path:
+        """起動設定の初回作成を記録する。"""
+        ensured.append(True)
+        return Path("config.toml")
 
     def is_menu_auto_install_enabled() -> bool:
         """共有設定で起動時表示が有効か返す。"""
@@ -248,6 +254,12 @@ def test_startup_skips_batch_and_defers_interactive_install(
         is_menu_auto_install_enabled,
         raising=False,
     )
+    monkeypatch.setattr(
+        fake_util_ui,
+        "ensure_config_file",
+        ensure_config_file,
+        raising=False,
+    )
     monkeypatch.setattr(menu, "install_menu", install_menu)
 
     _startup.schedule_menu_install()
@@ -259,8 +271,10 @@ def test_startup_skips_batch_and_defers_interactive_install(
     assert not installed
     callbacks[0]()
     assert installed == [True]
+    assert ensured == [True]
 
     auto_install_enabled[0] = False
     _startup.schedule_menu_install()
     callbacks[1]()
     assert installed == [True]
+    assert ensured == [True, True]

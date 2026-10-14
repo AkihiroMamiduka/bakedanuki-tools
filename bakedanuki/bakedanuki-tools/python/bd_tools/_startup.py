@@ -9,8 +9,12 @@ import traceback
 def _install_menu_deferred() -> None:
     """起動時表示が有効ならUI初期化後にtoolsメニューを登録する。"""
     try:
-        from bd_util.maya.ui import is_menu_auto_install_enabled
+        from bd_util.maya.ui import (
+            ensure_config_file,
+            is_menu_auto_install_enabled,
+        )
 
+        ensure_config_file()
         if not is_menu_auto_install_enabled():
             return
         from .menu import install_menu

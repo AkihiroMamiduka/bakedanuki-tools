@@ -38,7 +38,7 @@ def _show_rotation_preserving_pose() -> None:
 
 
 def install_menu() -> bool:
-    """Maya上部の``bakedanuki > tools``へ3ツールを登録する。
+    """設定された配置先の``bakedanuki > tools``へ3ツールを登録する。
 
     MayaのUIがまだ利用できない場合は``False``を返す。
     """
