@@ -147,6 +147,9 @@ UI lifecycle や状態保存の仕様は、`bakedanuki-util` の
 ## Coding Policy
 
 - package 内 import は、import 元を基準にした相対 import を使います。
+- `bd_util.Nodes` の操作入口を保持する変数名は `bd_nodes` を基本にします。
+  ノード名の集合は `node_names` など、役割が分かる名前で区別します。
+  `Nodes` のクラス名と既存の公開 API の名前は維持します。
 - 公開 API は `__all__` と明示的な型注釈を整備します。
 - `Any` や広範囲な `# pyright: ignore` で型問題を隠しません。
 - 動的な Maya / Qt API 境界では、`cast()`、Protocol、局所 adapter で型の伝播を止めます。

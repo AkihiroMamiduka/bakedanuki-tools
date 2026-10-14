@@ -2028,7 +2028,7 @@ class ChannelBoxController(qt.QObject):
         if not self.can_consolidate_rotation():
             return 0
 
-        nodes = Nodes(modifier_manager=ModifierManager())
+        bd_nodes = Nodes(modifier_manager=ModifierManager())
         plans: list[
             tuple[
                 str,
@@ -2039,7 +2039,7 @@ class ChannelBoxController(qt.QObject):
         ] = []
         excluded: list[str] = []
         for name in dict.fromkeys(self.node_names):
-            operator = nodes.existing(name)
+            operator = bd_nodes.existing(name)
             if not isinstance(operator, node_types.Transform):
                 continue
             if destination == "jointOrient" and not isinstance(

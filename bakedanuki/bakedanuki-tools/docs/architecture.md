@@ -47,6 +47,16 @@ import しません。この制約により、tools は rig の導入有無に�
 `bd_util` に置きます。単に現時点で2か所から呼ばれるという理由だけで移動せず、責務と
 依存方向を先に確認します。
 
+`bd_util.Nodes` の操作入口を保持する変数名は `bd_nodes` を基本にします。
+ノード名の集合は `node_names` など、役割が分かる名前で区別します。
+
+```python
+import bd_util as bdu
+
+bd_nodes = bdu.Nodes()
+operator = bd_nodes.existing("ctrl")
+```
+
 ## Tool Package Shape
 
 個別ツールは、最初の機能を実装する段階で `bd_tools` 直下に package を追加します。
