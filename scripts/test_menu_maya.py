@@ -18,6 +18,11 @@ _USER_SETUP_MARKER = "BAKEDANUKI_TOOLS_MENU_QA_USER_SETUP_MARKER"
 _PHASE_VARIABLE = "BAKEDANUKI_TOOLS_MENU_QA_PHASE"
 _INSTALLER_VARIABLE = "BAKEDANUKI_TOOLS_MENU_QA_INSTALLER"
 _OPTION_LABEL = "Maya 起動時に bakedanuki メニューを表示"
+_TOOL_LABELS = (
+    "bdChannelBox",
+    "移動・回転をセット（子を維持）",
+    "回転をセット（姿勢を維持）",
+)
 
 
 def _find_labeled_menu(parent: str, label: str) -> str:
@@ -36,8 +41,8 @@ def _find_labeled_menu(parent: str, label: str) -> str:
     return matches[0]
 
 
-def _menu_state() -> tuple[str, str]:
-    """共有メニューと bdChannelBox 項目を確認する。"""
+def _menu_state() -> tuple[str, tuple[str, ...]]:
+    """共有メニューと3ツールの項目・順序を確認する。"""
     from maya import cmds, mel
 
     main_window = mel.eval("$bdMenuSmokeMainWindow=$gMainWindow")
@@ -51,8 +56,17 @@ def _menu_state() -> tuple[str, str]:
         raise AssertionError(f"bakedanuki メニュー数が {len(roots)} 件です")
     root = roots[0]
     category = _find_labeled_menu(root, "tools")
-    item = _find_labeled_menu(category, "bdChannelBox")
-    return root, item
+    items = tuple(
+        _find_labeled_menu(category, label) for label in _TOOL_LABELS
+    )
+    ordered_items = cmds.menu(category, query=True, itemArray=True) or []
+    ordered_paths = [
+        item if "|" in item else f"{category}|{item}" for item in ordered_items
+    ]
+    indices = [ordered_paths.index(item) for item in items]
+    if indices != sorted(indices):
+        raise AssertionError("tools の3項目が指定順で並んでいません")
+    return root, items
 
 
 def _run_in_maya() -> None:
@@ -81,16 +95,26 @@ def _run_in_maya() -> None:
         qt.QTimer.singleShot(0, lambda: cmds.quit(force=True))
 
     def check_after_click() -> None:
-        """項目のクリックで dockable UI が開いたことを確認する。"""
+        """3項目のクリックで各 dockable UI が開いたことを確認する。"""
         try:
-            from bd_tools.bd_channel_box import WORKSPACE_CONTROL_NAME
+            from bd_tools.bd_channel_box import (
+                WORKSPACE_CONTROL_NAME as channel_box_control,
+            )
+            from bd_tools.bd_child_compensated_set import (
+                WORKSPACE_CONTROL_NAME as child_set_control,
+            )
+            from bd_tools.bd_rotation_preserving_pose import (
+                WORKSPACE_CONTROL_NAME as rotation_set_control,
+            )
 
-            if not cmds.workspaceControl(
-                WORKSPACE_CONTROL_NAME, query=True, exists=True
+            for label, control in zip(
+                _TOOL_LABELS,
+                (channel_box_control, child_set_control, rotation_set_control),
             ):
-                raise AssertionError(
-                    "bdChannelBox の WorkspaceControl がありません"
-                )
+                if not cmds.workspaceControl(control, query=True, exists=True):
+                    raise AssertionError(
+                        f"{label} の WorkspaceControl がありません"
+                    )
             root, _ = _menu_state()
             option = _find_labeled_menu(root, _OPTION_LABEL)
             pointer = omui.MQtUtil.findMenuItem(option)
@@ -112,16 +136,14 @@ def _run_in_maya() -> None:
             }:
                 raise AssertionError("専用設定ファイルのOFFが不正です")
             _menu_state()
-            finish(
-                True, "startup, menu set, reload, click, toggle off: passed"
-            )
+            finish(True, "startup, three menu items, reload, click: passed")
         except Exception:
             finish(False, traceback.format_exc())
 
     def check_after_menu_set() -> None:
         """メニューセット切替後の表示を確認して項目を起動する。"""
         try:
-            root, item = _menu_state()
+            root, items = _menu_state()
             if not cmds.menu(root, query=True, visible=True):
                 raise AssertionError(
                     "切替後に bakedanuki メニューが非表示です"
@@ -149,19 +171,20 @@ def _run_in_maya() -> None:
             # 旧表示名の共有rootを保持したままreload時に表示名を更新する
             cmds.menu(root, edit=True, label="bd")
             bd_tools.reload_package(reload_util=True)
-            root, item = _menu_state()
+            root, items = _menu_state()
             _find_labeled_menu(root, "rig")
             from bd_util.maya.ui import unregister_menu_owner
 
             unregister_menu_owner("bd_rig")
             _menu_state()
 
-            # 実際の QAction を起動して公開 show() への接続を確認する
-            pointer = omui.MQtUtil.findMenuItem(item)
-            if not pointer:
-                raise AssertionError("bdChannelBox の QAction がありません")
-            action = qt.wrapInstance(int(pointer), qt.QtGui.QAction)
-            action.trigger()
+            # 実際の QAction を順に起動して各公開 show() への接続を確認する
+            for label, item in zip(_TOOL_LABELS, items):
+                pointer = omui.MQtUtil.findMenuItem(item)
+                if not pointer:
+                    raise AssertionError(f"{label} の QAction がありません")
+                action = qt.wrapInstance(int(pointer), qt.QtGui.QAction)
+                action.trigger()
             qt.QTimer.singleShot(1000, check_after_click)
         except Exception:
             finish(False, traceback.format_exc())

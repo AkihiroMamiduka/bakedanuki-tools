@@ -5,7 +5,8 @@ bdChannelBoxの「回転をセット（姿勢を維持）」からも開けま�
 
 ## 単独起動
 
-MayaのScript Editorで実行します。
+上部の`bakedanuki > tools > 回転をセット（姿勢を維持）`から開けます。
+MayaのScript Editorから直接開く場合は次を実行します。
 
 ```python
 from bd_tools import bd_rotation_preserving_pose

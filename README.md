@@ -73,6 +73,8 @@ bool・float系・enum・stringの値入力、step操作、表示・ロック状
 今後の任意の拡張候補は[Roadmap](bakedanuki/bakedanuki-tools/docs/roadmap.md#bdchannelboxの拡張候補)にまとめています。
 
 interactive Mayaでは、上部の`bakedanuki > tools > bdChannelBox`から開けます。
+同じ`tools`メニューから「移動・回転をセット（子を維持）」と
+「回転をセット（姿勢を維持）」も単独で開けます。
 起動時表示のチェックをOFFにすると、次回起動からメニューを自動登録しません。
 設定と再有効化の手順は[パッケージのREADME](bakedanuki/bakedanuki-tools/README.md)を参照してください。
 そのセッションだけメニューを手動登録する場合は、Script Editorで
@@ -163,6 +165,8 @@ toolsとutilは、組み合わせて動作確認した版を配置してくだ�
 
 子の位置・姿勢を維持して移動または回転を設定する、2タブのdockableツールです。
 bdChannelBoxを開かずに単独起動できます。
+上部の`bakedanuki > tools > 移動・回転をセット（子を維持）`から開くと、
+保存されたタブを表示し、保存がない場合は移動タブを表示します。
 
 ```python
 from bd_tools import bd_child_compensated_set
@@ -176,6 +180,7 @@ bd_child_compensated_set.show("rotation", "rotate")
 ## bdRotationPreservingPose
 
 現在姿勢を維持しながら回転属性の値を設定するdockableツールです。
+上部の`bakedanuki > tools > 回転をセット（姿勢を維持）`からも開けます。
 
 ```python
 from bd_tools import bd_rotation_preserving_pose

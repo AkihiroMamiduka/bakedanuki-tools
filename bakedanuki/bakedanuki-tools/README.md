@@ -35,8 +35,10 @@ bakedanuki/
 共通の `installer.py` を Maya の viewport へドラッグ&ドロップするか、
 `bakedanuki/modules` を `MAYA_MODULE_PATH` へ追加してください。
 
-interactive Mayaの起動後、上部メニューバーの`bakedanuki > tools > bdChannelBox`から
-ツールを開けます。各Module内の`userSetup.py`がメニュー登録を予約します。
+interactive Mayaの起動後、上部メニューバーの`bakedanuki > tools`から
+`bdChannelBox`、「移動・回転をセット（子を維持）」、
+「回転をセット（姿勢を維持）」を開けます。各Module内の`userSetup.py`が
+メニュー登録を予約します。
 この起動処理はユーザー自身の`userSetup.py`やsceneを書き換えません。
 `bakedanuki`内の「Maya 起動時に bakedanuki メニューを表示」をOFFにすると、次回起動からメニューの
 自動登録をスキップします。現在のメニューはそのセッション中に残ります。
@@ -54,7 +56,7 @@ bd_tools.install_menu()
 ```
 
 `install_menu()`はUI未初期化時に`False`を返します。ツールを直接開く場合は
-`bd_tools.bd_channel_box.show()`も使用できます。メニュー基盤を利用するには、
+各packageの公開`show()`も使用できます。メニュー基盤を利用するには、
 対応する`bakedanuki-util`を同時に配置してください。
 自動表示をOFFにした状態でも、`install_menu()`による明示的な登録は使用できます。
 

@@ -13,15 +13,17 @@ import bd_tools
 from bd_tools import _startup, menu
 
 
-def test_menu_registration_is_owned_by_tools_and_lazily_opens_channel_box(
+def test_menu_registration_is_owned_by_tools_and_lazily_opens_each_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """tools項目の再登録・解除とクリック時の遅延importを確認する。"""
+    """3項目の再登録・解除とクリック時の遅延importを確認する。"""
     registrations: list[tuple[str, str, str, str, Callable[[], object]]] = []
     removed_owners: list[str] = []
     shown: list[str] = []
     fake_ui = ModuleType("bd_util.maya.ui")
     fake_channel_box = ModuleType("bd_tools.bd_channel_box")
+    fake_child_set = ModuleType("bd_tools.bd_child_compensated_set")
+    fake_rotation_set = ModuleType("bd_tools.bd_rotation_preserving_pose")
 
     def register_menu_item(
         *,
@@ -39,13 +41,27 @@ def test_menu_registration_is_owned_by_tools_and_lazily_opens_channel_box(
         """解除対象の所有者を記録する。"""
         removed_owners.append(owner)
 
-    def show() -> None:
+    def show_channel_box() -> None:
         """クリックでだけ呼び出される偽のbdChannelBox。"""
         shown.append("bdChannelBox")
+
+    def show_child_set() -> None:
+        """クリックでだけ呼び出される偽の子維持ツール。"""
+        shown.append("bdChildCompensatedSet")
+
+    def show_rotation_set() -> None:
+        """クリックでだけ呼び出される偽の姿勢維持ツール。"""
+        shown.append("bdRotationPreservingPose")
 
     monkeypatch.setitem(sys.modules, "bd_util.maya.ui", fake_ui)
     monkeypatch.setitem(
         sys.modules, "bd_tools.bd_channel_box", fake_channel_box
+    )
+    monkeypatch.setitem(
+        sys.modules, "bd_tools.bd_child_compensated_set", fake_child_set
+    )
+    monkeypatch.setitem(
+        sys.modules, "bd_tools.bd_rotation_preserving_pose", fake_rotation_set
     )
     monkeypatch.setattr(
         fake_ui, "register_menu_item", register_menu_item, raising=False
@@ -53,25 +69,86 @@ def test_menu_registration_is_owned_by_tools_and_lazily_opens_channel_box(
     monkeypatch.setattr(
         fake_ui, "unregister_menu_owner", unregister_menu_owner, raising=False
     )
-    monkeypatch.setattr(fake_channel_box, "show", show, raising=False)
+    monkeypatch.setattr(
+        fake_channel_box, "show", show_channel_box, raising=False
+    )
+    monkeypatch.setattr(fake_child_set, "show", show_child_set, raising=False)
+    monkeypatch.setattr(
+        fake_rotation_set, "show", show_rotation_set, raising=False
+    )
 
     try:
         assert bd_tools.install_menu()
         assert bd_tools.install_menu()
         assert menu.was_menu_installed()
-        assert len(registrations) == 2
-        assert registrations[-1][:4] == (
-            "bd_tools",
-            "tools",
-            "bdChannelBox",
-            "bdChannelBox",
-        )
+        assert len(registrations) == 6
+        assert [registration[:4] for registration in registrations[:3]] == [
+            ("bd_tools", "tools", "bdChannelBox", "bdChannelBox"),
+            (
+                "bd_tools",
+                "tools",
+                "bdChildCompensatedSet",
+                "移動・回転をセット（子を維持）",
+            ),
+            (
+                "bd_tools",
+                "tools",
+                "bdRotationPreservingPose",
+                "回転をセット（姿勢を維持）",
+            ),
+        ]
+        assert [registration[:4] for registration in registrations[3:]] == [
+            registration[:4] for registration in registrations[:3]
+        ]
         assert not shown
-        registrations[-1][4]()
-        assert shown == ["bdChannelBox"]
+        for registration in registrations[3:]:
+            registration[4]()
+        assert shown == [
+            "bdChannelBox",
+            "bdChildCompensatedSet",
+            "bdRotationPreservingPose",
+        ]
     finally:
         bd_tools.uninstall_menu()
 
+    assert removed_owners == ["bd_tools"]
+    assert not menu.was_menu_installed()
+
+
+def test_menu_registration_cleans_up_after_partial_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """途中の登録失敗ではtools所有項目を残さない。"""
+    registered_ids: list[str] = []
+    removed_owners: list[str] = []
+    fake_ui = ModuleType("bd_util.maya.ui")
+
+    def register_menu_item(
+        *,
+        owner: str,
+        category: str,
+        item_id: str,
+        label: str,
+        command: Callable[[], object],
+    ) -> bool:
+        """2項目目だけUI未生成として失敗させる。"""
+        registered_ids.append(item_id)
+        return len(registered_ids) != 2
+
+    def unregister_menu_owner(owner: str) -> None:
+        """失敗時に解除した所有者を記録する。"""
+        removed_owners.append(owner)
+
+    monkeypatch.setitem(sys.modules, "bd_util.maya.ui", fake_ui)
+    monkeypatch.setattr(
+        fake_ui, "register_menu_item", register_menu_item, raising=False
+    )
+    monkeypatch.setattr(
+        fake_ui, "unregister_menu_owner", unregister_menu_owner, raising=False
+    )
+
+    assert not bd_tools.install_menu()
+    assert registered_ids == ["bdChannelBox", "bdChildCompensatedSet"]
     assert removed_owners == ["bd_tools"]
     assert not menu.was_menu_installed()
 

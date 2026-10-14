@@ -215,7 +215,7 @@ bdChannelBoxから独立した
 
 - [x] 個別ツールの命名と package 構成を実例から確定する
 - [ ] 共通の tool discovery / launcher が必要か評価する
-- [ ] bakedanuki 上部メニューがこのブランチに統合された後、独立ツールの起動項目を追加する
+- [x] bakedanuki 上部メニューへ独立ツールの起動項目を追加する
 - [x] UI 設定 path と workspaceControl ID の命名規約を固定する
 - [x] 複数ツールで本当に共有される処理を適切な層へ抽出する
 

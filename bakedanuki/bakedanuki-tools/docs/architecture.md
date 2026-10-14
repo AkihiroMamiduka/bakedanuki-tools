@@ -153,8 +153,11 @@ UI 基盤は `bd_util.ui` と `bd_util.maya.ui` を利用します。
 
 `bd_tools`のMaya Moduleは、専用の`scripts/userSetup.py`を持ちます。
 interactive起動時だけ`maya.utils.executeDeferred()`へメニュー登録を予約し、
-`bd_util.maya.ui.register_menu_item()`で`bakedanuki > tools > bdChannelBox`を追加します。
-`bdChannelBox`本体はクリックされるまで読み込みません。登録のownerは`bd_tools`、
+`bd_util.maya.ui.register_menu_item()`で`bakedanuki > tools`に`bdChannelBox`、
+「移動・回転をセット（子を維持）」、
+「回転をセット（姿勢を維持）」をこの順に追加します。各ツール本体はクリックされるまで
+読み込みません。上部メニューからは引数なしの公開`show()`を呼び、既存の配置と
+選択タブ・設定先を尊重します。登録のownerは`bd_tools`、
 categoryは`tools`とし、将来のrig・physicsは別owner/categoryで同じ`bakedanuki`を共有します。
 メニューのMaya UI構築と他ownerを保つ解除処理はutilが所有します。
 toolsのreload前には所有項目を解除し、reload後に新しいcallbackで再登録します。
