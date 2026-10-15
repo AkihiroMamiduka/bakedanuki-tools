@@ -802,6 +802,7 @@ class AttributeRowWidget(qt.QWidget):
                 self,
                 single_step=1,
                 wheel_requires_focus=not wheel_editing_without_focus,
+                select_all_on_mouse_focus=True,
             )
         presentation = binding.view_model.presentation
         minimum, maximum = presentation.minimum, presentation.maximum

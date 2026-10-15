@@ -639,6 +639,7 @@ class ChannelBoxController(qt.QObject):
                     binding = MayaIntPlugsBinding(
                         [resolve_int_plug(n, attribute.path) for n in targets],
                         parent=self,
+                        edit_connected=True,
                         track_input_state=True,
                     )
                 elif attribute.kind == "enum":

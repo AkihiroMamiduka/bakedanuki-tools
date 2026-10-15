@@ -16,8 +16,9 @@ pushを完了しました。確認したMaya versionは未申告です。
 pushを完了しました。確認したMaya versionは未申告です。
 カスタムフィルターの登録・作成・編集、候補と表示順の複数選択も2026-10-07に
 利用者が動作確認とpushの完了を報告しました。確認したMaya versionは未申告です。
-byte・short・long属性の表示・編集と値の搬送を追加しました。
-Maya本体での利用者による操作確認はこれからです。
+byte・short・long属性の初回対応は、利用者による操作確認とpushが完了しました。
+確認したMaya versionは未申告です。追加の接続属性編集とEnter・初回クリック操作の
+統一は実装済みで、この追加範囲の利用者によるMaya本体確認はこれからです。
 
 bool・byte／short／long・float系・enum・stringの複数ノード編集、step操作、表示・ロックの切替、
 5種類の標準表示フィルターとJSONによるカスタムフィルター、
@@ -150,7 +151,9 @@ MayaのuiScriptは `bd_tools.bd_channel_box.ui.restore()` を呼び、復元中�
 - bool、byte／short／long、float/double、距離、角度、enum、単一typed stringに対応します。
   対応するcompound子も対象です。int64、time、配列とその配下、compound全体は対象外です。
   整数欄の既定増減幅は1で、型固有の範囲と属性のhard limitを検証します。
-  入力接続中の整数属性は表示のみ行います。
+  時間カーブとSDK、short／longのAnimation Layerも既存型と同じ方針で編集します。
+  Maya標準ではbyte属性をLayerへ登録できません。Enterは欄内で処理し、
+  初回の文字クリックでは全選択します。再クリックとドラッグ選択は維持します。
 - 同じ正式属性pathと型・単位種別の属性へ絶対値を一括入力します。
   距離と角度は同名でも対応付けません。編集対象数、対応しないnodeや編集不可の理由は
   属性名と入力Viewのtooltipへ表示します。属性のないnodeへ属性を追加することはありません。
@@ -987,6 +990,9 @@ Animation Layerへの値入力を許可します。keyable／channelBoxの表示
 通常時間カーブとAnimation Layerは、MayaのAuto KeyがOFFなら一時的な値だけを変更し、
 ONならMayaの対象選択に従って既存アニメーションへキーを追加・更新します。
 SDKはAuto Keyによらず一時的な値だけを変更し、Driven Keyの設定は別操作です。
+整数の直接入力・上下・整列・値Pasteにも同じ規則を適用します。
+値と入力範囲は整数で検証しますが、元のカーブの小数キーや接線は丸め直しません。
+同値判定と入力接続表示は属性の整数評価値を基準にし、Undo・失敗復旧では元のキーを保持します。
 一時値は時刻変更やドライバー変更・再評価で接続元の評価値へ戻ります。
 まだ時間キーを持たないLayerなど、時間に依存しない構成では、時刻移動だけで再評価が
 発生せず一時値が残る場合があります。
@@ -2167,3 +2173,16 @@ toolsのみの変更で、既存設定の移行は不要です。
 Maya 2027本体の通し検証は、幅の撮影後に性能計測工程で120秒の制限時間を超え、
 `result.json`が保存されませんでした。幅の表示確認と通し検証の成功は区別します。
 利用者による動作確認とpushは完了しています。確認したMaya versionは未申告です。
+
+### 整数の接続属性編集と入力操作の統一（2026-10-15）
+
+時間カーブ・SDK・short／longのAnimation Layerへの整数入力と、Enterの欄内受理・
+初回文字クリックの全選択を追加しました。小数カーブを持つ整数属性のKey Altered判定も修正しました。
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsのBlack・Pyright・unit test | 成功。unit test 37件 |
+| Maya 2025 / 2026 / 2027のtools runtime test | 各389件成功。整数の直接入力・上下・Undo、キー・ミュート・曲線操作を含む |
+| utilの`verify.cmd` | Black、3 versionの型契約、Maya 2025 full pytest、3 versionのUI互換性testに成功 |
+| utilの整数接続テスト | 各versionで105件成功。Auto Key、SDK、Layerの重みとOverride、整数変換、小数キー復旧、三つの値Paste APIを確認 |
+| Maya本体での利用者確認 | 今回の追加範囲はこれから。初回整数対応の確認とpushは完了済み |

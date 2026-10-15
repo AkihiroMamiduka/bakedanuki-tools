@@ -34,6 +34,8 @@ def _row(widget: ChannelBoxWidget, name: str) -> AttributeRowWidget:
 def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     """二ノードへ同じ整数属性と型固有の範囲を設定する。"""
     del qt_application
+    auto = bool(cmds.autoKeyframe(query=True, state=True))
+    cmds.autoKeyframe(state=False)
     cast(Callable[..., str], cmds.file)(new=True, force=True)
     set_attr = cast(Callable[[str, int], None], cmds.setAttr)
     for node, byte, short, long in (
@@ -73,6 +75,7 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     widget.close()
     widget.deleteLater()
     _events()
+    cmds.autoKeyframe(state=auto)
     cast(Callable[..., str], cmds.file)(new=True, force=True)
 
 
@@ -103,6 +106,7 @@ def test_integer_rows_edit_align_and_respect_limits(
     ) == (-20, 20, 5)
     assert long_spin.value() == 2147483647
     assert byte_row.row.binding.is_mixed
+    assert byte_spin.select_all_on_mouse_focus()
 
     byte_spin.setValue(200)
     assert [
@@ -193,7 +197,7 @@ def test_integer_copy_paste_and_state_mode(editor: ChannelBoxWidget) -> None:
 def test_compound_child_and_connected_integer(
     editor: ChannelBoxWidget,
 ) -> None:
-    """compound子を表示し、接続中の整数を読取り専用にする。"""
+    """compound子を表示し、一般の入力接続は読取り専用にする。"""
     for node in ("intA", "intB"):
         cmds.addAttr(
             node,
@@ -227,3 +231,116 @@ def test_compound_child_and_connected_integer(
     assert short_row.row.binding.writable_count == 0
     assert isinstance(short_row.editor, IntSpinBox)
     assert not short_row.editor.isEnabled()
+
+
+@pytest.mark.parametrize("auto", [False, True])
+@pytest.mark.parametrize(
+    "attribute,mode",
+    [
+        ("byteValue", "time"),
+        ("byteValue", "driven"),
+        ("shortValue", "time"),
+        ("shortValue", "driven"),
+        ("shortValue", "layer"),
+        ("longValue", "time"),
+        ("longValue", "driven"),
+        ("longValue", "layer"),
+    ],
+)
+def test_connected_integer_value_and_undo(
+    editor: ChannelBoxWidget, auto: bool, attribute: str, mode: str
+) -> None:
+    """整数欄の確定と上下操作を接続先と通常属性へ一括適用する。"""
+    path = "intA." + attribute
+    if mode == "driven":
+        for value in (2, 8):
+            cmds.setDrivenKeyframe(
+                path, currentDriver="intB.tx", driverValue=value, value=value
+            )
+    else:
+        cmds.setKeyframe(path, time=1, value=2.25)
+        cmds.setKeyframe(path, time=10, value=8.75)
+        if mode == "layer":
+            layer = cast(str, cmds.animLayer("integerLayer", attribute=path))
+            cmds.animLayer(layer, edit=True, selected=True, preferred=True)
+            cmds.setKeyframe(path, animLayer=layer, time=1, value=1)
+            cmds.setKeyframe(path, animLayer=layer, time=10, value=3)
+    cmds.currentTime(5)
+    cmds.select("intB", "intA", replace=True)
+    editor.refresh()
+    _events()
+    row = _row(editor, attribute)
+    spin = row.editor
+    assert isinstance(spin, IntSpinBox)
+    assert spin.isEnabled()
+    initial = cmds.getAttr(path)
+    other = cmds.getAttr("intB." + attribute)
+    cmds.autoKeyframe(state=auto)
+    cmds.flushUndo()
+    spin.setValue(12)
+    _events()
+    assert cmds.getAttr(path) == 12
+    assert cmds.getAttr("intB." + attribute) == 12
+    assert not editor.message_label.isVisible()
+    cmds.undo()
+    _events()
+    assert cmds.getAttr(path) == initial
+    assert cmds.getAttr("intB." + attribute) == other
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    spin = _row(editor, attribute).editor
+    assert isinstance(spin, IntSpinBox)
+    spin.stepBy(1)
+    _events()
+    assert cmds.getAttr(path) == initial + 1
+    assert cmds.getAttr("intB." + attribute) == other + 1
+    cmds.undo()
+    _events()
+    assert cmds.getAttr(path) == initial
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_integer_animation_actions(editor: ChannelBoxWidget) -> None:
+    """キー、ミュート、曲線のコピー・貼付け・削除にも整数行を使用する。"""
+    cmds.select("intA", replace=True)
+    editor.refresh()
+    _events()
+    controller = editor.controller
+    key = (("longValue", "long"),)
+    cmds.currentTime(1)
+    assert controller.set_keyframes_selected(key) == 1
+    cmds.currentTime(10)
+    assert controller.set_keyframes_selected(key, breakdown=True) == 1
+    assert cmds.keyframe(
+        "intA.longValue", query=True, time=(10, 10), breakdown=True
+    ) == [10]
+    cmds.flushUndo()
+    assert controller.set_muted_selected(key, muted=True) == 1
+    assert cmds.mute("intA.longValue", query=True)
+    cmds.undo()
+    _events()
+    assert not cmds.mute("intA.longValue", query=True)
+    assert controller.copy_animation_curves_selected(key) == 1
+    cmds.currentTime(20)
+    assert (
+        controller.paste_animation_curves_to_selected(
+            (("shortValue", "short"),)
+        )
+        == 1
+    )
+    assert cmds.keyframe("intA.shortValue", query=True, timeChange=True) == [
+        20,
+        29,
+    ]
+    cmds.undo()
+    _events()
+    assert not cmds.keyframe("intA.shortValue", query=True, keyframeCount=True)
+    assert controller.delete_animation_curves_selected(key) == 1
+    assert not cmds.keyframe("intA.longValue", query=True, keyframeCount=True)
+    cmds.undo()
+    _events()
+    assert cmds.keyframe("intA.longValue", query=True, keyframeCount=True) == 2
+    assert controller.cut_animation_curves_selected(key) == 1
+    assert not cmds.keyframe("intA.longValue", query=True, keyframeCount=True)
+    cmds.undo()
+    _events()
+    assert cmds.keyframe("intA.longValue", query=True, keyframeCount=True) == 2

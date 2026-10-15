@@ -99,7 +99,8 @@ bool・byte／short／long・float系・enum・単一typed string属性の
 bool は属性名の右に置く CheckBox です。通常時間カーブとAnimation Layerへの入力は
 MayaのAuto Key設定に従い、OFFでは一時値、ONでは現在時刻のキーを追加・更新します。
 Driven Keyはキーを変えずに一時値を入力できます。未接続属性は通常の値設定のままです。
-整数属性は型固有の範囲とhard limitを守り、入力接続中は読み取り専用です。
+整数属性も型固有の範囲とhard limitを守り、時間カーブ・SDK・short／longのLayerへ
+同じ方針で入力できます。Maya標準ではbyte属性をLayerへ登録できません。
 整数欄の増減幅は1で、float系のStep欄は表示しません。
 属性名と値欄の間の帯で、現在キー（赤）・アニメーション中のキーなし（淡い赤）・
 Key Altered（淡い桃）・Driven Key（青）・Expression（紫）・

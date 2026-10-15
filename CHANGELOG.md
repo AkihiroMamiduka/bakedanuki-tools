@@ -11,12 +11,17 @@
 
 - bdChannelBoxでMayaのbyte・short・long属性を整数欄として表示・編集できるようにした。
   単一属性とcompound子属性に対応し、複数ノード編集、整列、表示・ロック、
-  Copy／Paste、Undoでも整数値と型固有の範囲を保つ。入力接続中は表示のみとする。
+  Copy／Paste、Undoでも整数値と型固有の範囲を保つ。
   clipboard書込みはschema version 3に変わるため、旧版の利用側へ貼り付ける場合は
   利用側も更新する。version 1・2のコピー内容は引き続き読み込める。
 
 ### Changed
 
+- bdChannelBoxの整数欄で、時間カーブ・SDK・short／longのAnimation Layerへの
+  入力・上下・整列・値Pasteを既存型と同じAuto Key規則で処理する。
+  Enterの欄内受理と初回クリックの全選択も揃えた。小数カーブの整数評価による
+  Key Alteredの誤判定を修正。利用側は対応するutilへ同時更新し、開いているMayaでは
+  `bd_tools.reload_package(reload_util=True)`で反映する。scene・設定・clipboardの移行は不要。
 - `bd_util.Nodes` の操作入口を保持する推奨変数名を `bd_nodes` に統一。
   内部コードと開発規約を揃え、ノード名の集合と区別する。
 - bdChannelBoxの数値欄を150 pxから156 px、共通入力列を216 pxから222 pxへ広げた。
