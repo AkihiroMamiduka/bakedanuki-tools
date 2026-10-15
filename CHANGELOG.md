@@ -9,6 +9,12 @@
 
 ### Added
 
+- bdChannelBoxの整数行にStep欄を追加。既定1の10倍方式と任意の正整数入力に対応し、
+  複数行への設定、属性型・正式pathごとの保存、選択属性／全属性リセットを行う。
+  floatとの混在選択は全対象を検証し、小数Stepを整数行へ適用する操作は全体を拒否する。
+  整数設定は`integer_attribute_steps`へ保存し、既存float設定とsceneの移行は不要。
+  行の`editor`は`IntValueStepSpinBox`になり、値欄の直接操作は`editor.spin_box`を使用する。
+
 - bdChannelBoxでMayaのbyte・short・long属性を整数欄として表示・編集できるようにした。
   単一属性とcompound子属性に対応し、複数ノード編集、整列、表示・ロック、
   Copy／Paste、Undoでも整数値と型固有の範囲を保つ。

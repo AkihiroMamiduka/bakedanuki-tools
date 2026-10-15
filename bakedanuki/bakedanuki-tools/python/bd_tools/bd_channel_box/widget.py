@@ -35,6 +35,9 @@ from bd_util.ui import (
     FloatUnitKind,
     FloatValueStepSpinBox,
     IntSpinBox,
+    IntStepProfile,
+    IntStepSetting,
+    IntValueStepSpinBox,
     RadioButtonSweep,
     StringLineEdit,
     qt,
@@ -174,6 +177,15 @@ _ATTRIBUTE_FILTER_OPTIONS: tuple[tuple[str, ChannelAttributeFilter], ...] = (
     ("channelbox", "channel_box"),
     ("hide", "hidden"),
 )
+
+
+def _require_integer_step(value: int | float) -> int:
+    """混在行の境界だけで整数相当のfloatを検証し、正の整数へ変換する。"""
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError("整数属性のStepには1以上の32-bit整数が必要です")
+        value = int(value)
+    return IntStepSetting("step", value).single_step
 
 
 class _MenuActions(Protocol):
@@ -323,7 +335,7 @@ class _LockCheckBox(qt.QCheckBox):
 class AttributeRowWidget(qt.QWidget):
     """右揃えの属性名と入力Viewを並べ、詳細と操作を必要時に表示する。"""
 
-    step_changed = qt.Signal(float)
+    step_changed = qt.Signal(object)
 
     def __init__(
         self,
@@ -331,7 +343,7 @@ class AttributeRowWidget(qt.QWidget):
         selection_count: int,
         parent: qt.QWidget,
         *,
-        single_step: float | None = None,
+        single_step: int | float | None = None,
         align_callback: Callable[[], None] | None = None,
         wheel_editing_without_focus: bool = False,
     ) -> None:
@@ -728,12 +740,15 @@ class AttributeRowWidget(qt.QWidget):
         # 入力グループを固定幅にし、余剰幅は属性名側へ配分する
         self.editor.setFixedWidth(_EDITOR_WIDTH)
         if isinstance(
-            self.editor, (FloatSliderSpinBox, FloatValueStepSpinBox)
+            self.editor,
+            (FloatSliderSpinBox, FloatValueStepSpinBox, IntValueStepSpinBox),
         ):
             editor_layout = self.editor.layout()
             if isinstance(editor_layout, qt.QHBoxLayout):
                 editor_layout.setSpacing(_FIELD_SPACING)
-        if isinstance(self.editor, FloatValueStepSpinBox):
+        if isinstance(
+            self.editor, (FloatValueStepSpinBox, IntValueStepSpinBox)
+        ):
             self.editor.settingsChanged.connect(self._notify_step_changed)
 
         # 値の混在と編集可能数はBindingの読み取り通知だけで更新する
@@ -771,14 +786,14 @@ class AttributeRowWidget(qt.QWidget):
 
     def _create_editor(
         self,
-        single_step: float | None,
+        single_step: int | float | None,
         wheel_editing_without_focus: bool,
     ) -> (
         BoolCheckBox
         | EnumComboBox
         | FloatSliderSpinBox
         | FloatValueStepSpinBox
-        | IntSpinBox
+        | IntValueStepSpinBox
         | StringLineEdit
     ):
         """属性の種類と両側のhard limitから入力Viewを選ぶ。"""
@@ -797,12 +812,21 @@ class AttributeRowWidget(qt.QWidget):
                 binding, parent=self, follow_source_during_edit=True
             )
         if isinstance(binding, MayaIntPlugsBinding):
-            return IntSpinBox(
+            return IntValueStepSpinBox(
                 binding,
                 self,
-                single_step=1,
-                wheel_requires_focus=not wheel_editing_without_focus,
-                select_all_on_mouse_focus=True,
+                single_step=(
+                    1
+                    if single_step is None
+                    else _require_integer_step(single_step)
+                ),
+                step_mode="multiplicative",
+                value_wheel_requires_focus=not wheel_editing_without_focus,
+                step_wheel_requires_focus=not wheel_editing_without_focus,
+                value_select_all_on_mouse_focus=True,
+                step_select_all_on_mouse_focus=True,
+                value_width=_VALUE_FIELD_WIDTH,
+                step_width=_AUXILIARY_FIELD_WIDTH,
             )
         presentation = binding.view_model.presentation
         minimum, maximum = presentation.minimum, presentation.maximum
@@ -852,8 +876,9 @@ class AttributeRowWidget(qt.QWidget):
         editor = self.editor
         if isinstance(editor, EnumComboBox):
             editor.set_wheel_requires_focus(requires_focus)
-        elif isinstance(editor, IntSpinBox):
-            editor.set_wheel_requires_focus(requires_focus)
+        elif isinstance(editor, IntValueStepSpinBox):
+            editor.spin_box.set_wheel_requires_focus(requires_focus)
+            editor.step_spin_box.set_wheel_requires_focus(requires_focus)
         elif isinstance(editor, FloatSliderSpinBox):
             editor.spin_box.set_wheel_requires_focus(requires_focus)
         elif isinstance(editor, FloatValueStepSpinBox):
@@ -868,13 +893,19 @@ class AttributeRowWidget(qt.QWidget):
             return 15.0, "additive", 15.0
         return 1.0, "multiplicative", 1.0
 
-    def default_single_step(self) -> float:
+    def default_single_step(self) -> int | float:
         """属性名と型から決まる、保存設定を適用する前のStepを返す。"""
-        return self._step_defaults()[0]
+        return (
+            1
+            if isinstance(self.editor, IntValueStepSpinBox)
+            else self._step_defaults()[0]
+        )
 
     def _notify_step_changed(self) -> None:
         """現在のstepを通知し、Window側で属性ごとの設定を保持する。"""
-        if isinstance(self.editor, FloatValueStepSpinBox):
+        if isinstance(
+            self.editor, (FloatValueStepSpinBox, IntValueStepSpinBox)
+        ):
             self.step_changed.emit(self.editor.singleStep())
 
     def _update_state(self) -> None:
@@ -1447,6 +1478,7 @@ class ChannelBoxWidget(qt.QWidget):
         self._active_custom_filters: dict[str, CustomFilterSelection] = {}
         self._setup_mode_active = False
         self.step_profile = FloatStepProfile(self)
+        self.int_step_profile = IntStepProfile(self)
         self._changing_steps = False
         self.row_widgets: tuple[
             AttributeRowWidget | AttributeStateRowWidget, ...
@@ -1739,6 +1771,7 @@ class ChannelBoxWidget(qt.QWidget):
             self._reset_selected_steps
         )
         self.step_profile.changed.connect(self._sync_step_profile)
+        self.int_step_profile.changed.connect(self._sync_step_profile)
         self.wheel_editing_action.toggled.connect(
             self._set_wheel_editing_without_focus
         )
@@ -2182,12 +2215,11 @@ class ChannelBoxWidget(qt.QWidget):
         if isinstance(editor, EnumComboBox):
             editor.hidePopup()
         if not isinstance(
-            editor, (FloatValueStepSpinBox, FloatSliderSpinBox, IntSpinBox)
+            editor,
+            (FloatValueStepSpinBox, FloatSliderSpinBox, IntValueStepSpinBox),
         ):
             return
-        spin_box = (
-            editor if isinstance(editor, IntSpinBox) else editor.spin_box
-        )
+        spin_box = editor.spin_box
         children = cast(
             Callable[[type[qt.QLineEdit]], list[qt.QLineEdit]],
             getattr(spin_box, "findChildren"),
@@ -2202,9 +2234,9 @@ class ChannelBoxWidget(qt.QWidget):
         # 入力通知を止めて再描画し、未確定文字だけを破棄する
         blocker = qt.QtCore.QSignalBlocker(spin_box)
         try:
-            if isinstance(editor, IntSpinBox):
+            if isinstance(editor, IntValueStepSpinBox):
                 assert isinstance(binding, MayaIntPlugsBinding)
-                editor.setValue(binding.value)
+                editor.spin_box.setValue(binding.value)
             else:
                 assert isinstance(binding, MayaFloatPlugsBinding)
                 editor.spin_box.setValue(
@@ -2357,12 +2389,12 @@ class ChannelBoxWidget(qt.QWidget):
                 editor.slider.editFinished.connect(
                     self.controller.finish_value_edit
                 )
-        elif isinstance(editor, IntSpinBox):
-            editor.setValueRequestHandler(
+        elif isinstance(editor, IntValueStepSpinBox):
+            editor.spin_box.setValueRequestHandler(
                 partial(self._request_int_value, key)
             )
-            editor.setStepRequestHandler(
-                partial(self._request_int_step, key, editor)
+            editor.spin_box.setStepRequestHandler(
+                partial(self._request_int_step, key, editor.spin_box)
             )
         elif isinstance(editor, BoolCheckBox):
             editor.setValueRequestHandler(
@@ -2773,8 +2805,16 @@ class ChannelBoxWidget(qt.QWidget):
             return None
         return path, kind
 
-    def _saved_single_step(self, key: tuple[str, str]) -> float | None:
+    def _int_step_identity(self, key: tuple[str, str]) -> str | None:
+        """Maya固有の属性型と正式pathを汎用Profileの識別子へ変換する。"""
+        path, kind = key
+        return f"{kind}:{path}" if kind in ("byte", "short", "long") else None
+
+    def _saved_single_step(self, key: tuple[str, str]) -> int | float | None:
         """属性keyに対応する保存済みStepを返す。"""
+        integer_identity = self._int_step_identity(key)
+        if integer_identity is not None:
+            return self.int_step_profile.single_step(integer_identity)
         identity = self._step_identity(key)
         if identity is None:
             return None
@@ -2799,19 +2839,41 @@ class ChannelBoxWidget(qt.QWidget):
                 identities.add(identity)
         return identities
 
+    def _selected_int_step_identities(self) -> set[str]:
+        """選択中で整数Step欄を持つ行の保存識別子を返す。"""
+        selected = set(self.table_view.selected_keys())
+        identities: set[str] = set()
+        for widget in self.row_widgets:
+            if not isinstance(widget, AttributeRowWidget) or not isinstance(
+                widget.editor, IntValueStepSpinBox
+            ):
+                continue
+            key = (widget.row.attribute.path, widget.row.attribute.kind)
+            identity = self._int_step_identity(key)
+            if key in selected and identity is not None:
+                identities.add(identity)
+        return identities
+
     def _prepare_step_settings_menu(self) -> None:
         """保存済み設定と選択中のStep行に合わせてリセット可否を更新する。"""
         entries = self.step_profile.entries
         stored = {(entry.key, entry.unit_kind) for entry in entries}
-        self.reset_all_steps_action.setEnabled(bool(entries))
+        integer_stored = {entry.key for entry in self.int_step_profile.entries}
+        self.reset_all_steps_action.setEnabled(bool(entries or integer_stored))
         self.reset_selected_steps_action.setEnabled(
-            bool(stored.intersection(self._selected_step_identities()))
+            bool(
+                stored.intersection(self._selected_step_identities())
+                or integer_stored.intersection(
+                    self._selected_int_step_identities()
+                )
+            )
         )
 
     def _reset_all_steps(self) -> None:
         """画面外を含む全ての保存済みStepを削除し、表示行を初期値へ戻す。"""
         self._clear_message()
         self.step_profile.clear()
+        self.int_step_profile.clear()
 
     def _reset_selected_steps(self) -> None:
         """選択中でStep欄を持つ属性だけ、保存済みStepを削除する。"""
@@ -2821,6 +2883,12 @@ class ChannelBoxWidget(qt.QWidget):
             entry
             for entry in self.step_profile.entries
             if (entry.key, entry.unit_kind) not in identities
+        )
+        integer_identities = self._selected_int_step_identities()
+        self.int_step_profile.replace_entries(
+            entry
+            for entry in self.int_step_profile.entries
+            if entry.key not in integer_identities
         )
 
     def _sync_step_profile(self) -> None:
@@ -2832,13 +2900,19 @@ class ChannelBoxWidget(qt.QWidget):
             for widget in self.row_widgets:
                 if not isinstance(
                     widget, AttributeRowWidget
-                ) or not isinstance(widget.editor, FloatValueStepSpinBox):
+                ) or not isinstance(
+                    widget.editor, (FloatValueStepSpinBox, IntValueStepSpinBox)
+                ):
                     continue
                 key = (widget.row.attribute.path, widget.row.attribute.kind)
                 saved = self._saved_single_step(key)
-                widget.editor.setSingleStep(
+                value = (
                     widget.default_single_step() if saved is None else saved
                 )
+                if isinstance(widget.editor, IntValueStepSpinBox):
+                    widget.editor.setSingleStep(_require_integer_step(value))
+                else:
+                    widget.editor.setSingleStep(value)
         finally:
             self._changing_steps = False
         self._prepare_step_settings_menu()
@@ -3263,13 +3337,13 @@ class ChannelBoxWidget(qt.QWidget):
                         widget.editor.spin_box
                         if isinstance(
                             widget.editor,
-                            (FloatSliderSpinBox, FloatValueStepSpinBox),
+                            (
+                                FloatSliderSpinBox,
+                                FloatValueStepSpinBox,
+                                IntValueStepSpinBox,
+                            ),
                         )
-                        else (
-                            widget.editor
-                            if isinstance(widget.editor, IntSpinBox)
-                            else None
-                        )
+                        else None
                     ),
                     text_field=(
                         widget.editor
@@ -3324,7 +3398,7 @@ class ChannelBoxWidget(qt.QWidget):
         )
 
     def _apply_step_value(
-        self, source_key: tuple[str, str], value: float
+        self, source_key: tuple[str, str], value: int | float
     ) -> None:
         """同じ表示stepを、選択中でStep欄を持つ属性へ反映して保持する。"""
         if self._changing_steps:
@@ -3336,30 +3410,60 @@ class ChannelBoxWidget(qt.QWidget):
             (entry.key, entry.unit_kind): entry
             for entry in self.step_profile.entries
         }
-        self._changing_steps = True
+        integer_entries = {
+            entry.key: entry for entry in self.int_step_profile.entries
+        }
+        planned: list[tuple[AttributeRowWidget, int | float]] = []
+        # 型と範囲を全行で先に検証し、操作元が既に変わった場合も失敗時に戻す
         try:
-            # 各行固有の増減方式は維持し、表示stepの数値だけを同期する
             for widget in self.row_widgets:
                 key = (widget.row.attribute.path, widget.row.attribute.kind)
                 if key not in target_keys:
                     continue
                 if not isinstance(
                     widget, AttributeRowWidget
-                ) or not isinstance(widget.editor, FloatValueStepSpinBox):
+                ) or not isinstance(
+                    widget.editor, (FloatValueStepSpinBox, IntValueStepSpinBox)
+                ):
                     excluded.append(
                         f"{widget.row.attribute.nice_name}: Step欄なし"
                     )
                     continue
-                widget.editor.setSingleStep(value)
-                identity = self._step_identity(key)
-                assert identity is not None
-                if value == widget.default_single_step():
-                    entries.pop(identity, None)
+                if isinstance(widget.editor, IntValueStepSpinBox):
+                    checked = _require_integer_step(value)
+                    integer_identity = self._int_step_identity(key)
+                    assert integer_identity is not None
+                    if checked == widget.default_single_step():
+                        integer_entries.pop(integer_identity, None)
+                    else:
+                        integer_entries[integer_identity] = IntStepSetting(
+                            integer_identity, checked
+                        )
+                    planned.append((widget, checked))
                 else:
-                    entries[identity] = FloatStepSetting(
-                        identity[0], identity[1], value
-                    )
+                    identity = self._step_identity(key)
+                    assert identity is not None
+                    setting = FloatStepSetting(identity[0], identity[1], value)
+                    if value == widget.default_single_step():
+                        entries.pop(identity, None)
+                    else:
+                        entries[identity] = setting
+                    planned.append((widget, setting.single_step))
+        except (TypeError, ValueError, OverflowError) as error:
+            self._sync_step_profile()
+            self._show_error(str(error))
+            return
+        self._changing_steps = True
+        try:
+            # 各行固有の増減方式は維持し、表示stepの数値だけを同期する
+            for widget, checked in planned:
+                if isinstance(widget.editor, IntValueStepSpinBox):
+                    widget.editor.setSingleStep(_require_integer_step(checked))
+                else:
+                    assert isinstance(widget.editor, FloatValueStepSpinBox)
+                    widget.editor.setSingleStep(checked)
             self.step_profile.replace_entries(entries.values())
+            self.int_step_profile.replace_entries(integer_entries.values())
         finally:
             self._changing_steps = False
 

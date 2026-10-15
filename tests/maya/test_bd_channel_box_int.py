@@ -10,7 +10,7 @@ import pytest
 from maya import cmds
 
 from bd_util.maya.ui import MayaIntPlugsBinding
-from bd_util.ui import IntSpinBox, qt
+from bd_util.ui import FloatValueStepSpinBox, IntValueStepSpinBox, qt
 from bd_tools.bd_channel_box.widget import AttributeRowWidget, ChannelBoxWidget
 
 
@@ -87,13 +87,13 @@ def test_integer_rows_edit_align_and_respect_limits(
     short_row = _row(editor, "shortValue")
     long_row = _row(editor, "longValue")
     assert all(
-        isinstance(row.editor, IntSpinBox)
+        isinstance(row.editor, IntValueStepSpinBox)
         and isinstance(row.row.binding, MayaIntPlugsBinding)
         for row in (byte_row, short_row, long_row)
     )
-    byte_spin = cast(IntSpinBox, byte_row.editor)
-    short_spin = cast(IntSpinBox, short_row.editor)
-    long_spin = cast(IntSpinBox, long_row.editor)
+    byte_spin = cast(IntValueStepSpinBox, byte_row.editor).spin_box
+    short_spin = cast(IntValueStepSpinBox, short_row.editor).spin_box
+    long_spin = cast(IntValueStepSpinBox, long_row.editor).spin_box
     assert (byte_spin.minimum(), byte_spin.maximum(), byte_spin.value()) == (
         0,
         255,
@@ -121,8 +121,9 @@ def test_integer_rows_edit_align_and_respect_limits(
     key = (byte_row.row.attribute.path, byte_row.row.attribute.kind)
     short_key = (short_row.row.attribute.path, short_row.row.attribute.kind)
     editor.table_view.select_keys((key, short_key))
-    selected_byte_spin = _row(editor, "byteValue").editor
-    assert isinstance(selected_byte_spin, IntSpinBox)
+    selected_byte_editor = _row(editor, "byteValue").editor
+    assert isinstance(selected_byte_editor, IntValueStepSpinBox)
+    selected_byte_spin = selected_byte_editor.spin_box
     selected_byte_spin.setValue(10)
     assert [
         cmds.getAttr(node + "." + path)
@@ -216,7 +217,7 @@ def test_compound_child_and_connected_integer(
     _events()
     child = _row(editor, "childCount")
     assert child.row.attribute.path == "integerGroup.childCount"
-    assert isinstance(child.editor, IntSpinBox)
+    assert isinstance(child.editor, IntValueStepSpinBox)
     driver = cmds.createNode("transform")
     cmds.addAttr(
         driver, longName="driverCount", attributeType="short", keyable=True
@@ -229,8 +230,9 @@ def test_compound_child_and_connected_integer(
     short_row = _row(editor, "shortValue")
     assert isinstance(short_row.row.binding, MayaIntPlugsBinding)
     assert short_row.row.binding.writable_count == 0
-    assert isinstance(short_row.editor, IntSpinBox)
-    assert not short_row.editor.isEnabled()
+    assert isinstance(short_row.editor, IntValueStepSpinBox)
+    assert not short_row.editor.spin_box.isEnabled()
+    assert short_row.editor.step_spin_box.isEnabled()
 
 
 @pytest.mark.parametrize("auto", [False, True])
@@ -270,8 +272,9 @@ def test_connected_integer_value_and_undo(
     editor.refresh()
     _events()
     row = _row(editor, attribute)
-    spin = row.editor
-    assert isinstance(spin, IntSpinBox)
+    value_editor = row.editor
+    assert isinstance(value_editor, IntValueStepSpinBox)
+    spin = value_editor.spin_box
     assert spin.isEnabled()
     initial = cmds.getAttr(path)
     other = cmds.getAttr("intB." + attribute)
@@ -287,8 +290,9 @@ def test_connected_integer_value_and_undo(
     assert cmds.getAttr(path) == initial
     assert cmds.getAttr("intB." + attribute) == other
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
-    spin = _row(editor, attribute).editor
-    assert isinstance(spin, IntSpinBox)
+    value_editor = _row(editor, attribute).editor
+    assert isinstance(value_editor, IntValueStepSpinBox)
+    spin = value_editor.spin_box
     spin.stepBy(1)
     _events()
     assert cmds.getAttr(path) == initial + 1
@@ -344,3 +348,123 @@ def test_integer_animation_actions(editor: ChannelBoxWidget) -> None:
     cmds.undo()
     _events()
     assert cmds.keyframe("intA.longValue", query=True, keyframeCount=True) == 2
+
+
+def test_step_modes_multi_selection_reset_and_wheel_policy(
+    editor: ChannelBoxWidget,
+) -> None:
+    """整数Stepを選択行へ共有し、リセットとホイール方針を維持する。"""
+    byte = _row(editor, "byteValue").editor
+    short = _row(editor, "shortValue").editor
+    assert isinstance(byte, IntValueStepSpinBox)
+    assert isinstance(short, IntValueStepSpinBox)
+    assert (
+        byte.step_spin_box.stepMode()
+        == short.step_spin_box.stepMode()
+        == "multiplicative"
+    )
+    editor.table_view.select_keys(
+        (("byteValue", "byte"), ("shortValue", "short"))
+    )
+    byte.step_spin_box.stepUp()
+    assert byte.singleStep() == short.singleStep() == 10
+    assert cmds.getAttr("intA.byteValue") == 255
+    assert cmds.getAttr("intA.shortValue") == 5
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    byte.step_spin_box.setValue(15)
+    byte.step_spin_box.stepDown()
+    assert byte.singleStep() == short.singleStep() == 1
+    assert editor.int_step_profile.entries == ()
+    assert byte.step_spin_box.wheel_requires_focus()
+    editor.wheel_editing_action.setChecked(True)
+    assert not byte.step_spin_box.wheel_requires_focus()
+    assert not byte.spin_box.wheel_requires_focus()
+    short.setSingleStep(5)
+    editor.int_step_profile.set_single_step("long:offscreenCount", 100)
+    editor.context_menu.aboutToShow.emit()
+    assert editor.reset_selected_steps_action.isEnabled()
+    editor.reset_selected_steps_action.trigger()
+    assert byte.singleStep() == short.singleStep() == 1
+    assert tuple(entry.key for entry in editor.int_step_profile.entries) == (
+        "long:offscreenCount",
+    )
+    editor.reset_all_steps_action.trigger()
+    assert editor.int_step_profile.entries == ()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize("invalid", [0.5, 2147483648.0])
+def test_mixed_step_validation_is_atomic(
+    editor: ChannelBoxWidget, invalid: float
+) -> None:
+    """小数や上限超過の混在一括Stepを拒否し、操作元も元へ戻す。"""
+    integer = _row(editor, "shortValue").editor
+    floating = _row(editor, "translateX").editor
+    assert isinstance(integer, IntValueStepSpinBox)
+    assert isinstance(floating, FloatValueStepSpinBox)
+    editor.table_view.select_keys(
+        (("shortValue", "short"), ("translate.translateX", "distance"))
+    )
+    floating.step_spin_box.setValue(5.0)
+    assert floating.singleStep() == integer.singleStep() == 5
+    assert type(integer.singleStep()) is int
+    integer_before = editor.int_step_profile.entries
+    float_before = editor.step_profile.entries
+    floating.step_spin_box.setValue(invalid)
+    assert floating.singleStep() == integer.singleStep() == 5
+    assert editor.int_step_profile.entries == integer_before
+    assert editor.step_profile.entries == float_before
+    assert editor.message_label.isVisible()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_saved_step_is_shared_by_path_and_kind_but_not_changed_type(
+    editor: ChannelBoxWidget,
+) -> None:
+    """同じ正式path・型ではStepを共有し、属性型の変更後には流用しない。"""
+    value_editor = _row(editor, "longValue").editor
+    assert isinstance(value_editor, IntValueStepSpinBox)
+    value_editor.setSingleStep(15)
+    assert editor.int_step_profile.single_step("long:longValue") == 15
+    cmds.select("intB", replace=True)
+    editor.refresh()
+    _events()
+    value_editor = _row(editor, "longValue").editor
+    assert isinstance(value_editor, IntValueStepSpinBox)
+    assert value_editor.singleStep() == 15
+    other = cmds.createNode("transform")
+    cmds.addAttr(
+        other, longName="longValue", attributeType="short", keyable=True
+    )
+    cmds.select(other, replace=True)
+    editor.refresh()
+    _events()
+    value_editor = _row(editor, "longValue").editor
+    assert isinstance(value_editor, IntValueStepSpinBox)
+    assert value_editor.singleStep() == 1
+
+
+def test_step_offsets_keep_differences_and_refuse_whole_operation_on_limits(
+    editor: ChannelBoxWidget,
+) -> None:
+    """値の上下へ設定Stepを適用し、全ノードの差・Undo・範囲検証を維持する。"""
+    value_editor = _row(editor, "shortValue").editor
+    assert isinstance(value_editor, IntValueStepSpinBox)
+    value_editor.setSingleStep(10)
+    value_editor.spin_box.stepUp()
+    _events()
+    assert [
+        cmds.getAttr(node + ".shortValue") for node in ("intA", "intB")
+    ] == [15, 16]
+    value_editor.spin_box.stepUp()
+    _events()
+    assert [
+        cmds.getAttr(node + ".shortValue") for node in ("intA", "intB")
+    ] == [15, 16]
+    assert editor.message_label.isVisible()
+    cmds.undo()
+    _events()
+    assert [
+        cmds.getAttr(node + ".shortValue") for node in ("intA", "intB")
+    ] == [5, 6]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)

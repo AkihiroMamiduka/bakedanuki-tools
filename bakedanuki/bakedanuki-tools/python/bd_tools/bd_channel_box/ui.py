@@ -62,6 +62,9 @@ class ChannelBoxWindow(MayaDockableWindow):
         self.ui_state.register_float_step_profile(
             "attribute_steps", self.widget.step_profile
         )
+        self.ui_state.register_int_step_profile(
+            "integer_attribute_steps", self.widget.int_step_profile
+        )
         for value, action in self.widget.search_visibility_actions.items():
             self.ui_state.register_checkable_action(
                 f"search_visibility_{value}", action

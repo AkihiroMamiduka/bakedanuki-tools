@@ -16,7 +16,8 @@ from bd_util.ui import (
     FloatSliderSpinBox,
     FloatStepProfile,
     FloatValueStepSpinBox,
-    IntSpinBox,
+    IntValueStepSpinBox,
+    IntStepProfile,
     RadioButtonSweep,
     StringLineEdit,
     UiStateManager,
@@ -72,7 +73,7 @@ if isinstance(row, AttributeRowWidget):
         | EnumComboBox
         | FloatSliderSpinBox
         | FloatValueStepSpinBox
-        | IntSpinBox
+        | IntValueStepSpinBox
         | StringLineEdit,
     )
     assert_type(row.align_action, qt.QAction)
@@ -114,7 +115,7 @@ if isinstance(row, AttributeRowWidget):
     assert_type(row.freeze_rotate_action, qt.QAction)
     assert_type(row.freeze_scale_action, qt.QAction)
     assert_type(row.freeze_all_action, qt.QAction)
-    assert_type(row.default_single_step(), float)
+    assert_type(row.default_single_step(), int | float)
     assert_type(row.set_wheel_editing_without_focus(True), None)
 else:
     assert_type(row.row, ChannelStateRow)
@@ -151,6 +152,7 @@ assert_type(
 assert_type(bd_channel_box.show().widget.settings_menu, qt.QMenu)
 assert_type(bd_channel_box.show().widget.wheel_editing_action, qt.QAction)
 assert_type(bd_channel_box.show().widget.step_profile, FloatStepProfile)
+assert_type(bd_channel_box.show().widget.int_step_profile, IntStepProfile)
 assert_type(bd_channel_box.show().widget.step_settings_menu, qt.QMenu)
 assert_type(bd_channel_box.show().widget.reset_all_steps_action, qt.QAction)
 assert_type(

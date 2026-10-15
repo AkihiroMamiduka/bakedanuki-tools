@@ -150,7 +150,8 @@ MayaのuiScriptは `bd_tools.bd_channel_box.ui.restore()` を呼び、復元中�
   ロック中や未対応の入力接続を持つ属性の値を変更できない制限は維持します。
 - bool、byte／short／long、float/double、距離、角度、enum、単一typed stringに対応します。
   対応するcompound子も対象です。int64、time、配列とその配下、compound全体は対象外です。
-  整数欄の既定増減幅は1で、型固有の範囲と属性のhard limitを検証します。
+  整数欄は`[値][Step]`で既定増減幅は1、Step欄は10倍方式です。
+  型固有の範囲と属性のhard limitを検証します。
   時間カーブとSDK、short／longのAnimation Layerも既存型と同じ方針で編集します。
   Maya標準ではbyte属性をLayerへ登録できません。Enterは欄内で処理し、
   初回の文字クリックでは全選択します。再クリックとドラッグ選択は維持します。
@@ -500,7 +501,18 @@ Step欄の直接入力と上下操作では、選択中でStep欄を持つ属性
 
 ### Step設定の保存とリセット
 
-変更したStepは`bd_channel_box/preferences/main`の`attribute_steps`へ保存し、Windowの
+整数のStepは1～2147483647です。任意の正整数を手入力でき、上下は10倍と整数除算です。
+`1→10→100`、下へは`150→15→1`となり、1未満には進みません。
+上限を超える増加は無効です。Step変更自体は属性値を変更しません。
+floatと整数の混在選択では整数相当のStepだけを共有し、小数や整数上限超過は全体を拒否して
+操作元も以前のStepへ戻します。整数の行はhard limitの有無によらずStep欄を表示します。
+
+整数の保存先は同じpreferences内の`integer_attribute_steps`で、識別子は属性型と正式pathの
+組（例`long:count`）です。初期値は1で、同名pathでもbyte・short・longを区別します。
+既存の`attribute_steps`はfloat用として維持し、両Profileをclose・再表示・reload・再起動後へ復元します。
+以下の選択属性／全属性リセットは、整数の保存値も対象に含めます。
+
+float属性のStepは`bd_channel_box/preferences/main`の`attribute_steps`へ保存し、Windowの
 close・再表示、tools/utilのreload、Maya再起動後へ復元します。`reset_layout()`は
 配置だけを初期化し、Step設定を維持します。sceneとMaya Undo履歴には書き込みません。
 
@@ -2186,3 +2198,25 @@ Maya 2027本体の通し検証は、幅の撮影後に性能計測工程で120�
 | utilの`verify.cmd` | Black、3 versionの型契約、Maya 2025 full pytest、3 versionのUI互換性testに成功 |
 | utilの整数接続テスト | 各versionで105件成功。Auto Key、SDK、Layerの重みとOverride、整数変換、小数キー復旧、三つの値Paste APIを確認 |
 | Maya本体での利用者確認 | 整数の接続属性編集と入力操作を確認し、push完了。確認したMaya versionは未申告 |
+
+### 整数Step欄と属性別設定
+
+整数行を`[値][Step]`へ変更し、既定1の10倍方式、任意の正整数入力、
+floatを含む選択行への一括設定と専用Profileの保存・リセットを追加しました。
+小数や32-bit上限超過を整数行へ共有する操作は、全行を変更せず操作元も元へ戻します。
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsのBlack・Pyright・unit test | 成功。型エラー・警告0件、unit test 37件 |
+| Maya 2025／2026／2027のtools runtime test | 各394件成功 |
+| utilの`verify.cmd` | Black、3 version型契約、Maya 2025 full pytest、3 versionのUI互換性testに成功 |
+| utilの整数Step test | 各versionで29件成功。整数演算・入力制約・共有View・保存形式・サンプルを確認 |
+| Maya 2025本体 | 10倍操作・任意入力・混在拒否・値Undo・幅・close後復元・別process再起動後の復元とリセットを確認 |
+
+本体検証の資料は`%TEMP%/bd-int-step-maya2025-hilbw8sy`に保存しました。
+`initial-result.json`と`restart-result.json`は`success: true`で、両Window画像も確認しました。
+初回は結果保存後の終了待ちが120秒でタイムアウトしrunnerの終了codeは1でしたが、
+専用processの後始末後に実行した再起動検証は終了code 0で完了しました。
+Maya 2026／2027本体の画面操作と、今回の追加範囲の利用者確認はこれからです。
+反映にはutilも更新して`bd_tools.reload_package(reload_util=True)`を使用します。
+既存float設定やsceneの移行は不要です。行APIの値欄は`editor.spin_box`から操作します。

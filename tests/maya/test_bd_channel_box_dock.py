@@ -263,11 +263,21 @@ def test_step_profile_persists_and_layout_reset_keeps_it(
     from bd_tools import bd_channel_box
 
     node = cmds.createNode("transform", name="channelBoxStepTarget")
+    cmds.addAttr(node, longName="count", attributeType="long", keyable=True)
     cmds.select(node, replace=True)
     first = bd_channel_box.show()
     _events()
     _step_view(first, "translate.translateX").setSingleStep(2.5)
     _step_view(first, "rotate.rotateY").setSingleStep(7.5)
+    from bd_util.ui import IntValueStepSpinBox
+
+    integer = next(
+        row.editor
+        for row in first.widget.row_widgets
+        if row.row.attribute.path == "count"
+    )
+    assert isinstance(integer, IntValueStepSpinBox)
+    integer.setSingleStep(15)
     assert len(first.widget.step_profile.entries) == 2
     cmds.flushUndo()
     bd_channel_box.close()
@@ -277,6 +287,13 @@ def test_step_profile_persists_and_layout_reset_keeps_it(
     _events()
     assert _step_view(reopened, "translate.translateX").singleStep() == 2.5
     assert _step_view(reopened, "rotate.rotateY").singleStep() == 7.5
+    integer = next(
+        row.editor
+        for row in reopened.widget.row_widgets
+        if row.row.attribute.path == "count"
+    )
+    assert isinstance(integer, IntValueStepSpinBox)
+    assert integer.singleStep() == 15
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
     reset = bd_channel_box.reset_layout()
@@ -284,6 +301,13 @@ def test_step_profile_persists_and_layout_reset_keeps_it(
     assert reset is dock_host.window
     assert _step_view(reset, "translate.translateX").singleStep() == 2.5
     assert _step_view(reset, "rotate.rotateY").singleStep() == 7.5
+    integer = next(
+        row.editor
+        for row in reset.widget.row_widgets
+        if row.row.attribute.path == "count"
+    )
+    assert isinstance(integer, IntValueStepSpinBox)
+    assert integer.singleStep() == 15
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
