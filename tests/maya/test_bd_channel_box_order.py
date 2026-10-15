@@ -104,7 +104,7 @@ def test_transform_order_in_each_mode_and_filter(
     assert "overrideColorR" in {a.name for a in overrides}
     assert "overrideColorG" in {a.name for a in overrides}
     assert "overrideColorB" in {a.name for a in overrides}
-    assert "overrideColor" not in {a.name for a in original}
+    assert "overrideColor" in {a.name for a in original}
     overrides.remove(by_name["overrideEnabled"])
     overrides.insert(0, by_name["overrideEnabled"])
     remaining = [

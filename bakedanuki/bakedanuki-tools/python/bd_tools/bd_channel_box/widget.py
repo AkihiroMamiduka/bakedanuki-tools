@@ -18,6 +18,7 @@ from bd_util.maya.ui import (
     MayaEnumPlugsBinding,
     MayaEditSession,
     MayaFloatPlugsBinding,
+    MayaIntPlugsBinding,
     MayaNodeNameBinding,
     MayaPlugInputState,
     MayaStringPlugsBinding,
@@ -33,6 +34,7 @@ from bd_util.ui import (
     FloatStepMode,
     FloatUnitKind,
     FloatValueStepSpinBox,
+    IntSpinBox,
     RadioButtonSweep,
     StringLineEdit,
     qt,
@@ -776,6 +778,7 @@ class AttributeRowWidget(qt.QWidget):
         | EnumComboBox
         | FloatSliderSpinBox
         | FloatValueStepSpinBox
+        | IntSpinBox
         | StringLineEdit
     ):
         """属性の種類と両側のhard limitから入力Viewを選ぶ。"""
@@ -792,6 +795,13 @@ class AttributeRowWidget(qt.QWidget):
         if isinstance(binding, MayaStringPlugsBinding):
             return StringLineEdit(
                 binding, parent=self, follow_source_during_edit=True
+            )
+        if isinstance(binding, MayaIntPlugsBinding):
+            return IntSpinBox(
+                binding,
+                self,
+                single_step=1,
+                wheel_requires_focus=not wheel_editing_without_focus,
             )
         presentation = binding.view_model.presentation
         minimum, maximum = presentation.minimum, presentation.maximum
@@ -840,6 +850,8 @@ class AttributeRowWidget(qt.QWidget):
         requires_focus = not enabled
         editor = self.editor
         if isinstance(editor, EnumComboBox):
+            editor.set_wheel_requires_focus(requires_focus)
+        elif isinstance(editor, IntSpinBox):
             editor.set_wheel_requires_focus(requires_focus)
         elif isinstance(editor, FloatSliderSpinBox):
             editor.spin_box.set_wheel_requires_focus(requires_focus)
@@ -2168,25 +2180,57 @@ class ChannelBoxWidget(qt.QWidget):
         editor = owner.editor
         if isinstance(editor, EnumComboBox):
             editor.hidePopup()
-        if not isinstance(editor, (FloatValueStepSpinBox, FloatSliderSpinBox)):
+        if not isinstance(
+            editor, (FloatValueStepSpinBox, FloatSliderSpinBox, IntSpinBox)
+        ):
             return
+        spin_box = (
+            editor if isinstance(editor, IntSpinBox) else editor.spin_box
+        )
         children = cast(
             Callable[[type[qt.QLineEdit]], list[qt.QLineEdit]],
-            getattr(editor.spin_box, "findChildren"),
+            getattr(spin_box, "findChildren"),
         )(qt.QLineEdit)
         if not any(child.isModified() for child in children):
             return
         binding = owner.row.binding
-        assert isinstance(binding, MayaFloatPlugsBinding)
+        assert isinstance(
+            binding, (MayaFloatPlugsBinding, MayaIntPlugsBinding)
+        )
         binding.refresh()
         # 入力通知を止めて再描画し、未確定文字だけを破棄する
-        blocker = qt.QtCore.QSignalBlocker(editor.spin_box)
+        blocker = qt.QtCore.QSignalBlocker(spin_box)
         try:
-            editor.spin_box.setValue(
-                binding.view_model.presentation.to_display(binding.value)
-            )
+            if isinstance(editor, IntSpinBox):
+                assert isinstance(binding, MayaIntPlugsBinding)
+                editor.setValue(binding.value)
+            else:
+                assert isinstance(binding, MayaFloatPlugsBinding)
+                editor.spin_box.setValue(
+                    binding.view_model.presentation.to_display(binding.value)
+                )
         finally:
             del blocker
+
+    def _request_int_value(self, key: tuple[str, str], value: int) -> bool:
+        """整数の明示入力を選択中の数値属性へ適用する。"""
+        try:
+            self.controller.apply_numeric_values(self._action_keys(key), value)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+        return True
+
+    def _request_int_step(
+        self, key: tuple[str, str], editor: IntSpinBox, steps: int
+    ) -> bool:
+        """整数stepを選択中の各数値属性へ差分として適用する。"""
+        try:
+            self.controller.offset_numeric_values(
+                self._action_keys(key), editor.singleStep() * steps
+            )
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+        return True
 
     def _apply_numeric_input(self, keys: object, value: float) -> None:
         """Qtの明示入力通知を受け、凍結した選択行へ一度だけ書き込む。"""
@@ -2312,6 +2356,13 @@ class ChannelBoxWidget(qt.QWidget):
                 editor.slider.editFinished.connect(
                     self.controller.finish_value_edit
                 )
+        elif isinstance(editor, IntSpinBox):
+            editor.setValueRequestHandler(
+                partial(self._request_int_value, key)
+            )
+            editor.setStepRequestHandler(
+                partial(self._request_int_step, key, editor)
+            )
         elif isinstance(editor, BoolCheckBox):
             editor.setValueRequestHandler(
                 partial(self._request_bool_value, key)
@@ -3213,7 +3264,11 @@ class ChannelBoxWidget(qt.QWidget):
                             widget.editor,
                             (FloatSliderSpinBox, FloatValueStepSpinBox),
                         )
-                        else None
+                        else (
+                            widget.editor
+                            if isinstance(widget.editor, IntSpinBox)
+                            else None
+                        )
                     ),
                     text_field=(
                         widget.editor
@@ -3253,9 +3308,7 @@ class ChannelBoxWidget(qt.QWidget):
                 "Maya ノードを選択すると、入力可能な種類の属性を表示します。"
             )
         elif not self.row_widgets:
-            message = (
-                "フィルターに一致する bool・float 系・enum 属性がありません。"
-            )
+            message = "フィルターに一致する bool・整数・float 系・enum・string 属性がありません。"
         elif searching and visible_count == 0:
             message = "検索条件に一致する属性がありません。"
         else:

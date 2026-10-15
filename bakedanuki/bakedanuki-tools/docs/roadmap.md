@@ -177,16 +177,14 @@ Slider操作範囲のカスタマイズも、用途が具体化したときに�
 避けるため候補に含めません。既存の「表示ノードの値に揃える」は、同じ選択中の即時操作として維持します。
 複数source nodeのCopy/Pasteも、sourceとtargetの暗黙対応を避けるため実装候補に含めません。
 
-次の機能候補は、Maya標準のChannel Boxに表示される汎用整数属性への対応です。
-現在はkeyableな`long`属性も表示対象から除外しています。初回の推奨範囲は
-`byte`・`short`・`long`の単一属性とcompoundの子属性です。整数値のまま扱い、
-既定の増減幅は1とし、検索・複数選択・整列・表示／ロック・Copy／Paste・Undoへ
-既存の規則で通します。型固有の範囲と属性のhard limitを入力前に検証します。
-接続中の整数は通常時間カーブ・SDK・Animation LayerのMaya実挙動を各対応versionで
-確認してから可否を決めます。`int64`、time、配列、compound親は初回の対象外とし、
-Qt入力欄の範囲や単位の問題を分けて扱います。
-汎用の整数Binding・Viewと値転送形式はutil側へ配置し、既存clipboard形式の読込み互換を
-保ってください。公開形式を変える場合は移行方法をCHANGELOGへ記録します。
+汎用整数属性への初回対応として、`byte`・`short`・`long`の単一属性とcompoundの子属性を
+表示・編集します。整数値のまま扱い、既定の増減幅は1です。検索・複数選択・整列・
+表示／ロック・Copy／Paste・Undoには既存の規則を適用し、型固有の範囲と属性のhard limitを
+入力前に検証します。汎用Binding・Viewと値転送形式はutil側へ配置しました。
+既存clipboard schema version 1・2の読込みを維持し、書込みはversion 3です。
+接続中の整数は読み取り専用です。通常時間カーブ・SDK・Animation LayerのMaya実挙動を
+各対応versionで確認してから編集可否を決めます。`int64`、time、配列、compound親は
+引き続き対象外とし、Qt入力欄の範囲や単位の問題を分けて扱います。
 
 一般のpairBlendなど、その他の接続編集は経路ごとにMaya標準の挙動を調べてから検討します。
 特にweight、入力側、回転補間で結果が変わるため、一律に書込み可能とは扱いません。

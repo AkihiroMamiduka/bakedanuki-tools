@@ -42,6 +42,9 @@ from bd_util.maya.ui import (
     MayaFloatOffsetEdit,
     MayaFloatRoundEdit,
     MayaFloatValueEdit,
+    MayaIntPlugsBinding,
+    MayaIntValueEdit,
+    MayaIntOffsetEdit,
     MayaPlugsValueEdit,
     MayaScalarValueClipboard,
     MayaScalarValueTransfer,
@@ -59,6 +62,7 @@ from bd_util.maya.ui import (
     resolve_bool_plug,
     resolve_enum_plug,
     resolve_float_plug,
+    resolve_int_plug,
     resolve_string_plug,
 )
 from bd_util.ui import qt
@@ -69,6 +73,7 @@ from .custom_filters import CustomFilterSelection
 ChannelBinding: TypeAlias = (
     MayaBoolPlugsBinding
     | MayaFloatPlugsBinding
+    | MayaIntPlugsBinding
     | MayaEnumPlugsBinding
     | MayaStringPlugsBinding
 )
@@ -630,6 +635,12 @@ class ChannelBoxController(qt.QObject):
                         edit_connected=True,
                         track_input_state=True,
                     )
+                elif attribute.kind in ("byte", "short", "long"):
+                    binding = MayaIntPlugsBinding(
+                        [resolve_int_plug(n, attribute.path) for n in targets],
+                        parent=self,
+                        track_input_state=True,
+                    )
                 elif attribute.kind == "enum":
                     binding = self._create_enum_binding(
                         attribute.path, targets, excluded
@@ -674,6 +685,8 @@ class ChannelBoxController(qt.QObject):
             return resolve_bool_plug(name, attribute.path)
         if attribute.kind == "enum":
             return resolve_enum_plug(name, attribute.path)
+        if attribute.kind in ("byte", "short", "long"):
+            return resolve_int_plug(name, attribute.path)
         if attribute.kind == "string":
             return resolve_string_plug(name, attribute.path)
         return resolve_float_plug(name, attribute.path)
@@ -1410,16 +1423,16 @@ class ChannelBoxController(qt.QObject):
         return self._paste_animation_curves(keys)
 
     def apply_numeric_values(
-        self, keys: Sequence[tuple[str, str]], display_value: float
+        self, keys: Sequence[tuple[str, str]], display_value: float | int
     ) -> bool:
-        """明示入力した表示数値を、選択行ごとの単位へ変換して一括適用する。"""
+        """明示入力を選択中のfloat・整数行へ型を保って一括適用する。"""
         rows = self._selected_rows(keys)
         edits: list[MayaPlugsValueEdit] = []
         excluded: list[str] = []
         # 行単位の対象選別を保ち、全行の検証と書込みはutilへ委譲する
         for row in rows:
             if not isinstance(row, ChannelRow) or not isinstance(
-                row.binding, MayaFloatPlugsBinding
+                row.binding, (MayaFloatPlugsBinding, MayaIntPlugsBinding)
             ):
                 excluded.append(f"{row.attribute.nice_name}: 数値入力の対象外")
                 continue
@@ -1429,14 +1442,22 @@ class ChannelBoxController(qt.QObject):
                     f"{row.attribute.nice_name}: 値を編集できません"
                 )
                 continue
-            edits.append(
-                MayaFloatValueEdit(
-                    row.binding,
-                    row.binding.view_model.presentation.from_display(
-                        display_value
-                    ),
+            if isinstance(row.binding, MayaIntPlugsBinding):
+                if (
+                    type(display_value) is float
+                    and not display_value.is_integer()
+                ):
+                    raise ValueError("整数属性には整数値を入力してください")
+                edits.append(MayaIntValueEdit(row.binding, int(display_value)))
+            else:
+                edits.append(
+                    MayaFloatValueEdit(
+                        row.binding,
+                        row.binding.view_model.presentation.from_display(
+                            display_value
+                        ),
+                    )
                 )
-            )
         changed = apply_plugs_values(
             edits,
             edit_session=(
@@ -1449,14 +1470,14 @@ class ChannelBoxController(qt.QObject):
         return changed
 
     def offset_numeric_values(
-        self, keys: Sequence[tuple[str, str]], display_offset: float
+        self, keys: Sequence[tuple[str, str]], display_offset: float | int
     ) -> bool:
-        """各数値の現在値へ、表示単位で同じ増減量を一括適用する。"""
+        """各float・整数の現在値へ、型に合う同じ増減量を加える。"""
         edits: list[MayaPlugsValueEdit] = []
         excluded: list[str] = []
         for row in self._selected_rows(keys):
             if not isinstance(row, ChannelRow) or not isinstance(
-                row.binding, MayaFloatPlugsBinding
+                row.binding, (MayaFloatPlugsBinding, MayaIntPlugsBinding)
             ):
                 excluded.append(f"{row.attribute.nice_name}: 数値操作の対象外")
                 continue
@@ -1466,14 +1487,26 @@ class ChannelBoxController(qt.QObject):
                     f"{row.attribute.nice_name}: 値を編集できません"
                 )
                 continue
-            edits.append(
-                MayaFloatOffsetEdit(
-                    row.binding,
-                    row.binding.view_model.presentation.from_display(
-                        display_offset
-                    ),
+            if isinstance(row.binding, MayaIntPlugsBinding):
+                if (
+                    type(display_offset) is float
+                    and not display_offset.is_integer()
+                ):
+                    raise ValueError(
+                        "整数属性には整数の増減量を指定してください"
+                    )
+                edits.append(
+                    MayaIntOffsetEdit(row.binding, int(display_offset))
                 )
-            )
+            else:
+                edits.append(
+                    MayaFloatOffsetEdit(
+                        row.binding,
+                        row.binding.view_model.presentation.from_display(
+                            display_offset
+                        ),
+                    )
+                )
         changed = apply_plugs_values(edits)
         self._report_excluded(excluded)
         return changed
@@ -1645,6 +1678,8 @@ class ChannelBoxController(qt.QObject):
                 edits.append(MayaEnumValueEdit(binding, binding.value))
             elif isinstance(binding, MayaBoolPlugsBinding):
                 edits.append(MayaBoolValueEdit(binding, binding.value))
+            elif isinstance(binding, MayaIntPlugsBinding):
+                edits.append(MayaIntValueEdit(binding, binding.value))
             elif isinstance(binding, MayaStringPlugsBinding):
                 edits.append(MayaStringValueEdit(binding, binding.value))
             else:

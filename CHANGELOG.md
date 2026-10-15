@@ -7,6 +7,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- bdChannelBoxでMayaのbyte・short・long属性を整数欄として表示・編集できるようにした。
+  単一属性とcompound子属性に対応し、複数ノード編集、整列、表示・ロック、
+  Copy／Paste、Undoでも整数値と型固有の範囲を保つ。入力接続中は表示のみとする。
+  clipboard書込みはschema version 3に変わるため、旧版の利用側へ貼り付ける場合は
+  利用側も更新する。version 1・2のコピー内容は引き続き読み込める。
+
 ### Changed
 
 - `bd_util.Nodes` の操作入口を保持する推奨変数名を `bd_nodes` に統一。

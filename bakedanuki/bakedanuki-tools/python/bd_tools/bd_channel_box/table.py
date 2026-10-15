@@ -30,7 +30,7 @@ class TableRow:
     key: _RowKey
     widget: qt.QWidget
     name_label: qt.QLabel
-    value_field: qt.QDoubleSpinBox | None = None
+    value_field: qt.QDoubleSpinBox | qt.QSpinBox | None = None
     text_field: qt.QLineEdit | None = None
     input_indicator: qt.QWidget | None = None
     select_on_right_click: bool = True

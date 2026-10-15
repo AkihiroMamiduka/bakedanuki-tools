@@ -1,6 +1,6 @@
 # bdChannelBox
 
-選択ノードの値入力と表示・ロック状態を操作する、bool・float系・enum・string属性のエディタです。
+選択ノードの値入力と表示・ロック状態を操作する、bool・整数・float系・enum・string属性のエディタです。
 
 ## 開発状態
 
@@ -16,8 +16,10 @@ pushを完了しました。確認したMaya versionは未申告です。
 pushを完了しました。確認したMaya versionは未申告です。
 カスタムフィルターの登録・作成・編集、候補と表示順の複数選択も2026-10-07に
 利用者が動作確認とpushの完了を報告しました。確認したMaya versionは未申告です。
+byte・short・long属性の表示・編集と値の搬送を追加しました。
+Maya本体での利用者による操作確認はこれからです。
 
-bool・float系・enum・stringの複数ノード編集、step操作、表示・ロックの切替、
+bool・byte／short／long・float系・enum・stringの複数ノード編集、step操作、表示・ロックの切替、
 5種類の標準表示フィルターとJSONによるカスタムフィルター、
 属性検索、表示状態とlockのなぞり操作、設定可能な属性優先順、ドッキングと再起動復元に対応しています。
 選択属性値はOSクリップボードを介して別のMayaへ搬送できます。
@@ -145,8 +147,10 @@ MayaのuiScriptは `bd_tools.bd_channel_box.ui.restore()` を呼び、復元中�
   以前の操作や別ツールでHideにした属性も復帰できます。標準nodeの内部属性も含むため、
   表示される行数が増えます。値編集でも「全て」「hide」を選べば非表示属性へ入力できます。
   ロック中や未対応の入力接続を持つ属性の値を変更できない制限は維持します。
-- bool、float/double、距離、角度、enum、単一typed stringに対応します。
-  対応するcompound子も対象です。整数、time、配列とその配下、compound全体は対象外です。
+- bool、byte／short／long、float/double、距離、角度、enum、単一typed stringに対応します。
+  対応するcompound子も対象です。int64、time、配列とその配下、compound全体は対象外です。
+  整数欄の既定増減幅は1で、型固有の範囲と属性のhard limitを検証します。
+  入力接続中の整数属性は表示のみ行います。
 - 同じ正式属性pathと型・単位種別の属性へ絶対値を一括入力します。
   距離と角度は同名でも対応付けません。編集対象数、対応しないnodeや編集不可の理由は
   属性名と入力Viewのtooltipへ表示します。属性のないnodeへ属性を追加することはありません。
@@ -336,7 +340,7 @@ Custom表示へ反映します。空の`"node_types": {}`も有効で、すべ�
 
 `drawOverride`配下は有効化を操作する`overrideEnabled`を先頭にします。
 残りは`overrideColorRGB`のR/G/B子も含め、元の相対順を保ちます。
-`overrideColor`は未対応のbyte型のため表示しません。その他の属性も元の相対順を保ちます。
+byte型の`overrideColor`も表示し、その他の属性も元の相対順を保ちます。
 表示名やleaf名ではなく、`translate.translateX`などの正式な属性pathで照合します。
 別compound内の同名属性は優先対象に含めず、nodeの型による制限は設けません。
 この順序は[config.py](../python/bd_tools/bd_channel_box/config.py)の
@@ -719,7 +723,7 @@ Attribute Filter・行選択には依存しません。非Keyable属性は、選
 - `ペースト > コピー元と同じ属性：Keyable／ChannelBox／Hide`: 貼り付け時の基準nodeで
   各表示状態のコピー項目へ絞ります。
 
-Copyは現在の基準ノードからbool・number・distance・angle・enum・string属性を取得します。
+Copyは現在の基準ノードからbool・byte・short・long・number・distance・angle・enum・string属性を取得します。
 表示とコピー元を一致させるため、複数選択時も末尾の基準ノードから取得します。
 「全属性」は行選択や現在のAttribute Filterに依存せず、「選択属性」は表示中の行選択だけを
 対象にします。値は表示文字列へ丸めず、distanceはcm、angleはdegree、通常数値は単位なしの
@@ -743,7 +747,7 @@ Attribute Filterとは独立して明示的に選び、選択した条件は保�
 
 一項目だけをコピーした後の「選択属性」は、コピーした一値を現在選択している属性pathと
 全選択nodeへ展開します。Paste時にコピー元pathを右クリックする必要はありません。
-number・distance・angle・bool・stringは同じ型区分同士に限定し、enumは整数値と項目名の定義が
+byte・short・long・number・distance・angle・bool・stringは同じ型区分同士に限定し、enumは整数値と項目名の定義が
 一致する属性だけを対象にします。コピー元pathと貼り付け先pathの一致は要求しません。
 
 enumは整数値と項目名の対応が一致する場合だけ対象にし、表示順だけの違いは許容します。
@@ -758,7 +762,7 @@ Pasteの成功・部分適用・対象0件では画面へ操作通知を表示�
 
 custom MIMEとmarker付きtextへversion付きJSONを保存するため、別のMaya processからも
 貼り付けられます。未対応version、壊れたJSON、過大data、未知の型は値を書き込む前に拒否します。
-stringを含む書込みはschema version 2を使用し、version 1の従来データも読み込めます。
+整数属性を含む書込みはschema version 3を使用し、version 1・2の従来データも読み込めます。
 Copy元は一つの基準nodeに限定し、全対応属性または選択属性をコピーします。
 複数source nodeを行順・選択順で対応させるPasteは提供しません。
 

@@ -17,6 +17,7 @@ from bd_util.ui import (
     EnumComboBox,
     FloatSliderSpinBox,
     FloatValueStepSpinBox,
+    IntSpinBox,
     qt,
 )
 
@@ -516,7 +517,8 @@ def test_supported_types_flags_and_view_selection(
     """OR条件・scalar子・対応型・hard両側範囲でViewを選べる。"""
     names = {w.row.attribute.name for w in editor.row_widgets}
     assert {"translateX", "rotateY", "scaleZ", "visibility", "shown"} <= names
-    assert {"hidden", "integer", "translate"}.isdisjoint(names)
+    assert {"hidden", "translate"}.isdisjoint(names)
+    assert isinstance(_row(editor, "integer").editor, IntSpinBox)
     assert isinstance(_row(editor, "visibility").editor, BoolCheckBox)
     value_step = _row(editor, "lowerOnly").editor
     slider = _row(editor, "weight").editor
@@ -586,6 +588,9 @@ def test_input_columns_stay_compact_at_right_edge(
                 continue
             if isinstance(view, EnumComboBox):
                 assert view.count() == 3
+                continue
+            if isinstance(view, IntSpinBox):
+                assert view.singleStep() == 1
                 continue
             assert isinstance(
                 view, (FloatSliderSpinBox, FloatValueStepSpinBox)

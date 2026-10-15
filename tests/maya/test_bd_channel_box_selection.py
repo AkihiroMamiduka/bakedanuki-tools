@@ -3069,7 +3069,7 @@ def test_set_key_all_keyable_uses_each_selected_node(
     _events()
     editor.controller.set_attribute_filter("keyable")
     editor.table_view.select_keys(_keys(editor, "translateY"))
-    assert not any(
+    assert any(
         row.row.attribute.name == "hiddenCount" for row in editor.row_widgets
     )
     cmds.flushUndo()
