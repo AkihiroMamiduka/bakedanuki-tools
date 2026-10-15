@@ -2185,4 +2185,4 @@ Maya 2027本体の通し検証は、幅の撮影後に性能計測工程で120�
 | Maya 2025 / 2026 / 2027のtools runtime test | 各389件成功。整数の直接入力・上下・Undo、キー・ミュート・曲線操作を含む |
 | utilの`verify.cmd` | Black、3 versionの型契約、Maya 2025 full pytest、3 versionのUI互換性testに成功 |
 | utilの整数接続テスト | 各versionで105件成功。Auto Key、SDK、Layerの重みとOverride、整数変換、小数キー復旧、三つの値Paste APIを確認 |
-| Maya本体での利用者確認 | 今回の追加範囲はこれから。初回整数対応の確認とpushは完了済み |
+| Maya本体での利用者確認 | 整数の接続属性編集と入力操作を確認し、push完了。確認したMaya versionは未申告 |

@@ -174,14 +174,16 @@ Copy／Paste・Undoと型固有範囲・hard limitの検証を行います。
 clipboardはversion 3へ書き込み、version 1・2の読込みを維持します。
 
 追加の第一段階として時間カーブ・SDK・short／longのAnimation Layerへの値入力、
-Enterの欄内処理と初回クリックの全選択を実装しました。追加範囲の利用者確認はこれからです。
+Enterの欄内処理と初回クリックの全選択を実装し、利用者の操作確認とpushが完了しました。
 Maya標準ではbyteをLayerへ登録できないため、この型では時間カーブとSDKを扱います。
 
+追加の第二段階として、utilにPython整数正本とMaya属性を同期する
+`MayaIntBinding`／`MayaIntPlugView`、操作サンプルを実装しました。
+この段階はbdChannelBoxの実装変更を含みません。追加範囲の利用者確認はこれからです。
 以後は利用者による確認・commitを段階ごとに挟み、次の順に実装します。
 
-1. Python整数を正本としてMaya属性へ同期するBinding／PlugViewアダプター
-2. 整数Step欄、属性ごとの設定保存とリセット
-3. 整数Slider・数値欄との複合View・範囲設定、連続編集と一操作一回のUndo
+1. 整数Step欄、属性ごとの設定保存とリセット
+2. 整数Slider・数値欄との複合View・範囲設定、連続編集と一操作一回のUndo
 
 整数2／3成分のMVVMは今回の計画に含めません。
 `int64`、time、配列、compound親も現在の対象外です。
