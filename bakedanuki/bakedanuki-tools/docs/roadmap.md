@@ -185,12 +185,16 @@ Maya標準ではbyteをLayerへ登録できないため、この型では時間�
 利用者の表示・操作確認とpushが完了しました。確認versionは未申告です。
 最後の整数Slider拡張は、利用者の確認・commitを挟み、次の三段階で進めます。
 
-1. utilの`IntSlider`・連続編集・一操作一回のMaya Undo・操作サンプル（実装済み、利用者確認待ち）
-2. utilの数値欄との複合View・範囲設定と設定保存
+1. utilの`IntSlider`・連続編集・一操作一回のMaya Undo・操作サンプル（利用者確認・push完了）
+2. utilの数値欄との複合View・範囲設定と設定保存（実装済み、利用者確認待ち）
 3. bdChannelBoxへの整数Slider組込みと複数選択・中断・配置の確認
 
 bdChannelBoxでは明示された両側hard limitがある整数属性を`[値][Slider]`、
 その他を`[値][Step]`にする予定です。整数型固有の上下限だけではSliderへ切り替えません。
+
+第二段階は`IntSliderSpinBox`と`IntRangeSliderSpinBox`、整数のMin／Max／Stepの
+保存・復元とサンプルまでです。範囲・StepはView固有の設定として正本と分離します。
+利用者の確認・commit後に第三段階へ進めます。
 
 整数2／3成分のMVVMは今回の計画に含めません。
 `int64`、time、配列、compound親も現在の対象外です。

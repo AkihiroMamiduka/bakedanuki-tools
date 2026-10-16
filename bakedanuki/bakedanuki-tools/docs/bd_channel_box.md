@@ -2229,3 +2229,8 @@ utilに`IntSlider`と整数・float共通の連続Undo管理を追加した段�
 toolsのBlack・Pyright・unit test 37件と、Maya 2025／2026／2027の
 全runtime test各394件が成功しました。
 bdChannelBoxへの整数Slider組込みは、ロードマップの第三段階で実施します。
+
+第一段階の利用者による操作確認・pushは完了しました（2026-10-16時点、確認version未申告）。
+第二段階としてutilに`IntSliderSpinBox`・`IntRangeSliderSpinBox`とMin／Max／Stepの
+保存・復元、操作サンプルを追加しました。第二段階の利用者確認はこれからです。
+bdChannelBoxの行表示は第三段階で変更します。
