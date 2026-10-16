@@ -181,10 +181,16 @@ Maya標準ではbyteをLayerへ登録できないため、この型では時間�
 `MayaIntBinding`／`MayaIntPlugView`、操作サンプルを実装しました。
 この段階は利用者による操作確認とpushが完了しました。
 追加の第三段階として、整数Step欄の加算・10倍方式、専用Profile保存とbdChannelBoxへの
-組込みを実装しました。今回の追加範囲の利用者確認はこれからです。
-以後は利用者による確認・commitを挟み、次を実装します。
+組込みを実装しました。サンプルの自動幅でStep欄が隠れる不具合も修正し、
+利用者の表示・操作確認とpushが完了しました。確認versionは未申告です。
+最後の整数Slider拡張は、利用者の確認・commitを挟み、次の三段階で進めます。
 
-1. 整数Slider・数値欄との複合View・範囲設定、連続編集と一操作一回のUndo
+1. utilの`IntSlider`・連続編集・一操作一回のMaya Undo・操作サンプル（実装済み、利用者確認待ち）
+2. utilの数値欄との複合View・範囲設定と設定保存
+3. bdChannelBoxへの整数Slider組込みと複数選択・中断・配置の確認
+
+bdChannelBoxでは明示された両側hard limitがある整数属性を`[値][Slider]`、
+その他を`[値][Step]`にする予定です。整数型固有の上下限だけではSliderへ切り替えません。
 
 整数2／3成分のMVVMは今回の計画に含めません。
 `int64`、time、配列、compound親も現在の対象外です。

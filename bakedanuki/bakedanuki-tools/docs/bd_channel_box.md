@@ -2217,6 +2217,15 @@ floatを含む選択行への一括設定と専用Profileの保存・リセッ�
 `initial-result.json`と`restart-result.json`は`success: true`で、両Window画像も確認しました。
 初回は結果保存後の終了待ちが120秒でタイムアウトしrunnerの終了codeは1でしたが、
 専用processの後始末後に実行した再起動検証は終了code 0で完了しました。
-Maya 2026／2027本体の画面操作と、今回の追加範囲の利用者確認はこれからです。
+Maya 2026／2027本体の画面操作は未実施です。
+サンプルのStep欄が自動幅で隠れる問題をutilで修正した後、利用者が表示・操作を確認し、
+commit・pushが完了しました。利用者が確認したMaya versionは未申告です。
 反映にはutilも更新して`bd_tools.reload_package(reload_util=True)`を使用します。
 既存float設定やsceneの移行は不要です。行APIの値欄は`editor.spin_box`から操作します。
+
+### 整数Slider基盤拡張時の既存機能確認（2026-10-15）
+
+utilに`IntSlider`と整数・float共通の連続Undo管理を追加した段階で、
+toolsのBlack・Pyright・unit test 37件と、Maya 2025／2026／2027の
+全runtime test各394件が成功しました。
+bdChannelBoxへの整数Slider組込みは、ロードマップの第三段階で実施します。
