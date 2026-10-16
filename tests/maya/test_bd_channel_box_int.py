@@ -10,7 +10,12 @@ import pytest
 from maya import cmds
 
 from bd_util.maya.ui import MayaIntPlugsBinding
-from bd_util.ui import FloatValueStepSpinBox, IntValueStepSpinBox, qt
+from bd_util.ui import (
+    FloatValueStepSpinBox,
+    IntValueStepSpinBox,
+    IntSliderSpinBox,
+    qt,
+)
 from bd_tools.bd_channel_box.widget import AttributeRowWidget, ChannelBoxWidget
 
 
@@ -87,12 +92,13 @@ def test_integer_rows_edit_align_and_respect_limits(
     short_row = _row(editor, "shortValue")
     long_row = _row(editor, "longValue")
     assert all(
-        isinstance(row.editor, IntValueStepSpinBox)
+        isinstance(row.editor, (IntValueStepSpinBox, IntSliderSpinBox))
         and isinstance(row.row.binding, MayaIntPlugsBinding)
         for row in (byte_row, short_row, long_row)
     )
     byte_spin = cast(IntValueStepSpinBox, byte_row.editor).spin_box
-    short_spin = cast(IntValueStepSpinBox, short_row.editor).spin_box
+    assert isinstance(short_row.editor, IntSliderSpinBox)
+    short_spin = short_row.editor.spin_box
     long_spin = cast(IntValueStepSpinBox, long_row.editor).spin_box
     assert (byte_spin.minimum(), byte_spin.maximum(), byte_spin.value()) == (
         0,
@@ -230,9 +236,9 @@ def test_compound_child_and_connected_integer(
     short_row = _row(editor, "shortValue")
     assert isinstance(short_row.row.binding, MayaIntPlugsBinding)
     assert short_row.row.binding.writable_count == 0
-    assert isinstance(short_row.editor, IntValueStepSpinBox)
+    assert isinstance(short_row.editor, IntSliderSpinBox)
     assert not short_row.editor.spin_box.isEnabled()
-    assert short_row.editor.step_spin_box.isEnabled()
+    assert not short_row.editor.slider.isEnabled()
 
 
 @pytest.mark.parametrize("auto", [False, True])
@@ -273,7 +279,7 @@ def test_connected_integer_value_and_undo(
     _events()
     row = _row(editor, attribute)
     value_editor = row.editor
-    assert isinstance(value_editor, IntValueStepSpinBox)
+    assert isinstance(value_editor, (IntValueStepSpinBox, IntSliderSpinBox))
     spin = value_editor.spin_box
     assert spin.isEnabled()
     initial = cmds.getAttr(path)
@@ -291,7 +297,7 @@ def test_connected_integer_value_and_undo(
     assert cmds.getAttr("intB." + attribute) == other
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
     value_editor = _row(editor, attribute).editor
-    assert isinstance(value_editor, IntValueStepSpinBox)
+    assert isinstance(value_editor, (IntValueStepSpinBox, IntSliderSpinBox))
     spin = value_editor.spin_box
     spin.stepBy(1)
     _events()
@@ -350,10 +356,27 @@ def test_integer_animation_actions(editor: ChannelBoxWidget) -> None:
     assert cmds.keyframe("intA.longValue", query=True, keyframeCount=True) == 2
 
 
+@pytest.fixture
+def step_editor(editor: ChannelBoxWidget) -> ChannelBoxWidget:
+    """Step欄同士の操作確認には両側hard limitを外した整数行を使う。"""
+    for node in ("intA", "intB"):
+        cmds.addAttr(
+            node + ".shortValue",
+            edit=True,
+            hasMinValue=False,
+            hasMaxValue=False,
+        )
+    editor.refresh()
+    _events()
+    cmds.flushUndo()
+    return editor
+
+
 def test_step_modes_multi_selection_reset_and_wheel_policy(
-    editor: ChannelBoxWidget,
+    step_editor: ChannelBoxWidget,
 ) -> None:
     """整数Stepを選択行へ共有し、リセットとホイール方針を維持する。"""
+    editor = step_editor
     byte = _row(editor, "byteValue").editor
     short = _row(editor, "shortValue").editor
     assert isinstance(byte, IntValueStepSpinBox)
@@ -395,9 +418,10 @@ def test_step_modes_multi_selection_reset_and_wheel_policy(
 
 @pytest.mark.parametrize("invalid", [0.5, 2147483648.0])
 def test_mixed_step_validation_is_atomic(
-    editor: ChannelBoxWidget, invalid: float
+    step_editor: ChannelBoxWidget, invalid: float
 ) -> None:
     """小数や上限超過の混在一括Stepを拒否し、操作元も元へ戻す。"""
+    editor = step_editor
     integer = _row(editor, "shortValue").editor
     floating = _row(editor, "translateX").editor
     assert isinstance(integer, IntValueStepSpinBox)
@@ -449,8 +473,8 @@ def test_step_offsets_keep_differences_and_refuse_whole_operation_on_limits(
 ) -> None:
     """値の上下へ設定Stepを適用し、全ノードの差・Undo・範囲検証を維持する。"""
     value_editor = _row(editor, "shortValue").editor
-    assert isinstance(value_editor, IntValueStepSpinBox)
-    value_editor.setSingleStep(10)
+    assert isinstance(value_editor, IntSliderSpinBox)
+    value_editor.spin_box.setSingleStep(10)
     value_editor.spin_box.stepUp()
     _events()
     assert [

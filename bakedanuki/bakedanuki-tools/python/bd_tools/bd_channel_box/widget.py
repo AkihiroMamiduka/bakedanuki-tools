@@ -38,6 +38,7 @@ from bd_util.ui import (
     IntStepProfile,
     IntStepSetting,
     IntValueStepSpinBox,
+    IntSliderSpinBox,
     RadioButtonSweep,
     StringLineEdit,
     qt,
@@ -741,7 +742,12 @@ class AttributeRowWidget(qt.QWidget):
         self.editor.setFixedWidth(_EDITOR_WIDTH)
         if isinstance(
             self.editor,
-            (FloatSliderSpinBox, FloatValueStepSpinBox, IntValueStepSpinBox),
+            (
+                FloatSliderSpinBox,
+                IntSliderSpinBox,
+                FloatValueStepSpinBox,
+                IntValueStepSpinBox,
+            ),
         ):
             editor_layout = self.editor.layout()
             if isinstance(editor_layout, qt.QHBoxLayout):
@@ -794,6 +800,7 @@ class AttributeRowWidget(qt.QWidget):
         | FloatSliderSpinBox
         | FloatValueStepSpinBox
         | IntValueStepSpinBox
+        | IntSliderSpinBox
         | StringLineEdit
     ):
         """属性の種類と両側のhard limitから入力Viewを選ぶ。"""
@@ -812,6 +819,26 @@ class AttributeRowWidget(qt.QWidget):
                 binding, parent=self, follow_source_during_edit=True
             )
         if isinstance(binding, MayaIntPlugsBinding):
+            minimum, maximum = binding.hard_limits
+            if (
+                minimum is not None
+                and maximum is not None
+                and minimum < maximum
+            ):
+                integer_editor = IntSliderSpinBox(
+                    binding,
+                    self,
+                    minimum=minimum,
+                    maximum=maximum,
+                    layout_order="value_slider",
+                    value_select_all_on_mouse_focus=True,
+                )
+                integer_editor.spin_box.set_wheel_requires_focus(
+                    not wheel_editing_without_focus
+                )
+                integer_editor.spin_box.setFixedWidth(_VALUE_FIELD_WIDTH)
+                integer_editor.slider.setFixedWidth(_AUXILIARY_FIELD_WIDTH)
+                return integer_editor
             return IntValueStepSpinBox(
                 binding,
                 self,
@@ -879,7 +906,7 @@ class AttributeRowWidget(qt.QWidget):
         elif isinstance(editor, IntValueStepSpinBox):
             editor.spin_box.set_wheel_requires_focus(requires_focus)
             editor.step_spin_box.set_wheel_requires_focus(requires_focus)
-        elif isinstance(editor, FloatSliderSpinBox):
+        elif isinstance(editor, (FloatSliderSpinBox, IntSliderSpinBox)):
             editor.spin_box.set_wheel_requires_focus(requires_focus)
         elif isinstance(editor, FloatValueStepSpinBox):
             editor.spin_box.set_wheel_requires_focus(requires_focus)
@@ -2194,7 +2221,9 @@ class ChannelBoxWidget(qt.QWidget):
         self.table_view.finish_numeric_edit(commit=False)
         if was_editing:
             for widget in self.row_widgets:
-                if isinstance(widget.editor, FloatSliderSpinBox):
+                if isinstance(
+                    widget.editor, (FloatSliderSpinBox, IntSliderSpinBox)
+                ):
                     widget.editor.slider.finish_edit()
 
         # 再生中の全行走査を避け、フォーカス行に未確定文字がある場合だけ読む
@@ -2216,7 +2245,12 @@ class ChannelBoxWidget(qt.QWidget):
             editor.hidePopup()
         if not isinstance(
             editor,
-            (FloatValueStepSpinBox, FloatSliderSpinBox, IntValueStepSpinBox),
+            (
+                FloatValueStepSpinBox,
+                FloatSliderSpinBox,
+                IntValueStepSpinBox,
+                IntSliderSpinBox,
+            ),
         ):
             return
         spin_box = editor.spin_box
@@ -2234,7 +2268,7 @@ class ChannelBoxWidget(qt.QWidget):
         # 入力通知を止めて再描画し、未確定文字だけを破棄する
         blocker = qt.QtCore.QSignalBlocker(spin_box)
         try:
-            if isinstance(editor, IntValueStepSpinBox):
+            if isinstance(editor, (IntValueStepSpinBox, IntSliderSpinBox)):
                 assert isinstance(binding, MayaIntPlugsBinding)
                 editor.spin_box.setValue(binding.value)
             else:
@@ -2263,6 +2297,20 @@ class ChannelBoxWidget(qt.QWidget):
             )
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
+        return True
+
+    def _request_int_slider_value(
+        self,
+        key: tuple[str, str],
+        editor: IntSliderSpinBox,
+        value: int,
+    ) -> bool:
+        """整数Sliderを選択数値へ適用し、拒否時は全入力方式の操作を終了する。"""
+        try:
+            self.controller.apply_numeric_values(self._action_keys(key), value)
+        except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self._show_error(str(error))
+            editor.slider.finish_edit()
         return True
 
     def _apply_numeric_input(self, keys: object, value: float) -> None:
@@ -2389,13 +2437,23 @@ class ChannelBoxWidget(qt.QWidget):
                 editor.slider.editFinished.connect(
                     self.controller.finish_value_edit
                 )
-        elif isinstance(editor, IntValueStepSpinBox):
+        elif isinstance(editor, (IntValueStepSpinBox, IntSliderSpinBox)):
             editor.spin_box.setValueRequestHandler(
                 partial(self._request_int_value, key)
             )
             editor.spin_box.setStepRequestHandler(
                 partial(self._request_int_step, key, editor.spin_box)
             )
+            if isinstance(editor, IntSliderSpinBox):
+                editor.slider.setValueRequestHandler(
+                    partial(self._request_int_slider_value, key, editor)
+                )
+                editor.slider.editStarted.connect(
+                    self.controller.begin_value_edit
+                )
+                editor.slider.editFinished.connect(
+                    self.controller.finish_value_edit
+                )
         elif isinstance(editor, BoolCheckBox):
             editor.setValueRequestHandler(
                 partial(self._request_bool_value, key)
@@ -3341,6 +3399,7 @@ class ChannelBoxWidget(qt.QWidget):
                                 FloatSliderSpinBox,
                                 FloatValueStepSpinBox,
                                 IntValueStepSpinBox,
+                                IntSliderSpinBox,
                             ),
                         )
                         else None

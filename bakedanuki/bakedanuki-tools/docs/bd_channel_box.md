@@ -150,7 +150,8 @@ MayaのuiScriptは `bd_tools.bd_channel_box.ui.restore()` を呼び、復元中�
   ロック中や未対応の入力接続を持つ属性の値を変更できない制限は維持します。
 - bool、byte／short／long、float/double、距離、角度、enum、単一typed stringに対応します。
   対応するcompound子も対象です。int64、time、配列とその配下、compound全体は対象外です。
-  整数欄は`[値][Step]`で既定増減幅は1、Step欄は10倍方式です。
+  整数欄は明示された両側hard limitがあれば`[値][Slider]`、それ以外は`[値][Step]`です。
+  値欄の既定増減幅は1、Step欄は10倍方式です。
   型固有の範囲と属性のhard limitを検証します。
   時間カーブとSDK、short／longのAnimation Layerも既存型と同じ方針で編集します。
   Maya標準ではbyte属性をLayerへ登録できません。Enterは欄内で処理し、
@@ -505,7 +506,9 @@ Step欄の直接入力と上下操作では、選択中でStep欄を持つ属性
 `1→10→100`、下へは`150→15→1`となり、1未満には進みません。
 上限を超える増加は無効です。Step変更自体は属性値を変更しません。
 floatと整数の混在選択では整数相当のStepだけを共有し、小数や整数上限超過は全体を拒否して
-操作元も以前のStepへ戻します。整数の行はhard limitの有無によらずStep欄を表示します。
+操作元も以前のStepへ戻します。両側hard limit付き整数行にはStep欄を表示しません。
+保存済みStepはSlider表示中も保持し、Step欄がある行へ戻ると復元します。
+選択Stepの共有・リセットはStep欄がある行だけが対象です。全属性リセットはSlider表示中の保存値も削除します。
 
 整数の保存先は同じpreferences内の`integer_attribute_steps`で、識別子は属性型と正式pathの
 組（例`long:count`）です。初期値は1で、同名pathでもbyte・short・longを区別します。
@@ -900,6 +903,31 @@ Maya標準Channel Boxの選択やメニューには連動しません。
 両側のhard min/maxが有限で最小値より最大値が大きいfloatには
 `FloatSliderSpinBox`、それ以外には`FloatValueStepSpinBox`を使用します。
 通常float行は`[Value][Step]`、Slider行は`[Value][Slider]`の順に配置します。
+整数の両側hard limitが`Min < Max`を満たす場合は`IntSliderSpinBox`、
+それ以外は`IntValueStepSpinBox`を使用し、同じ順序と幅で配置します。
+範囲はutilの`MayaIntPlugsBinding.hard_limits`から取得します。
+型固有の上下限、片側制限、soft limit、同値制限だけでは整数Sliderを表示しません。
+byteは下限・上限の組が型既定の0～255に一致する場合だけ、両側を未指定として扱います。
+同じ全範囲を明示指定した場合も同様です。0～31や10～255などの狭い範囲は両端を保持します。
+Maya上で実際に片側のhard limitが未指定なら、その側は未指定のままです。
+byteの生成時のmin/max指定はMayaが上書きするため、独自の制限は定義後の
+`cmds.addAttr(path, edit=True, minValue=..., maxValue=...)`で設定します。
+属性定義を変更した後に画面を更新するとSlider／Stepを再選択します。
+
+transform標準属性での代表例は`objectColor`（short、0～7）と
+`overrideColor`（byte、0～31）です。Attribute Filterを「全て」にして属性名で検索すると
+確認できます。`layerOverrideColor`も0～31ですが、Mayaの旧式属性です。
+初回実装ではbyteの下限0を個別に除外していたため`overrideColor`がStep表示に
+なっていましたが、この判定を修正しました。値入力の0～31という制限は従来から維持しています。
+
+整数Sliderの範囲は基準ノードの設定を使い、書込みは編集可能な全対象の制限を検証します。
+他ノードの狭い範囲へ暗黙に補正せず、不正な更新は全対象へ適用しません。
+既に成功したドラッグの更新は最後の確定値として維持し、Undo一回で操作前へ戻せます。
+選択中の整数・float行には同じ表示整数を適用し、整数演算のまま32-bit両端を扱います。
+値欄とSlider表示範囲は独立し、Sliderの範囲外の確定値も値欄に保持します。
+値欄の上下操作の刻み幅は1、Sliderは最大1000分割です。
+Min／Maxを編集する欄はbdChannelBoxへ追加せず、汎用Viewの範囲編集はutilのサンプルで扱います。
+
 値欄は156 px、Step／Sliderは共通の60 px、欄間は6 pxに固定します。
 値欄は`1234.123456789123456`の20文字を見渡せる幅を目安にしています。
 通常float行はutilの`value_width`・`step_width`を使い、Sliderにも同じ幅を指定します。
@@ -2228,9 +2256,73 @@ commit・pushが完了しました。利用者が確認したMaya versionは未�
 utilに`IntSlider`と整数・float共通の連続Undo管理を追加した段階で、
 toolsのBlack・Pyright・unit test 37件と、Maya 2025／2026／2027の
 全runtime test各394件が成功しました。
-bdChannelBoxへの整数Slider組込みは、ロードマップの第三段階で実施します。
+bdChannelBoxへの整数Slider組込みは、ロードマップの第三段階として実装済みです。
 
 第一段階の利用者による操作確認・pushは完了しました（2026-10-16時点、確認version未申告）。
 第二段階としてutilに`IntSliderSpinBox`・`IntRangeSliderSpinBox`とMin／Max／Stepの
-保存・復元、操作サンプルを追加しました。第二段階の利用者確認はこれからです。
-bdChannelBoxの行表示は第三段階で変更します。
+保存・復元、操作サンプルを追加しました。第二段階の利用者確認・pushも完了しました（2026-10-16時点）。
+第三段階としてbdChannelBoxへ整数Sliderを組込みました。利用者確認はこれからです。
+
+### 整数Sliderの操作確認用scene
+
+MayaのPythonタブで次を実行すると、Slider付きlong属性とStep付きlong属性を持つ
+新しいtransformを作り、bdChannelBoxを表示します。既存sceneは消去しません。
+
+```python
+import bd_tools
+bd_tools.reload_package(reload_util=True)
+
+from maya import cmds
+from bd_tools import bd_channel_box
+
+node = cmds.createNode("transform", name="bdIntSliderSample")
+cmds.addAttr(node, longName="sliderCount", attributeType="long",
+             minValue=0, maxValue=100, keyable=True)
+cmds.addAttr(node, longName="stepCount", attributeType="long", keyable=True)
+cmds.setAttr(node + ".sliderCount", 42)
+cmds.select(node, replace=True)
+window = bd_channel_box.show()
+```
+
+### 整数Sliderの本体確認（2026-10-16）
+
+Maya 2025本体の専用一時設定で、公開入口から実際のdockable Windowを表示しました。
+整数Sliderとfloat Slider・Step欄の幅、実マウスによる混在数値の一括入力、
+一回Undo、代表以外の制限違反時の全件拒否、close後のStep設定保持が成功しました。
+結果は`%TEMP%/bd-int-slider-maya2025-kpj4c9uy/result.json`の`success: true`です。
+同じ場所の`initial-window.png`と`reopened-window.png`も確認し、全入力欄が見えています。
+検証runnerは終了code 0でした。結果保存後の終了待ちは完了せず、runnerが専用processを
+終了したためMaya processの終了codeは1です。Mayaの正常終了と2026／2027本体の画面操作は未確認です。
+
+### 整数Sliderの自動検証（2026-10-16）
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsのBlack・Pyright・unit test | 成功。型エラー・警告0件、unit test 37件 |
+| toolsのMaya 2025／2026／2027全runtime test | 各414件成功。整数Sliderの新規20件と既存整数25件を含む |
+| utilの`scripts/verify.cmd` | 終了code 0。Black・3 version型契約・Maya 2025 full pytest・UI互換性testに成功 |
+| utilのMaya 2025／2026／2027 Qt UI・Maya UI | 各1092件・816件成功。明示hard limitの新規12件を含む |
+| util・toolsの差分空白検査 | 成功 |
+
+toolsのruntime testでは既存のpytest cache書込み警告、2026／2027の一時directoryの
+system exceptionログが出ましたが、3 versionとも終了code 0で完了しました。
+
+### 標準byte属性のSlider判定修正（2026-10-16）
+
+byteの型既定範囲0～255を両端の組で判定するようutilを修正しました。
+`overrideColor`の0～31や、上限255を残した狭い範囲も両側hard limitとして扱います。
+
+| 確認対象 | 結果 |
+| --- | --- |
+| toolsの`scripts/check.cmd` | 終了code 0。Black・Pyright・unit test 37件に成功 |
+| toolsのMaya 2025／2026／2027関連runtime test | 各47件成功。既存整数25件、Slider22件で、標準色属性の一括入力・一回Undo／Redoを含む |
+| utilの`scripts/verify.cmd` | 終了code 0。Black・3 version型契約・Maya 2025 full pytest・3 versionのUI互換性testに成功 |
+| utilのMaya 2025／2026／2027 Qt UI・Maya UI | 各1092件・826件成功。整数Binding各30件でbyteの標準属性・狭い範囲・片側制限を含む |
+| Maya 2025本体 | `objectColor`（0～7）・`overrideColor`（0～31）・`layerOverrideColor`（0～31）のSlider表示、既定byte範囲のStep表示を確認 |
+| Maya 2025本体での編集 | `overrideColor`への実マウスのドラッグ、一括入力、31の直接入力、それぞれの一回Undoに成功 |
+
+本体検証の`result.json`は`success: true`で、結果と2枚の確認画像は
+`%TEMP%/bd-int-slider-maya2025-2j93eotm`に保存しました。
+runnerは終了code 0です。結果保存後の終了待ちが完了せず、runnerが専用processを
+終了したためMaya processの終了codeは1です。正常終了と2026／2027本体の画面操作は未確認です。
+この修正後のtools全runtime testの再実行はしていません。上記47件は関連testの結果です。

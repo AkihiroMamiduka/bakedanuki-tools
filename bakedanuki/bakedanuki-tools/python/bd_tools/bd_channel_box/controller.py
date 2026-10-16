@@ -355,7 +355,7 @@ class ChannelBoxController(qt.QObject):
         self.value_edit_session.finish()
         for row in self.rows:
             if isinstance(row, ChannelRow) and isinstance(
-                row.binding, MayaFloatPlugsBinding
+                row.binding, (MayaFloatPlugsBinding, MayaIntPlugsBinding)
             ):
                 row.binding.view_model.end_edit()
 

@@ -7,13 +7,29 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `overrideColor`など、byte属性の下限0または上限255を持つ狭い範囲で
+  Step欄が表示される判定をutil側で修正。0～31などは`[値][Slider]`を表示する。
+  型既定の全範囲0～255はStep表示を維持する。utilも更新して
+  `bd_tools.reload_package(reload_util=True)`で反映する。設定・sceneの移行は不要。
+
 ### Added
 
+- bdChannelBoxの両側hard limit付き整数行へ`IntSliderSpinBox`を組込み、
+  `[値][Slider]`表示と複数の整数・float属性へのライブ入力、一操作一回のUndoに対応。
+  制限違反ではその更新全体を拒否し、時刻・選択・ロック変更などで操作を終了する。
+  型固有範囲・片側制限・soft limit・同値制限だけの行は`[値][Step]`を使用する。
+  保存済み整数StepはSlider表示中も保持し、Step表示へ戻ると復元する。
+  行の`editor`は`IntSliderSpinBox | IntValueStepSpinBox`となる。
+  値欄の操作は引き続き`editor.spin_box`を使用し、View固有APIの利用前に型を分岐する。
+  utilも更新して`bd_tools.reload_package(reload_util=True)`で反映する。
+  scene・設定・clipboardの移行は不要。
 - bdChannelBoxの整数行にStep欄を追加。既定1の10倍方式と任意の正整数入力に対応し、
   複数行への設定、属性型・正式pathごとの保存、選択属性／全属性リセットを行う。
   floatとの混在選択は全対象を検証し、小数Stepを整数行へ適用する操作は全体を拒否する。
   整数設定は`integer_attribute_steps`へ保存し、既存float設定とsceneの移行は不要。
-  行の`editor`は`IntValueStepSpinBox`になり、値欄の直接操作は`editor.spin_box`を使用する。
+  Step付き行の`editor`は`IntValueStepSpinBox`で、値欄の直接操作は`editor.spin_box`を使用する。
 
 - bdChannelBoxでMayaのbyte・short・long属性を整数欄として表示・編集できるようにした。
   単一属性とcompound子属性に対応し、複数ノード編集、整列、表示・ロック、
