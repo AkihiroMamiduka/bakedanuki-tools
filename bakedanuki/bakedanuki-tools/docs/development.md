@@ -106,3 +106,43 @@ MayaはModuleの`scripts`を探索し、起動時にそのファイルを実行�
 `unregister_menu_owner(owner)`で自分の項目を解除します。起動時の遅延登録、
 表示設定、設定ファイルの扱いは、util側の
 `bakedanuki/bakedanuki-util/docs/ui/README.md`の「共有Mayaメインメニュー」を参照してください。
+
+## Tool Icons
+
+各ツールの画像は`python/bd_tools/<tool_name>/icon/<tool_name>.png`に配置します。
+現在の3枚は64×64pxのPNGで、黒背景・白文字の仮デザインです。
+各ツールの`icon/__init__.py`が`MENU: Final[Path]`を公開し、同梱画像の絶対pathを解決します。
+共通処理はutilへ置き、各ツールでは次のように記述します。
+
+```python
+from pathlib import Path
+from typing import Final
+
+from bd_util.py.path import icon_path
+
+MENU: Final[Path] = icon_path(__file__, "bd_channel_box.png")
+```
+
+`__file__`で基準位置を明示するため、呼び出し元の自動調査や作業フォルダに依存しません。
+画像の存在確認と読み込みはメニュー登録側へ任せます。
+画像名を変える場合は、そのツールの`MENU`だけを変更します。
+配布時はPythonファイルと一緒に`icon`フォルダも同梱してください。
+
+メニュー定義は登録時に各ツールの`icon.MENU`を読み込み、
+utilの`register_menu_item(icon_path=...)`へ渡します。
+`import bd_tools`だけではutilを読み込みませんが、アイコン情報の取得にはutilが必要です。
+ツールの親packageは軽量な入口とし、公開関数・Window classは初回の属性参照時に読み込みます。
+`icon.MENU`と`dir()`による候補の取得だけではUI本体を読み込みません。
+公開APIの型は型検査時に明示し、既存の補完と呼出し方を維持します。`Maya.env`や`.mod`へ
+画像探索pathを追加する必要はありません。このAPIを含むutilとtoolsを一緒に更新します。
+表示はPreferences > Interface > Show icons in menusに従い、toolsは設定を変更しません。
+画像が欠けている、画像ではない、または破損している場合は警告し、文字だけで起動できます。
+
+デザイン変更時は同名PNGを差し替え、`bd_tools.install_menu()`で再登録するか、
+`bd_tools.reload_package()`を実行します。utilも変更した初回は
+`bd_tools.reload_package(reload_util=True)`を使用します。
+画像の自動監視は行いません。将来シェルフへ対応する際も同じPNGを参照できます。
+シェルフボタンの登録・保存は別途実装する機能です。
+
+仮アイコンは指定の改行と文字の縦横比を維持し、文字ブロックの長い方向で
+外周に2〜3px程度の黒い余白が残るように拡大しています。

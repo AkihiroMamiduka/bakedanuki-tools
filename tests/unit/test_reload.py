@@ -14,6 +14,7 @@ import sys
 import bd_tools
 
 old_package = bd_tools
+old_menu = bd_tools.menu
 events = []
 bd_tools.register_reload_disposer(lambda: events.append("disposed"))
 new_package = bd_tools.reload_package()
@@ -22,6 +23,10 @@ assert events == ["disposed"]
 assert new_package is sys.modules["bd_tools"]
 assert new_package is not old_package
 assert old_package.__version__ == new_package.__version__
+assert new_package.menu is not old_menu
+assert not any(
+    name.startswith(("bd_tools.bd_", "bd_util")) for name in sys.modules
+)
 """
 
     # 独立processでscriptを実行し、reload後のmodule状態を検証する

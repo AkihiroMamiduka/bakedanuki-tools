@@ -79,6 +79,13 @@ Widget生成を後回しにしたdockは、tools側で定義したworkspaceContr
 Maya Script Editor が保持する古い `bd_tools` 変数にも、新しい package 内容を反映します。
 ただし個別 module や class instance を別変数へ保持していた場合、その参照は自動更新されません。
 
+各ツールの親packageは公開APIを属性参照時に遅延解決し、解決後の参照を保持します。
+reloadでは親packageと`icon`を含む子moduleをまとめて再作成するため、
+新しいpackageからの参照は新しい関数・class・`icon.MENU`へ切り替わります。
+アイコンだけを読み込んだ状態でreloadしてもUI本体を読み込む必要はありません。
+画像定数はutilの`icon_path()`で解決します。関数を追加・変更した初回は
+`reload_util=True`でutilも先に再作成し、各`icon`が新しい関数を参照する状態にします。
+
 現在の`bd_tools.reload_package(reload_util=True)`が退避・再表示するのは
 `bd_tools`が所有するtoolだけです。将来`bd_rig`や`bd_physics`など別packageのUIも
 起動する場合、utilの単独reloadやこの入口だけでは、他packageの古い参照とUIを

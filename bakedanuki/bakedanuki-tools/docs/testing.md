@@ -12,6 +12,8 @@ lifecycle などを検証します。
 ```
 
 実行 interpreter は Maya の `mayapy` ですが、テスト自体は Maya scene を必要としません。
+package単独importと未使用状態のreloadではutilを読み込まないことを確認します。
+メニューのunit testは各ツールの画像定数を差し替え、登録側へそのまま渡すことを確認します。
 
 ## Maya Runtime Tests
 
@@ -26,6 +28,8 @@ lifecycle などを検証します。
 ```
 
 scene 操作、undo、Maya callback、Maya UI adapter を使う機能はこの層にテストを追加します。
+`test_tool_icons.py`は独立processで3画像の配置・PNGサイズと、util同時reloadによる
+画像module・共通関数の更新を確認します。画像取得だけではツールのUI本体を読み込みません。
 QWidgetも同じ入口で検証できるよう、Maya初期化前にQt facadeからQApplicationを作ります。
 テストの `qt_application` fixtureはそのsession共通instanceを提供します。
 workspaceControl の実表示や Maya 再起動後の復元は `mayapy` だけでは完結しないため、対象
@@ -51,6 +55,12 @@ Maya 本体でも操作確認します。
 確認します。実際に親メニューを開いても一度だけのcallbackが再実行されないこと、
 reload後の再登録、表示設定の変更、tools所有項目の解除後も親と既存項目が残ることも
 確認します。
+初回起動時は各ツールのUI本体が未読込みであることも確認します。
+3ツールの起動後にtoolsだけをreloadし、開いていたWindowの復元と公開APIの切替を確認します。
+初回起動とreload後には3画像の絶対path・64px PNGの読込みと、標準の
+Show icons in menusのON/OFFによる表示変化も確認します。
+`icons-startup-*.png`と`icons-reloaded-*.png`を目視確認用に保存します。
+同名PNGを赤から青へ上書きし、再登録後の実画像と画像指定の解除も確認します。
 さらに独立profileで標準Windowsメニューへの起動時登録を確認します。起動前から
 `parent_menu = "MayaWindow|mainWindowMenu"`を設定し、標準項目とその順序を維持して
 末尾へ追加されること、再登録・reload・解除で標準callbackとその実行設定を保つことを

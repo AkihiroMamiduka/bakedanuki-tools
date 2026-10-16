@@ -1,6 +1,9 @@
 # coding: utf-8
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import bd_tools
@@ -26,3 +29,25 @@ def test_maya_module_version_matches_python_package() -> None:
     assert module_name == "bd_tools"
     assert module_version == bd_tools.__version__
     assert package_root == "../bakedanuki-tools"
+
+
+def test_package_import_keeps_ui_dependencies_unloaded() -> None:
+    """起動予約の前にpackageを読み込んでもutilやMayaを読み込まない。"""
+    script = """
+import sys
+import bd_tools
+
+assert not any(
+    name == prefix or name.startswith(prefix + ".")
+    for name in sys.modules
+    for prefix in ("bd_util", "maya", "PySide6")
+)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-B", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    assert completed.returncode == 0, completed.stderr
