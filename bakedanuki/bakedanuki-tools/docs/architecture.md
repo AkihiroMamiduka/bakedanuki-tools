@@ -173,7 +173,7 @@ categoryは`tools`とし、将来のrig・physicsは別owner/categoryで同じ`b
 メニューのMaya UI構築と他ownerを保つ解除処理はutilが所有します。
 画像は各ツールpackageの`icon/<package名>.png`に置き、各`icon/__init__.py`が
 `MENU: Final[Path]`で実配置から絶対pathを解決します。パス解決は共通の
-`bd_util.py.path.icon_path(__file__, 画像名)`を利用し、util側へ集約します。
+`bd_util.py.path.resolve_relative_path(__file__, 画像名)`を利用し、util側へ集約します。
 メニュー定義は登録時にこの定数を読み込み、utilの`register_menu_item(icon_path=...)`へ
 渡します。`import bd_tools`だけではutilを読み込みませんが、画像定数の取得にはutilを
 利用します。親packageは`icon`と軽量な型定義を読み込み、

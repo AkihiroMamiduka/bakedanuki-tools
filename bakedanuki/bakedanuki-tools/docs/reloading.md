@@ -83,7 +83,7 @@ Maya Script Editor が保持する古い `bd_tools` 変数にも、新しい pac
 reloadでは親packageと`icon`を含む子moduleをまとめて再作成するため、
 新しいpackageからの参照は新しい関数・class・`icon.MENU`へ切り替わります。
 アイコンだけを読み込んだ状態でreloadしてもUI本体を読み込む必要はありません。
-画像定数はutilの`icon_path()`で解決します。関数を追加・変更した初回は
+画像定数はutilの`resolve_relative_path()`で解決します。関数を追加・変更した初回は
 `reload_util=True`でutilも先に再作成し、各`icon`が新しい関数を参照する状態にします。
 
 現在の`bd_tools.reload_package(reload_util=True)`が退避・再表示するのは

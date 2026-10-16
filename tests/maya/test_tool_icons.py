@@ -19,7 +19,7 @@ application = qt.QApplication([])
 maya.standalone.initialize(name="python")
 
 import bd_tools
-from bd_util.py.path import icon_path
+from bd_util.py.path import resolve_relative_path
 
 package_root = Path(bd_tools.__file__).resolve().parent
 old_icons = []
@@ -33,7 +33,9 @@ for name in (
     expected = package_root / name / "icon" / f"{name}.png"
     assert isinstance(package.icon.MENU, Path)
     assert package.icon.MENU == expected
-    assert package.icon.MENU == icon_path(package.icon.__file__, expected.name)
+    assert package.icon.MENU == resolve_relative_path(
+        base_file=package.icon.__file__, relative_path=expected.name
+    )
     assert set(package.__all__).issubset(dir(package))
     assert not hasattr(package, "undefined_api")
     data = package.icon.MENU.read_bytes()
@@ -41,15 +43,15 @@ for name in (
     assert int.from_bytes(data[16:20], "big") == 64
     assert int.from_bytes(data[20:24], "big") == 64
 
-old_resolver = icon_path
+old_resolver = resolve_relative_path
 bd_tools.reload_package(reload_util=True)
-from bd_util.py.path import icon_path
-assert icon_path is not old_resolver
+from bd_util.py.path import resolve_relative_path
+assert resolve_relative_path is not old_resolver
 for name, old_icon in old_icons:
     package = importlib.import_module(name)
     assert package.icon is not old_icon
     assert package.icon.MENU == old_icon.MENU
-    assert package.icon.icon_path is icon_path
+    assert package.icon.resolve_relative_path is resolve_relative_path
     assert f"{package.__name__}.ui" not in sys.modules
     assert f"{package.__name__}.dock_window" not in sys.modules
 """

@@ -118,12 +118,14 @@ MayaはModuleの`scripts`を探索し、起動時にそのファイルを実行�
 from pathlib import Path
 from typing import Final
 
-from bd_util.py.path import icon_path
+from bd_util.py.path import resolve_relative_path
 
-MENU: Final[Path] = icon_path(__file__, "bd_channel_box.png")
+MENU: Final[Path] = resolve_relative_path(__file__, "bd_channel_box.png")
 ```
 
 `__file__`で基準位置を明示するため、呼び出し元の自動調査や作業フォルダに依存しません。
+`base_file`と`relative_path`のキーワード指定にも対応し、`sub/file.png`のように
+サブフォルダを含む相対パスも指定できます。共通関数は画像以外のリソースにも利用できます。
 画像の存在確認と読み込みはメニュー登録側へ任せます。
 画像名を変える場合は、そのツールの`MENU`だけを変更します。
 配布時はPythonファイルと一緒に`icon`フォルダも同梱してください。

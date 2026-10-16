@@ -9,7 +9,10 @@
 
 ### Changed
 
-- 3ツールの`MENU`は共通の`bd_util.py.path.icon_path(__file__, 画像名)`で解決する。
+- utilのパス解決API改名に合わせ、3ツールのアイコン定義を`resolve_relative_path()`へ変更。
+  `icon_path()`を直接利用するスクリプトは新しい関数名へ置き換え、utilとtoolsを同時に更新する。
+  画像pathの組み立て方・表示・scene・保存設定は変更しない。
+- 3ツールの`MENU`は共通の`bd_util.py.path.resolve_relative_path(__file__, 画像名)`で解決する。
   メニューの画像情報は登録時に読み込み、`import bd_tools`だけではutilを読み込まない。
   アイコン取得にはutilを利用するが、ツールのUI本体は読み込まない。
   このAPIを含むutilとの同時更新が必要。sceneと保存設定の移行は不要。
