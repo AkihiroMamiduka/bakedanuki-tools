@@ -435,6 +435,11 @@ utilは`verify.cmd`が成功し、3 versionの型contract、Maya 2025 full pytes
 多数ノードモードでは`enum_validation="operation"`、通常モードでは`"per_write"`を
 使うことを固定します。操作途中の定義変更と終了時確認による復旧は、utilの
 `tests/maya/ui/test_enum_operation_validation.py`で別行・readonly・同値対象も含めて確認します。
+lock・表示状態の索引化では、utilの`test_channel_state_binding.py`と`test_callback.py`で
+多数対象の照合回数、hash衝突、改名、削除履歴、callback本数と解除時の再入を確認します。
+`test_bd_channel_box_bulk.py`では1,000ノードのlock・表示状態変更と一回Undo／Redoを確認します。
+値Pasteは1,000ノード×9属性を対象に、入力用ViewModelを生成せず全件へ適用できることと、
+一回Undo／Redoを確認します。
 経過時間そのものをruntime testの固定閾値にせず、属性取得と対象範囲の契約を固定します。
 
 上記の本体runnerは現在の実装を計測します。比較する場合は変更前後で同じMaya version、

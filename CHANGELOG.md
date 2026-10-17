@@ -54,6 +54,13 @@
 
 ### Changed
 
+- bdChannelBoxのlock・表示状態編集で、util側の実体索引を使って多数対象の重複走査を削減。
+  値Pasteもutilの共通書込み処理を使い、対象ごとの表示用Binding生成を省く。
+  既存の対象判定、状態編集のcallback本数、Undoと失敗復旧は維持する。
+  Paste中の対象削除を記録し、同名で再作成された別実体へ追従しない。
+  外部処理による削除・再作成自体は復旧対象外とする。
+  UI・メニュー・公開API・scene・設定形式は変更しない。utilも更新し、
+  `bd_tools.reload_package(reload_util=True)`で反映する。移行処理は不要。
 - bdChannelBoxの「値編集（多数ノード）」で、enumの明示入力・値揃え・値Pasteに
   utilの`enum_validation="operation"`を使用する。開始時の全定義を固定し、
   書込み直前の基準と当該対象、終了時の全対象を確認して重複検証を減らす。

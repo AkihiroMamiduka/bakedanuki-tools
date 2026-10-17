@@ -14,15 +14,18 @@ from bd_util.maya.ui import (
     MayaEditSession,
     MayaEnumPlugsBinding,
     MayaEnumValueEdit,
+    MayaNodeValueSnapshot,
     MayaPlugsValueEdit,
+    MayaScalarPasteResult,
+    MayaScalarValueSnapshot,
     MayaScalarValueTransfer,
 )
-from bd_util.maya.ui.binding import scalar_value_transfer as scalar_transfer
 from bd_util.maya.ui.binding._enum_plug_value import EnumPlugValue
 from bd_util.ui import (
     EnumComboBox,
     EnumDefinition,
     FloatValueStepSpinBox,
+    FloatViewModel,
     IntSliderSpinBox,
     StringLineEdit,
     qt,
@@ -485,9 +488,33 @@ def test_enum_edit_paths_use_operation_validation_only_in_bulk_mode(
     monkeypatch.setattr(
         controller_module, "apply_plugs_values", apply_and_record
     )
-    monkeypatch.setattr(
-        scalar_transfer, "apply_plugs_values", apply_and_record
+    paste_name = (
+        "apply_scalar_value_transfer"
+        if operation == "paste_all"
+        else (
+            "apply_scalar_value_to_paths"
+            if operation == "paste_selected_single"
+            else "apply_scalar_value_transfer_to_paths"
+        )
     )
+    original_paste = cast(
+        Callable[..., MayaScalarPasteResult],
+        getattr(controller_module, paste_name),
+    )
+
+    def paste_and_record(
+        *args: object, **kwargs: object
+    ) -> MayaScalarPasteResult:
+        """公開Paste入口の検証方針を記録し、実際の値適用も行う。"""
+        policy = kwargs.get("enum_validation", "per_write")
+        if policy == "operation":
+            policies.append("operation")
+        else:
+            assert policy == "per_write"
+            policies.append("per_write")
+        return original_paste(*args, **kwargs)
+
+    monkeypatch.setattr(controller_module, paste_name, paste_and_record)
     keys = _keys(editor, "free", "mode")
     if operation == "enum":
         enum_keys = _keys(editor, "mode")
@@ -769,3 +796,120 @@ def test_align_lock_and_keyframe_menus_keep_all_targets(
         cmds.keyframe(node + ".free", query=True, keyframeCount=True) == 1
         for node in ("bulkOther", "bulkReference")
     )
+
+
+@pytest.mark.parametrize("operation", ["lock", "display"])
+def test_thousand_node_state_operations_keep_flags_and_one_undo(
+    editor: ChannelBoxWidget, operation: str
+) -> None:
+    """千対象のlock・表示変更が値を変えず、一回のUndo/Redoで復元する。"""
+    nodes = tuple(
+        cmds.createNode("transform", name=f"bulkState{index}")
+        for index in range(1000)
+    )
+    cmds.select(*nodes, replace=True)
+    _events()
+    keys = _keys(editor, "translateX")
+    cmds.flushUndo()
+
+    if operation == "lock":
+        assert editor.controller.set_selected_locked(keys, True)
+    else:
+        assert editor.controller.set_selected_display(keys, "channel_box")
+
+    def flags() -> tuple[tuple[bool, bool, bool], ...]:
+        """全対象の自身のlock・keyable・channelBox状態を取得する。"""
+        return tuple(
+            (
+                bool(cmds.getAttr(node + ".translateX", lock=True)),
+                bool(cmds.getAttr(node + ".translateX", keyable=True)),
+                bool(cmds.getAttr(node + ".translateX", channelBox=True)),
+            )
+            for node in nodes
+        )
+
+    applied = (
+        (True, True, False) if operation == "lock" else (False, False, True)
+    )
+    assert flags() == (applied,) * len(nodes)
+    assert all(cmds.getAttr(node + ".translateX") == 0 for node in nodes)
+    cmds.undo()
+    assert flags() == ((False, True, False),) * len(nodes)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    cmds.redo()
+    assert flags() == (applied,) * len(nodes)
+    _events()
+
+
+def test_thousand_node_nine_attribute_paste_avoids_temporary_view_models(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """九千属性のPasteで入力用ViewModelを作らず全件とUndo/Redoを維持する。"""
+    nodes = tuple(
+        cmds.createNode("transform", name=f"bulkPaste{index}")
+        for index in range(1000)
+    )
+    paths = tuple(
+        f"{group}.{group}{axis}"
+        for group in ("translate", "rotate", "scale")
+        for axis in ("X", "Y", "Z")
+    )
+    snapshots = tuple(
+        MayaScalarValueSnapshot(
+            path,
+            (
+                "distance"
+                if path.startswith("translate")
+                else ("angle" if path.startswith("rotate") else "number")
+            ),
+            2.0,
+        )
+        for path in paths
+    )
+    memory = _MemoryClipboard()
+    memory.write(MayaScalarValueTransfer((MayaNodeValueSnapshot(snapshots),)))
+    monkeypatch.setattr(editor.controller, "_value_clipboard", memory)
+    cmds.select(*nodes, replace=True)
+    _events()
+    before = tuple(
+        tuple(cmds.getAttr(node + "." + path) for path in paths)
+        for node in nodes
+    )
+    cmds.flushUndo()
+    created_models = 0
+    original_init = cast(Callable[..., None], FloatViewModel.__init__)
+
+    def initialize_model(
+        model: FloatViewModel, *args: object, **kwargs: object
+    ) -> None:
+        """処理時間に依存せず、属性ごとのUI用オブジェクト生成を検出する。"""
+        nonlocal created_models
+        created_models += 1
+        assert created_models <= 64
+        original_init(model, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(FloatViewModel, "__init__", initialize_model)
+        assert editor.controller.paste_copied_values()
+        assert created_models == 0
+    assert all(
+        cmds.getAttr(node + "." + path) == 2
+        for node in nodes
+        for path in paths
+    )
+    cmds.undo()
+    assert (
+        tuple(
+            tuple(cmds.getAttr(node + "." + path) for path in paths)
+            for node in nodes
+        )
+        == before
+    )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    cmds.redo()
+    assert all(
+        cmds.getAttr(node + "." + path) == 2
+        for node in nodes
+        for path in paths
+    )
+    _events()
