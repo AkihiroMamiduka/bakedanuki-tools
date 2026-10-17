@@ -477,6 +477,40 @@ Maya 2025本体の隔離processでは46工程の操作結果が成功し、
 検証用Mayaの終了待ちは150秒でタイムアウトし、runnerは終了code 1を返しました。
 表示・操作の成功と本体の正常終了は区別します。
 
+## Tool Icon Checks
+
+アイコンの追加・差し替え後は、配置と実画面をそれぞれ確認します。
+以下はrepository rootから実行するMaya 2025の例です。
+
+```powershell
+.\scripts\test-maya2025.cmd -UtilRoot ..\bakedanuki-util `
+    -k test_tool_icons -q
+```
+
+このテストは画像の配置と64×64px PNG、ツールのUIを読み込まないパス取得、
+util同時reload後の参照更新を確認します。`-k`でこのテストを選択し、
+pytest引数とutilの指定を区別するため`-UtilRoot`も明示します。
+
+Maya本体でアイコンに関係する工程だけを確認する場合は、`initial`を指定します。
+
+```powershell
+& "C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe" `
+    scripts/test_menu_maya.py --maya-version 2025 `
+    --util-root ..\bakedanuki-util --phase initial
+```
+
+この工程では専用profileを使い、メニュー表示設定ON/OFF、3ツールの起動、reload、
+同名PNGの上書きと再登録・画像指定の解除を確認します。
+出力先の`icons-startup-on.png`と`icons-reloaded-on.png`は、
+文字の読みやすさや余白を目視確認するために利用できます。
+
+現在のテストは`<tool_name>.png`と64×64pxを期待します。画像名を変更した場合は
+`test_tool_icons.py`の期待pathを、サイズを変更した場合はこのテストと
+`scripts/test_menu_maya.py`の画像サイズ確認を更新します。
+Maya 2026／2027ではcommandのversion指定も変更します。
+共通のパス解決・メニュー処理・reloadを変更した場合は、この確認に加えて
+各repositoryの検証方針に従います。
+
 ## Type Contracts
 
 `tests/typecheck` は実行用 pytest ではなく、公開 API の戻り値型と IDE 補完を Pyright で
