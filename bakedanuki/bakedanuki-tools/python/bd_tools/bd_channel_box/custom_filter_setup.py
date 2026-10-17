@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from bisect import bisect_left
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -166,7 +167,12 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.list_splitter.addWidget(candidate_pane)
         self.list_splitter.setStretchFactor(0, 1)
         self.list_splitter.setStretchFactor(1, 2)
-        self.list_splitter.setSizes([140, 280])
+        # Maya 2027同梱stubで不明な引数型をQt呼び出しの境界で確定する
+        set_sizes = cast(
+            Callable[[list[int]], None],
+            getattr(self.list_splitter, "setSizes"),
+        )
+        set_sizes([140, 280])
         type_buttons = qt.QHBoxLayout()
         type_buttons.addWidget(self.define_type_button)
         type_buttons.addWidget(self.clear_type_button)

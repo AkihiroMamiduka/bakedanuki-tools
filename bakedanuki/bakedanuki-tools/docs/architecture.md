@@ -171,6 +171,16 @@ interactive起動時だけ`maya.utils.executeDeferred()`へメニュー登録を
 選択タブ・設定先を尊重します。登録のownerは`bd_tools`、
 categoryは`tools`とし、将来のrig・physicsは別owner/categoryで同じ`bakedanuki`を共有します。
 メニューのMaya UI構築と他ownerを保つ解除処理はutilが所有します。
+画像は各ツールpackageの`icon/<package名>.png`に置き、各`icon/__init__.py`が
+`MENU: Final[Path]`で実配置から絶対pathを解決します。パス解決は共通の
+`bd_util.py.path.resolve_relative_path(__file__, 画像名)`を利用し、util側へ集約します。
+メニュー定義は登録時にこの定数を読み込み、utilの`register_menu_item(icon_path=...)`へ
+渡します。`import bd_tools`だけではutilを読み込みませんが、画像定数の取得にはutilを
+利用します。親packageは`icon`と軽量な型定義を読み込み、
+既存の公開関数・Window classは`__getattr__()`で初回の属性参照時に読み込みます。
+型検査時は公開型を明示し、`__all__`と`__dir__()`で公開入口を保持します。
+画像pathや属性候補の取得ではUI本体をimportしません。画像の読込み検証とMayaへの設定はutilが
+担当し、画像不備では警告して画像なしの項目を登録します。
 toolsのreload前には所有項目を解除し、reload後に新しいcallbackで再登録します。
 起動時のdeferred処理だけがutilの共有設定を読み、OFFなら登録をスキップします。
 明示的な`install_menu()`と開発reload時の復元は設定の影響を受けません。

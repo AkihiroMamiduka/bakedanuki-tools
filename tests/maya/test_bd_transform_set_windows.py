@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import math
+import sys
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import cast
@@ -220,8 +221,20 @@ def child_set_dock_host(
     tmp_path: Path,
 ) -> Iterator[_ChildSetDockHost]:
     """実Window・controllerを使いMayaのworkspaceControl境界を置き換える。"""
+    from bd_tools import bd_child_compensated_set as current_child_set
+    from bd_tools import bd_rotation_preserving_pose as current_rotation_set
+    from bd_tools.bd_child_compensated_set.dock_window import (
+        ChildSetDockWindow as current_window_type,
+    )
     from bd_util.maya.ui import settings as maya_settings
 
+    # 先行testのreload後は公開APIと差し替えるWindow classの世代を揃える
+    monkeypatch.setattr(
+        sys.modules[__name__], "child_set_ui", current_child_set
+    )
+    monkeypatch.setattr(
+        sys.modules[__name__], "rotation_set_ui", current_rotation_set
+    )
     host = _ChildSetDockHost()
 
     def show_dockable(window: MayaDockableWindow, **options: object) -> None:
@@ -280,12 +293,12 @@ def child_set_dock_host(
     monkeypatch.setattr(
         maya_settings, "get_ui_settings_root", lambda: tmp_path
     )
-    monkeypatch.setattr(ChildSetDockWindow, "_is_floating", is_floating)
+    monkeypatch.setattr(current_window_type, "_is_floating", is_floating)
     monkeypatch.setattr(
         workspace_control, "find_floating_host", find_floating_host
     )
     monkeypatch.setattr(
-        ChildSetDockWindow, "_resize_floating_control", resize_control
+        current_window_type, "_resize_floating_control", resize_control
     )
     child_set_ui.dispose()
     yield host

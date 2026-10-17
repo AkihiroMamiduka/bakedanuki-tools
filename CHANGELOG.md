@@ -37,8 +37,27 @@
   clipboard書込みはschema version 3に変わるため、旧版の利用側へ貼り付ける場合は
   利用側も更新する。version 1・2のコピー内容は引き続き読み込める。
 
+### Fixed
+
+- Maya 2027のPyright型検査エラー5件を解消。
+  カスタムフィルター設定の`QSplitter.setSizes()`はQt呼び出しの境界で引数型を明示し、
+  テストの`QLayout.itemAt()`は項目の存在を確認してからWidgetを取得する。
+  分割領域の設定値・UI動作・scene・保存設定は変更しない。
+
 ### Changed
 
+- utilのパス解決API改名に合わせ、3ツールのアイコン定義を`resolve_relative_path()`へ変更。
+  `icon_path()`を直接利用するスクリプトは新しい関数名へ置き換え、utilとtoolsを同時に更新する。
+  画像pathの組み立て方・表示・scene・保存設定は変更しない。
+- 3ツールの`MENU`は共通の`bd_util.py.path.resolve_relative_path(__file__, 画像名)`で解決する。
+  メニューの画像情報は登録時に読み込み、`import bd_tools`だけではutilを読み込まない。
+  アイコン取得にはutilを利用するが、ツールのUI本体は読み込まない。
+  このAPIを含むutilとの同時更新が必要。sceneと保存設定の移行は不要。
+- 3ツールの画像pathを各`icon/__init__.py`の`MENU: Final[Path]`へ移した。
+  親packageの公開関数・Window classは初回の属性参照時に読み込み、
+  メニュー登録時はUI本体を読み込まずに定数を利用する。既存APIと型補完は維持する。
+  仮アイコンは文字を拡大し、長い方向の外周に2〜3px程度の余白を残す。
+  sceneと保存設定の移行は不要。
 - bdChannelBoxの整数欄で、時間カーブ・SDK・short／longのAnimation Layerへの
   入力・上下・整列・値Pasteを既存型と同じAuto Key規則で処理する。
   Enterの欄内受理と初回クリックの全選択も揃えた。小数カーブの整数評価による
@@ -97,6 +116,11 @@
 
 ### Added
 
+- `bakedanuki > tools`の3項目へ、各ツールの`icon`フォルダに同梱した仮アイコンを追加。
+  黒背景・白文字の64px PNGを絶対pathで設定し、Mayaのメニュー画像表示設定に従う。
+  画像を差し替えて再登録でき、画像不備では警告して文字だけで起動する。
+  `register_menu_item(icon_path=...)`に対応したutilとの同時更新が必要。
+  sceneと保存設定の移行は不要。
 - 起動時に共通基盤の個人用`prefs/bakedanuki/config.toml`を初回作成する。
   既存メニュー配下への配置は`bd_util`が行い、toolsの3項目と内部UI名は維持する。
   sceneの移行は不要。

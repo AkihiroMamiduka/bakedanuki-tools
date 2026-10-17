@@ -12,6 +12,8 @@ lifecycle などを検証します。
 ```
 
 実行 interpreter は Maya の `mayapy` ですが、テスト自体は Maya scene を必要としません。
+package単独importと未使用状態のreloadではutilを読み込まないことを確認します。
+メニューのunit testは各ツールの画像定数を差し替え、登録側へそのまま渡すことを確認します。
 
 ## Maya Runtime Tests
 
@@ -26,6 +28,8 @@ lifecycle などを検証します。
 ```
 
 scene 操作、undo、Maya callback、Maya UI adapter を使う機能はこの層にテストを追加します。
+`test_tool_icons.py`は独立processで3画像の配置・PNGサイズと、util同時reloadによる
+画像module・共通関数の更新を確認します。画像取得だけではツールのUI本体を読み込みません。
 QWidgetも同じ入口で検証できるよう、Maya初期化前にQt facadeからQApplicationを作ります。
 テストの `qt_application` fixtureはそのsession共通instanceを提供します。
 workspaceControl の実表示や Maya 再起動後の復元は `mayapy` だけでは完結しないため、対象
@@ -51,6 +55,12 @@ Maya 本体でも操作確認します。
 確認します。実際に親メニューを開いても一度だけのcallbackが再実行されないこと、
 reload後の再登録、表示設定の変更、tools所有項目の解除後も親と既存項目が残ることも
 確認します。
+初回起動時は各ツールのUI本体が未読込みであることも確認します。
+3ツールの起動後にtoolsだけをreloadし、開いていたWindowの復元と公開APIの切替を確認します。
+初回起動とreload後には3画像の絶対path・64px PNGの読込みと、標準の
+Show icons in menusのON/OFFによる表示変化も確認します。
+`icons-startup-*.png`と`icons-reloaded-*.png`を目視確認用に保存します。
+同名PNGを赤から青へ上書きし、再登録後の実画像と画像指定の解除も確認します。
 さらに独立profileで標準Windowsメニューへの起動時登録を確認します。起動前から
 `parent_menu = "MayaWindow|mainWindowMenu"`を設定し、標準項目とその順序を維持して
 末尾へ追加されること、再登録・reload・解除で標準callbackとその実行設定を保つことを
@@ -467,6 +477,40 @@ Maya 2025本体の隔離processでは46工程の操作結果が成功し、
 検証用Mayaの終了待ちは150秒でタイムアウトし、runnerは終了code 1を返しました。
 表示・操作の成功と本体の正常終了は区別します。
 
+## Tool Icon Checks
+
+アイコンの追加・差し替え後は、配置と実画面をそれぞれ確認します。
+以下はrepository rootから実行するMaya 2025の例です。
+
+```powershell
+.\scripts\test-maya2025.cmd -UtilRoot ..\bakedanuki-util `
+    -k test_tool_icons -q
+```
+
+このテストは画像の配置と64×64px PNG、ツールのUIを読み込まないパス取得、
+util同時reload後の参照更新を確認します。`-k`でこのテストを選択し、
+pytest引数とutilの指定を区別するため`-UtilRoot`も明示します。
+
+Maya本体でアイコンに関係する工程だけを確認する場合は、`initial`を指定します。
+
+```powershell
+& "C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe" `
+    scripts/test_menu_maya.py --maya-version 2025 `
+    --util-root ..\bakedanuki-util --phase initial
+```
+
+この工程では専用profileを使い、メニュー表示設定ON/OFF、3ツールの起動、reload、
+同名PNGの上書きと再登録・画像指定の解除を確認します。
+出力先の`icons-startup-on.png`と`icons-reloaded-on.png`は、
+文字の読みやすさや余白を目視確認するために利用できます。
+
+現在のテストは`<tool_name>.png`と64×64pxを期待します。画像名を変更した場合は
+`test_tool_icons.py`の期待pathを、サイズを変更した場合はこのテストと
+`scripts/test_menu_maya.py`の画像サイズ確認を更新します。
+Maya 2026／2027ではcommandのversion指定も変更します。
+共通のパス解決・メニュー処理・reloadを変更した場合は、この確認に加えて
+各repositoryの検証方針に従います。
+
 ## Type Contracts
 
 `tests/typecheck` は実行用 pytest ではなく、公開 API の戻り値型と IDE 補完を Pyright で
@@ -474,10 +518,20 @@ Maya 2025本体の隔離processでは46工程の操作結果が成功し、
 
 ```powershell
 .\scripts\typecheck.cmd
+.\scripts\typecheck.cmd -MayaVersion 2026
+.\scripts\typecheck.cmd -MayaVersion 2027
 ```
 
 `pyrightconfig.json` は package 本体と tests を strict mode で検査し、Maya stub は sibling
 の `bakedanuki-util/typings` を利用します。
+
+Qtの型情報は選択したMayaに同梱されたPySide6から取得するため、version間で差があります。
+Maya 2027の`QSplitter.setSizes()`は同梱stubから引数型を取得できないため、
+使用箇所で`getattr()`と局所的な`cast(Callable[[list[int]], None], ...)`を使い、
+整数リストを受け取るQt APIの境界で型を確定します。
+分割領域の設定値と実際のQt呼び出しは同じままです。
+`QLayout.itemAt()`など項目がない場合に`None`を返すAPIは、
+戻り値を変数へ受けて存在を確認してから利用します。
 
 ## Formatting And Combined Check
 

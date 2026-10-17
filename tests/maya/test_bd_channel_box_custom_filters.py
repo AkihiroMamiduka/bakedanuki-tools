@@ -25,6 +25,14 @@ from bd_tools.bd_channel_box.custom_filters import (
 from bd_tools.bd_channel_box.widget import ChannelBoxWidget
 
 
+def _set_splitter_sizes(splitter: qt.QSplitter, sizes: list[int]) -> None:
+    """同梱stubの不完全な型をQt境界で閉じ、分割領域のサイズを指定する。"""
+    set_sizes = cast(
+        Callable[[list[int]], None], getattr(splitter, "setSizes")
+    )
+    set_sizes(sizes)
+
+
 def _events() -> None:
     """遅延した選択・表示更新とWidget破棄を処理する。"""
     for _ in range(3):
@@ -473,10 +481,10 @@ def test_setup_splitter_and_bulk_actions_use_filtered_candidates(
 
     assert panel.list_splitter.orientation() == qt.Qt.Orientation.Vertical
     assert panel.list_splitter.count() == 2
-    panel.list_splitter.setSizes([300, 80])
+    _set_splitter_sizes(panel.list_splitter, [300, 80])
     _events()
     upper_large = panel.list_splitter.sizes()
-    panel.list_splitter.setSizes([80, 300])
+    _set_splitter_sizes(panel.list_splitter, [80, 300])
     _events()
     lower_large = panel.list_splitter.sizes()
     assert upper_large[0] > lower_large[0]
@@ -668,7 +676,7 @@ def test_setup_name_range_drag_and_offscreen_selection(
     panel.set_target(str(path))
     editor.filter_combo.setCurrentIndex(editor.filter_combo.findData("hidden"))
     panel.search_edit.setText("range")
-    panel.list_splitter.setSizes([80, 500])
+    _set_splitter_sizes(panel.list_splitter, [80, 500])
     _events()
     _mouse_candidate(_candidate_label(panel, "range01"))
     _mouse_candidate(
@@ -768,7 +776,9 @@ def test_manager_creates_and_selects_new_filter(
         assert isinstance(active_modal, qt.QDialog)
         layout = active_modal.layout()
         assert layout is not None
-        field = layout.itemAt(1).widget()
+        item = layout.itemAt(1)
+        assert item is not None
+        field = item.widget()
         assert isinstance(field, qt.QLineEdit)
         field.setText("New Rig")
         active_modal.accept()

@@ -59,7 +59,8 @@ setup script は削除対象がこの repository 内の想定 path と一致す�
 
 ```powershell
 .\scripts\test-unit.cmd -q
-.\scripts\test-maya2025.cmd tests\maya\test_runtime.py -q
+.\scripts\test-maya2025.cmd -UtilRoot ..\bakedanuki-util `
+    -k test_runtime -q
 ```
 
 ## Maya Module Development
@@ -106,3 +107,70 @@ MayaはModuleの`scripts`を探索し、起動時にそのファイルを実行�
 `unregister_menu_owner(owner)`で自分の項目を解除します。起動時の遅延登録、
 表示設定、設定ファイルの扱いは、util側の
 `bakedanuki/bakedanuki-util/docs/ui/README.md`の「共有Mayaメインメニュー」を参照してください。
+
+## Tool Icons
+
+各ツールの画像は`python/bd_tools/<tool_name>/icon/<tool_name>.png`に配置します。
+現在の3枚は64×64pxのPNGで、黒背景・白文字の仮デザインです。
+各ツールの`icon/__init__.py`が`MENU: Final[Path]`を公開し、同梱画像の絶対pathを解決します。
+共通処理はutilへ置き、各ツールでは次のように記述します。
+
+```python
+from pathlib import Path
+from typing import Final
+
+from bd_util.py.path import resolve_relative_path
+
+MENU: Final[Path] = resolve_relative_path(__file__, "bd_channel_box.png")
+```
+
+`__file__`で基準位置を明示するため、呼び出し元の自動調査や作業フォルダに依存しません。
+`base_file`と`relative_path`のキーワード指定にも対応し、`sub/file.png`のように
+サブフォルダを含む相対パスも指定できます。共通関数は画像以外のリソースにも利用できます。
+画像の存在確認と読み込みはメニュー登録側へ任せます。
+画像名を変える場合は、そのツールの`MENU`と
+`tests/maya/test_tool_icons.py`の期待pathを同時に更新します。
+配布時はPythonファイルと一緒に`icon`フォルダも同梱してください。
+
+メニュー定義は登録時に各ツールの`icon.MENU`を読み込み、
+utilの`register_menu_item(icon_path=...)`へ渡します。
+`import bd_tools`だけではutilを読み込みませんが、アイコン情報の取得にはutilが必要です。
+ツールの親packageは軽量な入口とし、公開関数・Window classは初回の属性参照時に読み込みます。
+`icon.MENU`と`dir()`による候補の取得だけではUI本体を読み込みません。
+公開APIの型は型検査時に明示し、既存の補完と呼出し方を維持します。`Maya.env`や`.mod`へ
+画像探索pathを追加する必要はありません。このAPIを含むutilとtoolsを一緒に更新します。
+表示はPreferences > Interface > Show icons in menusに従い、toolsは設定を変更しません。
+画像が欠けている、画像ではない、または破損している場合は警告し、文字だけで起動できます。
+
+### 変更の反映
+
+MayaのScript Editorで`import bd_tools`を実行し、変更内容に応じて反映します。
+
+| 変更内容 | 反映方法 |
+| --- | --- |
+| 同じファイル名のPNGを差し替えた | `bd_tools.install_menu()`で画像を読み直して再登録する |
+| 画像名・`MENU`・toolsのPythonコードを変更した | `bd_tools.reload_package()`で定数と参照を更新する |
+| utilのパス解決やメニュー処理も変更した | `bd_tools.reload_package(reload_util=True)`で依存順に更新する |
+
+メニュー未登録の状態でreloadした場合は、必要に応じて`bd_tools.install_menu()`を呼びます。
+reloadは、登録されていたメニューだけを復元します。
+画像の自動監視は行いません。将来シェルフへ対応する際も同じPNGを参照できます。
+シェルフボタンの登録・保存は別途実装する機能です。
+
+仮アイコンは指定の改行と文字の縦横比を維持し、文字ブロックの長い方向で
+外周に2〜3px程度の黒い余白が残るように拡大しています。
+
+### 新しいツールへ追加するとき
+
+1. `<tool_name>/icon/<tool_name>.png`と`icon/__init__.py`を配置し、
+   上の例に従って`MENU: Final[Path]`と`__all__ = ["MENU"]`を公開します。
+2. ツールの親packageから`icon`を公開します。既存ツールと同様に、
+   パス取得だけではそのツールのUI本体を読み込まない構成にします。
+3. `bd_tools/menu.py`の`install_menu()`内で画像情報を読み込み、
+   そのツールの遅延実行callbackと`icon.MENU`を登録項目へ追加します。
+4. `tests/typecheck/tool_icons_contract.py`、`tests/maya/test_tool_icons.py`、
+   `tests/unit/test_menu.py`、`scripts/test_menu_maya.py`の対象一覧と期待値を更新します。
+
+配布物にPNGが含まれることと、縮小されたメニュー上での見え方も確認します。
+検証入口と画像サイズを変更する際の注意点は、
+[Tool Icon Checks](testing.md#tool-icon-checks)を参照してください。

@@ -82,6 +82,118 @@ def _run_in_maya() -> None:
     output = Path(os.environ[_OUTPUT_VARIABLE])
     phase = os.environ[_PHASE_VARIABLE]
 
+    def check_icons(items: tuple[str, ...], stage: str) -> None:
+        """3画像の設定と読込み、Maya表示設定ON/OFFの実画面を確認する。"""
+        from bd_tools.bd_channel_box import icon as channel_box_icon
+        from bd_tools.bd_child_compensated_set import icon as child_set_icon
+        from bd_tools.bd_rotation_preserving_pose import (
+            icon as rotation_set_icon,
+        )
+
+        icons = (
+            channel_box_icon,
+            child_set_icon,
+            rotation_set_icon,
+        )
+        for item, icon in zip(items, icons):
+            expected = icon.MENU
+            actual = cmds.menuItem(item, query=True, image=True)
+            if Path(actual).resolve() != expected:
+                raise AssertionError(
+                    f"{icon.__name__} の画像pathが不正です: {actual}"
+                )
+            image = qt.QImage(actual)
+            if image.isNull() or image.size() != qt.QSize(64, 64):
+                raise AssertionError(
+                    f"{icon.__name__} の64px PNGを読み込めません"
+                )
+
+        parent = items[0].rpartition("|")[0]
+        pointer = omui.MQtUtil.findControl(parent)
+        if not pointer:
+            raise AssertionError("tools submenu の QMenu がありません")
+        widget = qt.wrapInstance(int(pointer), qt.QMenu)
+        original = int(cmds.optionVar(query="showIconsInMenus"))
+        snapshots: list[qt.QtGui.QImage] = []
+        try:
+            # 専用profileで標準の表示設定を切り替え、同じメニューを描画する
+            for enabled in (False, True):
+                cmds.optionVar(intValue=("showIconsInMenus", int(enabled)))
+                widget.popup(qt.QPoint(70, 90))
+                qt.QApplication.processEvents()
+                snapshot = widget.grab().toImage()
+                snapshots.append(snapshot)
+                suffix = "on" if enabled else "off"
+                if not snapshot.save(
+                    str(output / f"icons-{stage}-{suffix}.png")
+                ):
+                    raise AssertionError("アイコン検証画像を保存できません")
+                widget.hide()
+            if snapshots[0] == snapshots[1]:
+                raise AssertionError(
+                    "アイコン表示設定ON/OFFで画面が変化しません"
+                )
+        finally:
+            cmds.optionVar(intValue=("showIconsInMenus", original))
+
+    def check_icon_replacement() -> None:
+        """同名画像の差し替えと解除が実際のQActionへ反映されるか確認する。"""
+        from bd_util.maya.ui import register_menu_item, unregister_menu_owner
+
+        owner = "bd_icon_smoke"
+        icon_path = output / "replacement.png"
+        try:
+            for color_name in ("red", "blue"):
+                image = qt.QImage(64, 64, qt.QImage.Format.Format_RGB32)
+                image.fill(qt.QColor(color_name))
+                if not image.save(str(icon_path)):
+                    raise AssertionError("差し替え用の画像を保存できません")
+                register_menu_item(
+                    owner=owner,
+                    category="iconQA",
+                    item_id="sample",
+                    label="Icon QA",
+                    command=lambda: None,
+                    icon_path=icon_path,
+                )
+                root, _ = _menu_state()
+                category = _find_labeled_menu(root, "iconQA")
+                item = _find_labeled_menu(category, "Icon QA")
+                menu_pointer = omui.MQtUtil.findControl(category)
+                if not menu_pointer:
+                    raise AssertionError("差し替え項目のQMenuがありません")
+                popup = qt.wrapInstance(int(menu_pointer), qt.QMenu)
+                popup.popup(qt.QPoint(70, 90))
+                qt.QApplication.processEvents()
+                popup.grab().save(
+                    str(output / f"replacement-{color_name}.png")
+                )
+                pointer = omui.MQtUtil.findMenuItem(item)
+                if not pointer:
+                    raise AssertionError("差し替え項目のQActionがありません")
+                action = qt.wrapInstance(int(pointer), qt.QAction)
+                pixels = action.icon().pixmap(16, 16).toImage()
+                popup.hide()
+                if pixels.isNull() or pixels.pixelColor(8, 8) != qt.QColor(
+                    color_name
+                ):
+                    raise AssertionError(
+                        f"同名画像の{color_name}が反映されません: "
+                        f"null={pixels.isNull()}, "
+                        f"actual={pixels.pixelColor(8, 8).name()}"
+                    )
+            register_menu_item(
+                owner=owner,
+                category="iconQA",
+                item_id="sample",
+                label="Icon QA",
+                command=lambda: None,
+            )
+            if cmds.menuItem(item, query=True, image=True):
+                raise AssertionError("省略した画像が解除されません")
+        finally:
+            unregister_menu_owner(owner)
+
     def finish(success: bool, detail: str) -> None:
         """結果を保存し、検証専用 Maya を終了する。"""
         result_name = (
@@ -98,6 +210,10 @@ def _run_in_maya() -> None:
     def check_after_click() -> None:
         """3項目のクリックで各 dockable UI が開いたことを確認する。"""
         try:
+            import importlib
+
+            import bd_tools
+
             from bd_tools.bd_channel_box import (
                 WORKSPACE_CONTROL_NAME as channel_box_control,
             )
@@ -107,6 +223,23 @@ def _run_in_maya() -> None:
             from bd_tools.bd_rotation_preserving_pose import (
                 WORKSPACE_CONTROL_NAME as rotation_set_control,
             )
+
+            # 開いたUIと遅延解決済みの公開APIもtoolsだけのreloadで置き換える
+            tool_names = (
+                "bd_channel_box",
+                "bd_child_compensated_set",
+                "bd_rotation_preserving_pose",
+            )
+            old_shows = [
+                importlib.import_module(f"bd_tools.{name}").show
+                for name in tool_names
+            ]
+            bd_tools.reload_package()
+            for name, old_show in zip(tool_names, old_shows):
+                package = importlib.import_module(f"bd_tools.{name}")
+                ui = importlib.import_module(f"bd_tools.{name}.ui")
+                if package.show is old_show or package.show is not ui.show:
+                    raise AssertionError(f"{name} の公開showが更新されません")
 
             for label, control in zip(
                 _TOOL_LABELS,
@@ -173,6 +306,7 @@ def _run_in_maya() -> None:
             cmds.menu(root, edit=True, label="bd")
             bd_tools.reload_package(reload_util=True)
             root, items = _menu_state()
+            check_icons(items, "reloaded")
             _find_labeled_menu(root, "rig")
             from bd_util.maya.ui import unregister_menu_owner
 
@@ -195,6 +329,19 @@ def _run_in_maya() -> None:
         try:
             if cmds.about(batch=True):
                 raise AssertionError("対話用 Maya ではありません")
+            loaded_ui = [
+                name
+                for name in (
+                    "bd_tools.bd_channel_box.ui",
+                    "bd_tools.bd_child_compensated_set.ui",
+                    "bd_tools.bd_rotation_preserving_pose.ui",
+                )
+                if name in sys.modules
+            ]
+            if loaded_ui:
+                raise AssertionError(
+                    f"アイコン取得でUI本体を読み込んでいます: {loaded_ui}"
+                )
             if not Path(os.environ[_USER_SETUP_MARKER]).is_file():
                 raise AssertionError(
                     "ユーザーの userSetup.py が実行されていません"
@@ -212,7 +359,9 @@ def _run_in_maya() -> None:
                 raise AssertionError(
                     "個人用の起動設定TOMLが自動作成されていません"
                 )
-            _menu_state()
+            _, items = _menu_state()
+            check_icons(items, "startup")
+            check_icon_replacement()
             current_set = cmds.menuSet(query=True, currentMenuSet=True)
             other_sets = [
                 name

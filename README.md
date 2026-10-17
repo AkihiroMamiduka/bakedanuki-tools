@@ -75,6 +75,9 @@ bool・byte／short／long・float系・enum・stringの値入力、step操作�
 interactive Mayaでは、上部の`bakedanuki > tools > bdChannelBox`から開けます。
 同じ`tools`メニューから「移動・回転をセット（子を維持）」と
 「回転をセット（姿勢を維持）」も単独で開けます。
+3項目には、各ツール内の`icon`フォルダに同梱したPNGを設定します。
+表示はMayaのPreferences > Interface > Show icons in menusに従います。
+画像の配置・差し替え方法は[開発ガイド](bakedanuki/bakedanuki-tools/docs/development.md#tool-icons)を参照してください。
 起動時表示のチェックをOFFにすると、次回起動からメニューを自動登録しません。
 設定と再有効化の手順は[パッケージのREADME](bakedanuki/bakedanuki-tools/README.md)を参照してください。
 そのセッションだけメニューを手動登録する場合は、Script Editorで
