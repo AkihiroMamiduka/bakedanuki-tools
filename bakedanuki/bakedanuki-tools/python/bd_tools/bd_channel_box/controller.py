@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from collections.abc import Sequence
-from functools import partial
-from typing import Literal, TypeAlias, cast
+from collections.abc import Callable, Generator, Sequence
+from contextlib import contextmanager
+from functools import partial, wraps
+from typing import Concatenate, Literal, ParamSpec, TypeAlias, TypeVar, cast
 
 from maya import cmds
 from maya.api import OpenMaya as om
@@ -77,7 +78,9 @@ ChannelBinding: TypeAlias = (
     | MayaEnumPlugsBinding
     | MayaStringPlugsBinding
 )
-ChannelBoxMode: TypeAlias = Literal["values", "states", "custom_filter_setup"]
+ChannelBoxMode: TypeAlias = Literal[
+    "values", "bulk_values", "states", "custom_filter_setup"
+]
 ChannelAttributeFilter: TypeAlias = ScalarAttributeDisplayFilter
 ChannelDisplayFilter: TypeAlias = (
     ChannelAttributeFilter | CustomFilterSelection
@@ -93,10 +96,32 @@ ROTATION_ATTRIBUTE_PATHS = frozenset(
 )
 _DEFAULT_FILTERS: dict[ChannelBoxMode, ChannelAttributeFilter] = {
     "values": "visible",
+    "bulk_values": "visible",
     "states": "all",
     "custom_filter_setup": "all",
 }
 _SELECTION_LIMIT = 50
+_Params = ParamSpec("_Params")
+_Result = TypeVar("_Result")
+
+
+def _bulk_operation(
+    method: Callable[Concatenate[ChannelBoxController, _Params], _Result],
+) -> Callable[Concatenate[ChannelBoxController, _Params], _Result]:
+    """多数ノードの操作中だけ必要なBindingを保持し、例外時も解放する。"""
+
+    @wraps(method)
+    def execute(
+        self: ChannelBoxController,
+        *args: _Params.args,
+        **kwargs: _Params.kwargs,
+    ) -> _Result:
+        """選択実体を検証した操作境界で元の処理を実行する。"""
+        with self._bulk_targets():  # pyright: ignore[reportPrivateUsage]
+            return method(self, *args, **kwargs)
+
+    return execute
+
 
 __all__ = [
     "ChannelBinding",
@@ -190,10 +215,14 @@ class ChannelBoxController(qt.QObject):
         self.setup_attributes: tuple[ScalarAttributeInfo, ...] = ()
         self.node_names: tuple[str, ...] = ()
         self.node_ids: tuple[str, ...] = ()
+        self._node_handles: tuple[om.MObjectHandle, ...] = ()
+        self._node_paths: tuple[om.MDagPath | None, ...] = ()
+        self._bulk_rows: dict[tuple[str, str], ChannelRow] | None = None
         self.selection_limit_exceeded = False
         self._mode: ChannelBoxMode = "values"
         self._filters: dict[ChannelBoxMode, ChannelDisplayFilter] = {
             "values": "visible",
+            "bulk_values": "visible",
             "states": "all",
             "custom_filter_setup": "all",
         }
@@ -275,7 +304,12 @@ class ChannelBoxController(qt.QObject):
 
     def set_mode(self, mode: ChannelBoxMode) -> None:
         """連続編集を終了し、属性を書き換えずに操作する状態を切り替える。"""
-        if mode not in ("values", "states", "custom_filter_setup"):
+        if mode not in (
+            "values",
+            "bulk_values",
+            "states",
+            "custom_filter_setup",
+        ):
             raise ValueError("未対応の表示モードです")
         if self._disposed or mode == self._mode:
             return
@@ -338,7 +372,7 @@ class ChannelBoxController(qt.QObject):
         if self._disposed:
             return
         active_changed = False
-        for mode in ("values", "states"):
+        for mode in ("values", "bulk_values", "states"):
             selected = self._filters[mode]
             if isinstance(selected, CustomFilterSelection) and (
                 selected.path == selection.path
@@ -368,7 +402,7 @@ class ChannelBoxController(qt.QObject):
 
     def begin_value_edit(self) -> None:
         """Sliderによる複数属性の連続入力を一つのUndoとして開始する。"""
-        if self._disposed or self._mode != "values":
+        if self._disposed or self._mode not in ("values", "bulk_values"):
             return
         self.state_edit_session.finish()
         self.value_edit_session.begin()
@@ -454,7 +488,12 @@ class ChannelBoxController(qt.QObject):
         self._nodes.dispose()
         self._nodes.deleteLater()
         self._nodes = MayaCallbackRegistry(self)
-        for name in self.node_names:
+        watched_names = (
+            self.node_names[-1:]
+            if self._mode == "bulk_values"
+            else self.node_names
+        )
+        for name in watched_names:
             selection = om.MSelectionList()
             selection.add(name)
             node = selection.getDependNode(0)
@@ -483,17 +522,62 @@ class ChannelBoxController(qt.QObject):
             return
         self._filter_refresh_pending = False
         try:
-            names = selected_node_names(limit=_SELECTION_LIMIT)
-            if len(names) >= _SELECTION_LIMIT:
+            bulk = self._mode == "bulk_values"
+            names = selected_node_names(
+                limit=None if bulk else _SELECTION_LIMIT
+            )
+            if not bulk and len(names) >= _SELECTION_LIMIT:
                 # 多数選択では旧対象を解放し、属性取得と行生成を行わない
                 self._dispose_rows()
                 self._nodes.dispose()
                 self.node_names = ()
                 self.node_ids = ()
+                self._node_handles = ()
+                self._node_paths = ()
                 self.selection_limit_exceeded = True
             else:
                 self.selection_limit_exceeded = False
-                attributes = tuple(inspect_scalar_attributes(n) for n in names)
+                if bulk:
+                    attributes = tuple(
+                        inspect_scalar_attributes(n) for n in names[-1:]
+                    )
+                else:
+                    base = (
+                        inspect_scalar_attributes(names[-1]) if names else ()
+                    )
+                    selected_filter = self.attribute_filter
+                    if (
+                        isinstance(selected_filter, CustomFilterSelection)
+                        and names
+                    ):
+                        node_type = cast(str, cmds.nodeType(names[-1]))
+                        custom_paths = (
+                            selected_filter.definition.node_types.get(
+                                node_type
+                            )
+                        )
+                        paths = (
+                            tuple(
+                                path.removeprefix(".") for path in custom_paths
+                            )
+                            if custom_paths is not None
+                            else filter_scalar_attribute_paths(base, "visible")
+                        )
+                    else:
+                        paths = filter_scalar_attribute_paths(
+                            base,
+                            (
+                                selected_filter
+                                if not isinstance(
+                                    selected_filter, CustomFilterSelection
+                                )
+                                else "visible"
+                            ),
+                        )
+                    attributes = tuple(
+                        inspect_scalar_attributes(n, paths=paths)
+                        for n in names[:-1]
+                    ) + ((base,) if names else ())
                 self._dispose_rows()
                 self.node_names = names
                 self.node_ids = tuple(
@@ -502,8 +586,16 @@ class ChannelBoxController(qt.QObject):
                     .asString()
                     for name in names
                 )
+                self._node_handles = tuple(
+                    om.MObjectHandle(self._node_object(name)) for name in names
+                )
+                self._node_paths = tuple(
+                    self._selected_dag_path(name) for name in names
+                )
                 self._watch_nodes()
-                self.rows = self._create_rows(attributes)
+                self.rows = self._create_rows(
+                    attributes, representative_only=bulk
+                )
         except Exception as error:
             self._dispose_rows()
             self.selection_limit_exceeded = False
@@ -515,6 +607,7 @@ class ChannelBoxController(qt.QObject):
         attributes: tuple[tuple[ScalarAttributeInfo, ...], ...],
         *,
         display_filter: ChannelAttributeFilter | None = None,
+        representative_only: bool = False,
     ) -> tuple[ChannelRow | ChannelStateRow, ...]:
         """表示条件かカスタム定義で基準属性を絞り、同名・同種属性を結ぶ。"""
         if not attributes:
@@ -524,7 +617,10 @@ class ChannelBoxController(qt.QObject):
         )
         lookup = tuple({a.path: a for a in items} for items in attributes)
         # 基準を先頭にしてBindingへ渡し、選択リスト自体の順序は維持する
-        ordered_names = self.node_names[-1:] + self.node_names[:-1]
+        names = (
+            self.node_names[-1:] if representative_only else self.node_names
+        )
+        ordered_names = names[-1:] + names[:-1]
         ordered_lookup = lookup[-1:] + lookup[:-1]
         rows: list[ChannelRow | ChannelStateRow] = []
         try:
@@ -624,58 +720,75 @@ class ChannelBoxController(qt.QObject):
                         )
                     )
                     continue
-                binding: ChannelBinding
-                if attribute.kind == "bool":
-                    binding = MayaBoolPlugsBinding(
-                        [
-                            resolve_bool_plug(n, attribute.path)
-                            for n in targets
-                        ],
-                        parent=self,
-                        edit_connected=True,
-                        track_input_state=True,
-                    )
-                elif attribute.kind in ("byte", "short", "long"):
-                    binding = MayaIntPlugsBinding(
-                        [resolve_int_plug(n, attribute.path) for n in targets],
-                        parent=self,
-                        edit_connected=True,
-                        track_input_state=True,
-                    )
-                elif attribute.kind == "enum":
-                    binding = self._create_enum_binding(
-                        attribute.path, targets, excluded
-                    )
-                elif attribute.kind == "string":
-                    binding = MayaStringPlugsBinding(
-                        [
-                            resolve_string_plug(n, attribute.path)
-                            for n in targets
-                        ],
-                        parent=self,
-                        track_input_state=True,
-                    )
-                else:
-                    binding = MayaFloatPlugsBinding(
-                        [
-                            resolve_float_plug(n, attribute.path)
-                            for n in targets
-                        ],
-                        parent=self,
-                        edit_connected=True,
-                        track_input_state=True,
-                    )
-                binding.edit_failed.connect(self.error_occurred.emit)
                 rows.append(
-                    ChannelRow(
-                        attribute, binding, tuple(excluded), tuple(targets)
+                    self._create_value_row(
+                        attribute,
+                        targets,
+                        excluded,
+                        monitor=self._mode != "bulk_values"
+                        or representative_only,
                     )
                 )
         except Exception:
             for row in rows:
                 self._dispose_row(row)
             raise
+        if self._bulk_rows is not None and not representative_only:
+            self._bulk_rows.update(
+                ((row.attribute.path, row.attribute.kind), row)
+                for row in rows
+                if isinstance(row, ChannelRow)
+            )
         return tuple(rows)
+
+    def _create_value_row(
+        self,
+        attribute: ScalarAttributeInfo,
+        targets: list[str],
+        excluded: list[str],
+        *,
+        monitor: bool = True,
+    ) -> ChannelRow:
+        """型ごとの既存編集規則を保ち、表示用または操作専用Bindingを作る。"""
+        binding: ChannelBinding
+        path = attribute.path
+        if attribute.kind == "bool":
+            binding = MayaBoolPlugsBinding(
+                [resolve_bool_plug(n, path) for n in targets],
+                parent=self,
+                edit_connected=True,
+                track_input_state=True,
+                monitor=monitor,
+            )
+        elif attribute.kind in ("byte", "short", "long"):
+            binding = MayaIntPlugsBinding(
+                [resolve_int_plug(n, path) for n in targets],
+                parent=self,
+                edit_connected=True,
+                track_input_state=True,
+                monitor=monitor,
+            )
+        elif attribute.kind == "enum":
+            binding = self._create_enum_binding(
+                path, targets, excluded, monitor=monitor
+            )
+        elif attribute.kind == "string":
+            binding = MayaStringPlugsBinding(
+                [resolve_string_plug(n, path) for n in targets],
+                parent=self,
+                track_input_state=True,
+                monitor=monitor,
+            )
+        else:
+            binding = MayaFloatPlugsBinding(
+                [resolve_float_plug(n, path) for n in targets],
+                parent=self,
+                edit_connected=True,
+                track_input_state=True,
+                monitor=monitor,
+            )
+        binding.edit_failed.connect(self.error_occurred.emit)
+        return ChannelRow(attribute, binding, tuple(excluded), tuple(targets))
 
     @staticmethod
     def _resolve_state_plug(
@@ -693,7 +806,12 @@ class ChannelBoxController(qt.QObject):
         return resolve_float_plug(name, attribute.path)
 
     def _create_enum_binding(
-        self, path: str, targets: list[str], excluded: list[str]
+        self,
+        path: str,
+        targets: list[str],
+        excluded: list[str],
+        *,
+        monitor: bool = True,
     ) -> MayaEnumPlugsBinding:
         """代表と定義が一致するenumだけを、一括編集用Bindingへ渡す。"""
         representative = resolve_enum_plug(targets[0], path)
@@ -710,6 +828,7 @@ class ChannelBoxController(qt.QObject):
             parent=self,
             edit_connected=True,
             track_input_state=True,
+            monitor=monitor,
         )
 
     def _dispose_rows(self) -> None:
@@ -718,6 +837,9 @@ class ChannelBoxController(qt.QObject):
         self._custom_filter_fallback_node_type = None
         self.setup_attributes = ()
         self.rows_about_to_change.emit()
+        if self._bulk_rows is not None:
+            for row in self._bulk_rows.values():
+                self._dispose_row(row)
         if self._active_state_binding is not None:
             self._active_state_binding.dispose()
         self.state_edit_session.finish()
@@ -733,8 +855,127 @@ class ChannelBoxController(qt.QObject):
         selection.add(name)
         return selection.getDependNode(0)
 
+    @staticmethod
+    def _selected_dag_path(name: str) -> om.MDagPath | None:
+        """DAG instanceの選択pathを改名へ追従する実体参照として保持する。"""
+        selection = om.MSelectionList()
+        selection.add(name)
+        if not selection.getDependNode(0).hasFn(om.MFn.kDagNode):
+            return None
+        return selection.getDagPath(0)
+
+    @contextmanager
+    def _bulk_targets(self) -> Generator[None, None, None]:
+        """選択時の実体を操作直前に解決し、一時Bindingを操作終了時に解放する。"""
+        if self._mode != "bulk_values" or self._bulk_rows is not None:
+            yield
+            return
+        if self._disposed or self._timer.isActive():
+            raise RuntimeError(
+                "対象が変わりました。表示更新後に操作してください"
+            )
+        if not self._node_handles:
+            raise RuntimeError("操作するノードが選択されていません")
+        if (
+            not self._node_handles[-1].isValid()
+            or not self._node_handles[-1].isAlive()
+        ):
+            raise RuntimeError("基準ノードが削除されました")
+
+        # 保存した実体から現在名を取得し、同名再作成された別nodeを対象にしない
+        names: list[str] = []
+        handles: list[om.MObjectHandle] = []
+        paths: list[om.MDagPath | None] = []
+        for handle, path in zip(
+            self._node_handles, self._node_paths, strict=True
+        ):
+            if not handle.isValid() or not handle.isAlive():
+                continue
+            node = handle.object()
+            name = (
+                (
+                    path.fullPathName()
+                    if path is not None
+                    and path.isValid()
+                    and path.node() == node
+                    else om.MFnDagNode(node).getPath().fullPathName()
+                )
+                if node.hasFn(om.MFn.kDagNode)
+                else om.MFnDependencyNode(node).name()
+            )
+            names.append(name)
+            handles.append(handle)
+            paths.append(path)
+        self.node_names = tuple(names)
+        self._node_handles = tuple(handles)
+        self._node_paths = tuple(paths)
+        self.node_ids = tuple(
+            om.MFnDependencyNode(handle.object()).uuid().asString()
+            for handle in handles
+        )
+        self._bulk_rows = {}
+        try:
+            yield
+        finally:
+            temporary, self._bulk_rows = self._bulk_rows, None
+            for row in temporary.values():
+                self._dispose_row(row)
+            if not self._disposed:
+                for row in self.rows:
+                    if (
+                        isinstance(row, ChannelRow)
+                        and (row.attribute.path, row.attribute.kind)
+                        in temporary
+                    ):
+                        row.binding.refresh()
+
+    def _resolve_bulk_rows(
+        self, rows: Sequence[ChannelRow | ChannelStateRow]
+    ) -> tuple[ChannelRow, ...]:
+        """操作に必要なpathだけを全対象で照合し、監視しないBindingへ結ぶ。"""
+        cache = self._bulk_rows
+        if cache is None:
+            raise RuntimeError("多数ノードの操作境界が開始されていません")
+        missing = tuple(
+            row
+            for row in rows
+            if (row.attribute.path, row.attribute.kind) not in cache
+        )
+        paths = tuple(row.attribute.path for row in missing)
+        ordered_names = self.node_names[-1:] + self.node_names[:-1]
+        lookup = (
+            tuple(
+                {
+                    a.path: a
+                    for a in inspect_scalar_attributes(name, paths=paths)
+                }
+                for name in ordered_names
+            )
+            if missing
+            else ()
+        )
+        for row in missing:
+            attribute = row.attribute
+            targets: list[str] = []
+            excluded: list[str] = []
+            for name, attributes in zip(ordered_names, lookup, strict=True):
+                match = attributes.get(attribute.path)
+                if match is None:
+                    excluded.append(f"{name}: 対応する属性なし")
+                elif match.kind != attribute.kind:
+                    excluded.append(f"{name}: 型・単位が異なる")
+                else:
+                    targets.append(name)
+            if not targets or targets[0] != ordered_names[0]:
+                raise RuntimeError("基準属性の構成が変わりました")
+            key = (attribute.path, attribute.kind)
+            cache[key] = self._create_value_row(
+                attribute, targets, excluded, monitor=False
+            )
+        return tuple(cache[(r.attribute.path, r.attribute.kind)] for r in rows)
+
     def _selected_rows(
-        self, keys: Sequence[tuple[str, str]]
+        self, keys: Sequence[tuple[str, str]], *, resolve_targets: bool = True
     ) -> tuple[ChannelRow | ChannelStateRow, ...]:
         """表示中の正式pathと型だけを受け付け、古い選択への入力を拒否する。"""
         if self._disposed:
@@ -749,7 +990,10 @@ class ChannelBoxController(qt.QObject):
             raise RuntimeError(
                 "属性の構成が変わりました。選択し直してください"
             )
-        return tuple(lookup[key] for key in unique)
+        rows = tuple(lookup[key] for key in unique)
+        if self._mode == "bulk_values" and resolve_targets:
+            return self._resolve_bulk_rows(rows)
+        return rows
 
     @staticmethod
     def _keyframe_plug(name: str) -> str | None:
@@ -797,6 +1041,7 @@ class ChannelBoxController(qt.QObject):
             return None
         return plug.name()
 
+    @_bulk_operation
     def set_keyframes_all_keyable(self, *, breakdown: bool = False) -> int:
         """選択ノード自身の全Keyable属性へ、指定種別のキーを打つ。"""
         if self._disposed:
@@ -815,6 +1060,7 @@ class ChannelBoxController(qt.QObject):
             *dict.fromkeys(targets), insertBlend=False, breakdown=breakdown
         )
 
+    @_bulk_operation
     def set_keyframes_selected(
         self, keys: Sequence[tuple[str, str]], *, breakdown: bool = False
     ) -> int:
@@ -921,6 +1167,7 @@ class ChannelBoxController(qt.QObject):
             cmds.undoInfo(closeChunk=True)
         return changed
 
+    @_bulk_operation
     def edit_animation_layers_selected(
         self, keys: Sequence[tuple[str, str]], *, add: bool
     ) -> int:
@@ -933,6 +1180,7 @@ class ChannelBoxController(qt.QObject):
         )
         return self._edit_animation_layer_membership(targets, add=add)
 
+    @_bulk_operation
     def edit_animation_layers_all_keyable(self, *, add: bool) -> int:
         """各選択ノードの全Keyable属性を選択レイヤで変更する。"""
         targets = tuple(
@@ -979,6 +1227,7 @@ class ChannelBoxController(qt.QObject):
             return None
         return plug.name()
 
+    @_bulk_operation
     def set_muted_all_visible(self, *, muted: bool) -> int:
         """各選択ノードのKeyable／ChannelBox表示属性を一括ミュートする。"""
         if self._disposed:
@@ -998,6 +1247,7 @@ class ChannelBoxController(qt.QObject):
         cmds.mute(*dict.fromkeys(targets), disable=not muted)
         return len(targets)
 
+    @_bulk_operation
     def set_muted_selected(
         self, keys: Sequence[tuple[str, str]], *, muted: bool
     ) -> int:
@@ -1131,6 +1381,7 @@ class ChannelBoxController(qt.QObject):
         )
         return tuple(copied)
 
+    @_bulk_operation
     def copy_animation_curves_selected(
         self, keys: Sequence[tuple[str, str]]
     ) -> int:
@@ -1149,6 +1400,7 @@ class ChannelBoxController(qt.QObject):
         )
         return len(self._copy_animation_curves(sources))
 
+    @_bulk_operation
     def copy_animation_curves_all_visible(self) -> int:
         """各選択ノードのKeyable／ChannelBox表示属性の曲線をコピーする。"""
         if self._disposed:
@@ -1200,6 +1452,7 @@ class ChannelBoxController(qt.QObject):
         )
         return len(targets)
 
+    @_bulk_operation
     def cut_animation_curves_selected(
         self, keys: Sequence[tuple[str, str]]
     ) -> int:
@@ -1217,6 +1470,7 @@ class ChannelBoxController(qt.QObject):
         )
         return self._cut_animation_curves(sources)
 
+    @_bulk_operation
     def cut_animation_curves_all_visible(self) -> int:
         """各選択ノードのKeyable／ChannelBox表示属性をカットする。"""
         sources = tuple(
@@ -1288,6 +1542,7 @@ class ChannelBoxController(qt.QObject):
         )
         return len(targets)
 
+    @_bulk_operation
     def delete_animation_curves_selected(
         self, keys: Sequence[tuple[str, str]]
     ) -> int:
@@ -1305,6 +1560,7 @@ class ChannelBoxController(qt.QObject):
         )
         return self._delete_animation_curves(names)
 
+    @_bulk_operation
     def delete_animation_curves_all_visible(self) -> int:
         """各選択ノードのKeyable／ChannelBox表示属性の曲線を削除する。"""
         if self._disposed:
@@ -1413,16 +1669,19 @@ class ChannelBoxController(qt.QObject):
             api_clipboard.set(previous)
         return pasted
 
+    @_bulk_operation
     def paste_animation_curves_same_attributes(self) -> int:
         """コピー元と同じ正式属性パスへ曲線を貼り付ける。"""
         return self._paste_animation_curves(None)
 
+    @_bulk_operation
     def paste_animation_curves_to_selected(
         self, keys: Sequence[tuple[str, str]]
     ) -> int:
         """一曲線は型を問わず選択属性へ、複数曲線は同じパスへ貼る。"""
         return self._paste_animation_curves(keys)
 
+    @_bulk_operation
     def apply_numeric_values(
         self, keys: Sequence[tuple[str, str]], display_value: float | int
     ) -> bool:
@@ -1470,6 +1729,7 @@ class ChannelBoxController(qt.QObject):
         self._report_excluded(excluded)
         return changed
 
+    @_bulk_operation
     def offset_numeric_values(
         self, keys: Sequence[tuple[str, str]], display_offset: float | int
     ) -> bool:
@@ -1512,6 +1772,7 @@ class ChannelBoxController(qt.QObject):
         self._report_excluded(excluded)
         return changed
 
+    @_bulk_operation
     def apply_bool_values(
         self, keys: Sequence[tuple[str, str]], value: bool
     ) -> bool:
@@ -1535,6 +1796,7 @@ class ChannelBoxController(qt.QObject):
         self._report_excluded(excluded)
         return changed
 
+    @_bulk_operation
     def apply_enum_values(
         self,
         keys: Sequence[tuple[str, str]],
@@ -1582,6 +1844,7 @@ class ChannelBoxController(qt.QObject):
         self._report_excluded(excluded)
         return changed
 
+    @_bulk_operation
     def apply_string_values(
         self, keys: Sequence[tuple[str, str]], value: str
     ) -> bool:
@@ -1607,6 +1870,7 @@ class ChannelBoxController(qt.QObject):
         self._report_excluded(excluded)
         return changed
 
+    @_bulk_operation
     def align_selected_values(self, keys: Sequence[tuple[str, str]]) -> bool:
         """各選択行を表示ノードの未丸め値へ、一操作で揃える。"""
         rows = tuple(
@@ -1616,6 +1880,7 @@ class ChannelBoxController(qt.QObject):
         )
         return self._align_rows(rows)
 
+    @_bulk_operation
     def align_filtered_values(
         self, display_filter: ChannelAttributeFilter
     ) -> bool:
@@ -1634,7 +1899,7 @@ class ChannelBoxController(qt.QObject):
             raise RuntimeError(
                 "選択属性の状態変更中には別の操作を開始できません"
             )
-        if self._mode != "values":
+        if self._mode not in ("values", "bulk_values"):
             raise RuntimeError("値編集モードで操作してください")
         if not self.node_names:
             raise RuntimeError("表示ノードが選択されていません")
@@ -1642,9 +1907,7 @@ class ChannelBoxController(qt.QObject):
             return False
         self.state_edit_session.finish()
         self._finish_value_edit()
-        attributes = tuple(
-            inspect_scalar_attributes(name) for name in self.node_names
-        )
+        attributes = self._operation_attributes(display_filter)
         rows = self._create_rows(attributes, display_filter=display_filter)
         try:
             return self._align_rows(
@@ -1689,6 +1952,7 @@ class ChannelBoxController(qt.QObject):
         self._report_excluded(excluded)
         return changed
 
+    @_bulk_operation
     def round_selected_values(
         self, keys: Sequence[tuple[str, str]], decimals: int
     ) -> bool:
@@ -1700,6 +1964,7 @@ class ChannelBoxController(qt.QObject):
         )
         return self._round_rows(rows, decimals)
 
+    @_bulk_operation
     def round_filtered_values(
         self, display_filter: ChannelAttributeFilter, decimals: int
     ) -> bool:
@@ -1718,15 +1983,13 @@ class ChannelBoxController(qt.QObject):
             raise RuntimeError(
                 "選択属性の状態変更中には別の操作を開始できません"
             )
-        if self._mode != "values":
+        if self._mode not in ("values", "bulk_values"):
             raise RuntimeError("値編集モードで操作してください")
         if not self.node_names:
             raise RuntimeError("表示ノードが選択されていません")
         self.state_edit_session.finish()
         self._finish_value_edit()
-        attributes = tuple(
-            inspect_scalar_attributes(name) for name in self.node_names
-        )
+        attributes = self._operation_attributes(display_filter)
         rows = self._create_rows(attributes, display_filter=display_filter)
         try:
             return self._round_rows(
@@ -1736,6 +1999,21 @@ class ChannelBoxController(qt.QObject):
         finally:
             for row in rows:
                 self._dispose_row(row)
+
+    def _operation_attributes(
+        self, display_filter: ChannelAttributeFilter
+    ) -> tuple[tuple[ScalarAttributeInfo, ...], ...]:
+        """基準で選んだpathだけを残りのノードから取得する。"""
+        base = tuple(
+            a
+            for a in inspect_scalar_attributes(self.node_names[-1])
+            if matches_scalar_attribute_display_filter(a, display_filter)
+        )
+        paths = tuple(a.path for a in base)
+        return tuple(
+            inspect_scalar_attributes(name, paths=paths)
+            for name in self.node_names[:-1]
+        ) + (base,)
 
     def _round_rows(self, rows: Sequence[ChannelRow], decimals: int) -> bool:
         """各plugの未丸め実値から一括計画を作り、単一Undoで適用する。"""
@@ -1776,6 +2054,7 @@ class ChannelBoxController(qt.QObject):
             return False
         return len(transfer.nodes) == 1 and len(transfer.nodes[0].values) == 1
 
+    @_bulk_operation
     def copy_all_values(self) -> int:
         """基準nodeの全対応属性値を、型と正式path付きでOSへコピーする。"""
         representative = self.representative_node_name
@@ -1789,6 +2068,7 @@ class ChannelBoxController(qt.QObject):
         )
         return count
 
+    @_bulk_operation
     def copy_selected_values(self, keys: Sequence[tuple[str, str]]) -> int:
         """基準nodeで選択した対応属性値を、正式path付きでOSへコピーする。"""
         representative = self.representative_node_name
@@ -1796,7 +2076,7 @@ class ChannelBoxController(qt.QObject):
             raise RuntimeError("コピー元のノードが選択されていません")
         attributes = tuple(
             row.attribute
-            for row in self._selected_rows(keys)
+            for row in self._selected_rows(keys, resolve_targets=False)
             if isinstance(row, ChannelRow)
         )
         if not attributes:
@@ -1809,6 +2089,7 @@ class ChannelBoxController(qt.QObject):
         )
         return count
 
+    @_bulk_operation
     def paste_copied_values(
         self, display_filter: ChannelAttributeFilter = "all"
     ) -> bool:
@@ -1880,6 +2161,7 @@ class ChannelBoxController(qt.QObject):
                 filtered_count += 1
         return tuple(paths), filtered_count, tuple(excluded)
 
+    @_bulk_operation
     def paste_copied_values_to_selected(
         self, keys: Sequence[tuple[str, str]]
     ) -> bool:
@@ -1894,7 +2176,7 @@ class ChannelBoxController(qt.QObject):
             )
         paths = tuple(
             row.attribute.path
-            for row in self._selected_rows(keys)
+            for row in self._selected_rows(keys, resolve_targets=False)
             if isinstance(row, ChannelRow)
         )
         if not paths:
@@ -1960,7 +2242,7 @@ class ChannelBoxController(qt.QObject):
         """基準ノードが姿勢維持付き回転設定の対象か返す。"""
         representative = self.representative_node_name
         return (
-            self._mode == "values"
+            self._mode in ("values", "bulk_values")
             and self.has_transform_context()
             and representative is not None
             and cmds.nodeType(representative) in ("transform", "joint")
@@ -1970,6 +2252,7 @@ class ChannelBoxController(qt.QObject):
         """基準ノードが子の補償付き移動・回転設定の対象か返す。"""
         return self.can_set_rotation_preserving_pose()
 
+    @_bulk_operation
     def round_transform_xyz(
         self,
         kind: RoundTransformKind,
@@ -2003,7 +2286,7 @@ class ChannelBoxController(qt.QObject):
             raise ValueError("移動の丸めでは子の移動補償は常に有効です")
         if self._disposed:
             raise RuntimeError("終了済みの画面には入力できません")
-        if self._mode != "values":
+        if self._mode not in ("values", "bulk_values"):
             raise RuntimeError("値編集モードで操作してください")
         self.state_edit_session.finish()
         self._finish_value_edit()
@@ -2051,13 +2334,14 @@ class ChannelBoxController(qt.QObject):
         self._report_excluded(excluded)
         return len(changed)
 
+    @_bulk_operation
     def consolidate_rotation(self, destination: RotationDestination) -> int:
         """選択中の各Transform／Jointの現在回転を一属性群へ集約する。"""
         if destination not in ("rotate", "rotateAxis", "jointOrient"):
             raise ValueError("未対応の回転集約先です")
         if self._disposed:
             raise RuntimeError("終了済みの画面には入力できません")
-        if self._mode != "values":
+        if self._mode not in ("values", "bulk_values"):
             raise RuntimeError("値編集モードで操作してください")
         self.state_edit_session.finish()
         self._finish_value_edit()
@@ -2154,6 +2438,7 @@ class ChannelBoxController(qt.QObject):
         self._report_excluded(excluded)
         return len({name for name, _, _, _ in plans})
 
+    @_bulk_operation
     def freeze_transforms(
         self, component: Literal["translate", "rotate", "scale", "all"]
     ) -> int:
@@ -2221,6 +2506,7 @@ class ChannelBoxController(qt.QObject):
                 probe.deleteLater()
         return plugs, excluded
 
+    @_bulk_operation
     def set_selected_locked(
         self, keys: Sequence[tuple[str, str]], locked: bool
     ) -> bool:
@@ -2240,6 +2526,7 @@ class ChannelBoxController(qt.QObject):
         self._report_excluded(excluded)
         return changed
 
+    @_bulk_operation
     def set_selected_display(
         self, keys: Sequence[tuple[str, str]], state: ChannelDisplayState
     ) -> bool:
@@ -2261,6 +2548,23 @@ class ChannelBoxController(qt.QObject):
 
     def _report_excluded(self, reasons: Sequence[str]) -> None:
         """一括操作で除外した属性の理由を、成功対象と区別して表示する。"""
+        if self._bulk_rows:
+            details = list(reasons)
+            candidates = 0
+            for row in self._bulk_rows.values():
+                details.extend(row.excluded)
+                for target in row.binding.target_states:
+                    candidates += int(target.is_writable)
+                    if target.reason:
+                        details.append(f"{target.name}: {target.reason}")
+            unique = tuple(dict.fromkeys(details))
+            report = f"適用候補: {candidates}属性 / 対象外: {len(unique)}件"
+            if unique:
+                report += " / " + " / ".join(unique[:20])
+                if len(unique) > 20:
+                    report += f" / ほか{len(unique) - 20}件"
+            self.operation_reported.emit(report)
+            return
         self.operation_reported.emit(
             "対象外: " + " / ".join(reasons) if reasons else ""
         )
@@ -2271,8 +2575,9 @@ class ChannelBoxController(qt.QObject):
         binding = (
             row.binding if isinstance(row, ChannelRow) else row.state_binding
         )
-        binding.dispose()
-        binding.deleteLater()
+        if qt.isValid(binding):
+            binding.dispose()
+            binding.deleteLater()
 
     def dispose(self) -> None:
         """timer、入力Binding、Maya callbackを一度だけ解放する。"""

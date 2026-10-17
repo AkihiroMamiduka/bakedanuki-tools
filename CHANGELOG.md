@@ -16,6 +16,14 @@
 
 ### Added
 
+- bdChannelBoxへ「値編集（多数ノード）」モード（`bulk_values`）を追加。
+  50ノード以上でも基準ノードの属性・値を表示し、明示的な操作時にだけ
+  全選択ノードの対応属性を解決して一括編集する。Step、Slider、右クリック操作は維持する。
+  値・ロック・接続状態の混在と全対象の編集可能件数は常時集計せず、表示は基準ノードに限定する。
+  操作時の型・範囲・lock検証、途中失敗の復旧、一操作一回のUndoは維持する。
+  通常の値編集・表示とロック・カスタムフィルター設定は既存の50ノード制限を維持する。
+  utilも更新して`bd_tools.reload_package(reload_util=True)`で反映する。
+  モードはWindow内だけで保持し、scene・保存設定・clipboardの移行は不要。
 - bdChannelBoxの両側hard limit付き整数行へ`IntSliderSpinBox`を組込み、
   `[値][Slider]`表示と複数の整数・float属性へのライブ入力、一操作一回のUndoに対応。
   制限違反ではその更新全体を拒否し、時刻・選択・ロック変更などで操作を終了する。
@@ -46,6 +54,11 @@
 
 ### Changed
 
+- bdChannelBoxのenum一括入力で、utilが共有する属性定義の重複検証を削減。
+  `drawStyle`など同じ属性実体を持つ対象は、検証のたびに共有定義を一度だけ取得する。
+  別実体のカスタムenumは個別に検証し、定義変更の検出・Undo・失敗復旧を維持する。
+  UI・メニュー・設定形式は変更しない。utilも更新し、
+  `bd_tools.reload_package(reload_util=True)`で反映する。scene・設定の移行は不要。
 - utilのパス解決API改名に合わせ、3ツールのアイコン定義を`resolve_relative_path()`へ変更。
   `icon_path()`を直接利用するスクリプトは新しい関数名へ置き換え、utilとtoolsを同時に更新する。
   画像pathの組み立て方・表示・scene・保存設定は変更しない。

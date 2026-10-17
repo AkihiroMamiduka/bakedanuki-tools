@@ -34,6 +34,7 @@ class TableRow:
     text_field: qt.QLineEdit | None = None
     input_indicator: qt.QWidget | None = None
     select_on_right_click: bool = True
+    direct_numeric_input: bool = False
 
 
 class _RowDelegate(qt.QStyledItemDelegate):
@@ -512,14 +513,32 @@ class ChannelTableView(qt.QTableView):
         self, index: int, event: qt.QtGui.QKeyEvent
     ) -> bool:
         """元SpinBoxの制限や書込みを通さず、一括入力用の文字欄を開く。"""
-        if len(self.selected_keys()) < 2 or not self._is_numeric_input(event):
-            return False
         row = self.rows[index]
+        is_input = self._is_numeric_input(event) or (
+            row.direct_numeric_input
+            and event.matches(qt.QtGui.QKeySequence.StandardKey.Paste)
+        )
+        if (
+            len(self.selected_keys()) < 2 and not row.direct_numeric_input
+        ) or not is_input:
+            return False
         field = row.value_field
         if field is None or not field.isEnabled():
             return False
+        source = field.findChild(qt.QLineEdit)
+        if not isinstance(source, qt.QLineEdit):
+            source = None
+        cursor = source.cursorPosition() if source is not None else 0
+        selection = source.selectionStart() if source is not None else -1
+        selected_text = source.selectedText() if source is not None else ""
+        draft = source.text() if source is not None else field.cleanText()
         self.finish_numeric_edit(commit=True)
-        self._numeric_keys = self.selected_keys()
+        selected = self.selected_keys()
+        self._numeric_keys = (
+            (row.key,)
+            if row.direct_numeric_input and row.key not in selected
+            else selected
+        )
         self._numeric_row = index
         editor = qt.QLineEdit(self.viewport())
         self._numeric_editor = editor
@@ -527,7 +546,7 @@ class ChannelTableView(qt.QTableView):
         editor.setContextMenuPolicy(qt.Qt.ContextMenuPolicy.NoContextMenu)
         editor.setAlignment(field.alignment())
         cast(_FontEditor, editor).setFont(field.font())
-        editor.setText(field.cleanText())
+        editor.setText(draft)
         editor.setGeometry(
             qt.QRect(field.mapTo(self.viewport(), qt.QPoint()), field.size())
         )
@@ -535,7 +554,13 @@ class ChannelTableView(qt.QTableView):
         editor.show()
         editor.raise_()
         editor.setFocus()
-        editor.selectAll()
+        if row.direct_numeric_input and len(self._numeric_keys) == 1:
+            # 単一属性では、元の値欄のカーソルと部分選択を維持する
+            editor.setCursorPosition(cursor)
+            if selection >= 0:
+                editor.setSelection(selection, len(selected_text))
+        else:
+            editor.selectAll()
         forwarded = qt.QtGui.QKeyEvent(
             qt.QEvent.Type.KeyPress,
             event.key(),
@@ -624,9 +649,12 @@ class ChannelTableView(qt.QTableView):
                         self.setFocus()
                         return True
         elif isinstance(event, qt.QtGui.QKeyEvent) and numeric:
-            if (
-                kind == qt.QEvent.Type.ShortcutOverride
-                and self._is_numeric_input(event)
+            if kind == qt.QEvent.Type.ShortcutOverride and (
+                self._is_numeric_input(event)
+                or (
+                    self.rows[index].direct_numeric_input
+                    and event.matches(qt.QtGui.QKeySequence.StandardKey.Paste)
+                )
             ):
                 event.accept()
                 return True

@@ -347,6 +347,7 @@ class AttributeRowWidget(qt.QWidget):
         single_step: int | float | None = None,
         align_callback: Callable[[], None] | None = None,
         wheel_editing_without_focus: bool = False,
+        representative_only: bool = False,
     ) -> None:
         """初期値を書き込まず、Bindingと表示部品を接続する。"""
         if type(wheel_editing_without_focus) is not bool:
@@ -356,6 +357,7 @@ class AttributeRowWidget(qt.QWidget):
         super().__init__(parent)
         self.row = row
         self.selection_count = selection_count
+        self.representative_only = representative_only
         self._align_callback = align_callback
         self.setObjectName(f"channel_{row.attribute.path}")
         self.name_label = _AttributeNameLabel(row.attribute.nice_name, self)
@@ -941,7 +943,16 @@ class AttributeRowWidget(qt.QWidget):
         editable = binding.view_model.set_value_command.can_execute
         count = binding.writable_count if editable else 0
         details = [self.row.attribute.nice_name, self.row.attribute.path]
-        details.append(f"編集対象: {count}/{self.selection_count} 件")
+        if self.representative_only:
+            details.extend(
+                (
+                    "表示・接続状態: 基準ノードのみ",
+                    f"適用候補: 選択中の{self.selection_count}ノード",
+                    "他ノードの編集可否と値の違いは、操作時に確認します",
+                )
+            )
+        else:
+            details.append(f"編集対象: {count}/{self.selection_count} 件")
         visible_targets = tuple(
             target
             for target in binding.target_states
@@ -1002,7 +1013,12 @@ class AttributeRowWidget(qt.QWidget):
         self.name_label.setToolTip(tooltip)
         self.input_indicator.setToolTip(tooltip)
         self.editor.setToolTip(tooltip)
-        self.align_action.setEnabled(editable and binding.is_mixed and defined)
+        can_align = (
+            self.selection_count > 1
+            if self.representative_only
+            else binding.is_mixed
+        )
+        self.align_action.setEnabled(editable and can_align and defined)
 
     def _align_values(self) -> None:
         """選択属性を明示した場合だけ、表示ノードの値へ揃える。"""
@@ -1634,6 +1650,7 @@ class ChannelBoxWidget(qt.QWidget):
         self.mode_combo.addItem(
             "カスタムフィルター設定", "custom_filter_setup"
         )
+        self.mode_combo.addItem("値編集（多数ノード）", "bulk_values")
         self.mode_combo.setAccessibleName("表示モード")
         self.filter_combo = qt.QComboBox(self)
         self._populate_filter_combo()
@@ -1970,7 +1987,12 @@ class ChannelBoxWidget(qt.QWidget):
     def _change_mode(self, index: int) -> None:
         """編集中の値を通常のフォーカス移動で確定してから表示を切り替える。"""
         mode = self.mode_combo.itemData(index)
-        if mode not in ("values", "states", "custom_filter_setup"):
+        if mode not in (
+            "values",
+            "bulk_values",
+            "states",
+            "custom_filter_setup",
+        ):
             return
         if (
             self.controller.mode == "custom_filter_setup"
@@ -2190,6 +2212,11 @@ class ChannelBoxWidget(qt.QWidget):
             selection_tooltip = (
                 f"選択: {len(names)} ノード（末尾が基準）\n" + "\n".join(names)
             )
+            if self.controller.mode == "bulk_values":
+                selection_tooltip = (
+                    "表示は基準ノードのみ。操作対象は各メニューの規則に従います\n"
+                    + selection_tooltip
+                )
             self.node_name_edit.setToolTip(selection_tooltip)
             if len(names) > 1:
                 self.selection_count_label.setText(f"{len(names)} ノード")
@@ -2831,9 +2858,10 @@ class ChannelBoxWidget(qt.QWidget):
                 action.setEnabled(False)
             return
         has_nodes = bool(self.controller.node_names)
-        has_value_selection = self.controller.mode == "values" and bool(
-            self.table_view.selected_keys()
-        )
+        has_value_selection = self.controller.mode in (
+            "values",
+            "bulk_values",
+        ) and bool(self.table_view.selected_keys())
         can_paste = has_nodes and self.controller.can_paste_values()
         self.copy_all_values_action.setEnabled(has_nodes)
         self.copy_selected_values_action.setEnabled(
@@ -3073,7 +3101,11 @@ class ChannelBoxWidget(qt.QWidget):
             any(
                 isinstance(row, ChannelRow)
                 and (row.attribute.path, row.attribute.kind) in selected
-                and row.binding.is_mixed
+                and (
+                    len(self.controller.node_names) > 1
+                    if self.controller.mode == "bulk_values"
+                    else row.binding.is_mixed
+                )
                 and row.binding.view_model.set_value_command.can_execute
                 and (
                     not isinstance(row.binding, MayaEnumPlugsBinding)
@@ -3194,6 +3226,8 @@ class ChannelBoxWidget(qt.QWidget):
                         len(names),
                         self.table_view.viewport(),
                         single_step=self._saved_single_step(key),
+                        representative_only=self.controller.mode
+                        == "bulk_values",
                         align_callback=partial(
                             self._run_selected_action, "align", key
                         ),
@@ -3389,6 +3423,7 @@ class ChannelBoxWidget(qt.QWidget):
             [
                 TableRow(
                     key=(widget.row.attribute.path, widget.row.attribute.kind),
+                    direct_numeric_input=self.controller.mode == "bulk_values",
                     widget=widget,
                     name_label=widget.name_label,
                     value_field=(
