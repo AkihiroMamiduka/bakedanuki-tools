@@ -7,6 +7,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Maya 2027のPyright型検査エラー5件を解消。
+  カスタムフィルター設定の`QSplitter.setSizes()`はQt呼び出しの境界で引数型を明示し、
+  テストの`QLayout.itemAt()`は項目の存在を確認してからWidgetを取得する。
+  分割領域の設定値・UI動作・scene・保存設定は変更しない。
+
 ### Changed
 
 - utilのパス解決API改名に合わせ、3ツールのアイコン定義を`resolve_relative_path()`へ変更。

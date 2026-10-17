@@ -484,10 +484,20 @@ Maya 2025本体の隔離processでは46工程の操作結果が成功し、
 
 ```powershell
 .\scripts\typecheck.cmd
+.\scripts\typecheck.cmd -MayaVersion 2026
+.\scripts\typecheck.cmd -MayaVersion 2027
 ```
 
 `pyrightconfig.json` は package 本体と tests を strict mode で検査し、Maya stub は sibling
 の `bakedanuki-util/typings` を利用します。
+
+Qtの型情報は選択したMayaに同梱されたPySide6から取得するため、version間で差があります。
+Maya 2027の`QSplitter.setSizes()`は同梱stubから引数型を取得できないため、
+使用箇所で`getattr()`と局所的な`cast(Callable[[list[int]], None], ...)`を使い、
+整数リストを受け取るQt APIの境界で型を確定します。
+分割領域の設定値と実際のQt呼び出しは同じままです。
+`QLayout.itemAt()`など項目がない場合に`None`を返すAPIは、
+戻り値を変数へ受けて存在を確認してから利用します。
 
 ## Formatting And Combined Check
 
