@@ -3,16 +3,25 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from typing import cast
+from collections.abc import Callable, Iterator, Sequence
+from typing import Literal, cast
 
 import pytest
 from maya import cmds
 
 from bd_util.maya.node.inspection import ScalarAttributeInfo
-from bd_util.maya.ui import MayaEnumPlugsBinding, MayaScalarValueTransfer
+from bd_util.maya.ui import (
+    MayaEditSession,
+    MayaEnumPlugsBinding,
+    MayaEnumValueEdit,
+    MayaPlugsValueEdit,
+    MayaScalarValueTransfer,
+)
+from bd_util.maya.ui.binding import scalar_value_transfer as scalar_transfer
+from bd_util.maya.ui.binding._enum_plug_value import EnumPlugValue
 from bd_util.ui import (
     EnumComboBox,
+    EnumDefinition,
     FloatValueStepSpinBox,
     IntSliderSpinBox,
     StringLineEdit,
@@ -339,18 +348,29 @@ def test_same_enum_item_activation_edits_other_nodes(
     assert _values("mode") == [0, 1]
 
 
-def test_thousand_joint_draw_styles_apply_once_with_linear_definition_reads(
-    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("attribute", ["drawStyle", "probeEnum"])
+def test_thousand_joint_enums_apply_once_with_linear_definition_reads(
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    attribute: str,
 ) -> None:
-    """千個の独立jointの標準enumを一回で編集し、定義取得と一時Bindingを抑える。"""
+    """千jointの標準・動的enumを一回で編集し、定義取得と一時Bindingを抑える。"""
     nodes = tuple(
         cmds.createNode("joint", name=f"bulkDrawStyle{index}")
         for index in range(1000)
     )
-    cmds.setAttr(nodes[-1] + ".drawStyle", channelBox=True)
+    if attribute == "probeEnum":
+        for node in nodes:
+            cmds.addAttr(
+                node,
+                longName=attribute,
+                attributeType="enum",
+                enumName="A:B:C",
+            )
+    cmds.setAttr(nodes[-1] + "." + attribute, channelBox=True)
     cmds.select(*nodes, replace=True)
     _events()
-    row = _row(editor, "drawStyle")
+    row = _row(editor, attribute)
     view = row.editor
     assert isinstance(view, EnumComboBox)
     assert len(row.row.binding.target_states) == 1
@@ -360,17 +380,18 @@ def test_thousand_joint_draw_styles_apply_once_with_linear_definition_reads(
     cmds.flushUndo()
 
     # 時間制限に頼らず、実際のMaya定義問い合わせの二乗増加を早期に検出する
-    original_query = cast(Callable[..., object], cmds.attributeQuery)
+    original_definition = EnumPlugValue.read_definition
     definition_reads = 0
-    definition_budget = 20 * len(nodes)
+    definition_budget = 40 * len(nodes)
 
-    def query_definition(*args: object, **kwargs: object) -> object:
-        """drawStyleの定義取得を数え、全件走査の繰り返しを上限で止める。"""
+    def query_definition(
+        value: EnumPlugValue, *, refresh: bool = False
+    ) -> EnumDefinition:
+        """定義の実読取りを数え、全件走査の繰り返しを上限で止める。"""
         nonlocal definition_reads
-        if args and args[0] == "drawStyle" and kwargs.get("listEnum"):
-            definition_reads += 1
-            assert definition_reads <= definition_budget
-        return original_query(*args, **kwargs)
+        definition_reads += 1
+        assert definition_reads <= definition_budget
+        return original_definition(value, refresh=refresh)
 
     original_create = cast(
         Callable[..., MayaEnumPlugsBinding],
@@ -390,7 +411,7 @@ def test_thousand_joint_draw_styles_apply_once_with_linear_definition_reads(
         temporary.append((binding, monitor, len(binding.target_states)))
         return binding
 
-    monkeypatch.setattr(cmds, "attributeQuery", query_definition)
+    monkeypatch.setattr(EnumPlugValue, "read_definition", query_definition)
     monkeypatch.setattr(
         editor.controller, "_create_enum_binding", create_binding
     )
@@ -403,7 +424,7 @@ def test_thousand_joint_draw_styles_apply_once_with_linear_definition_reads(
     assert target_count == len(nodes)
     assert binding.is_disposed
     assert 0 < definition_reads <= definition_budget
-    assert all(cmds.getAttr(node + ".drawStyle") == 1 for node in nodes)
+    assert all(cmds.getAttr(node + "." + attribute) == 1 for node in nodes)
     assert len(row.row.binding.target_states) == 1
     assert not row.row.binding.is_disposed
     _events()
@@ -411,12 +432,85 @@ def test_thousand_joint_draw_styles_apply_once_with_linear_definition_reads(
     # 一操作のUndo/Redoで全件を復元し、UI同期が再適用を起こさないことを確認する
     cmds.undo()
     _events()
-    assert all(cmds.getAttr(node + ".drawStyle") == 0 for node in nodes)
+    assert all(cmds.getAttr(node + "." + attribute) == 0 for node in nodes)
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
     cmds.redo()
     _events()
-    assert all(cmds.getAttr(node + ".drawStyle") == 1 for node in nodes)
+    assert all(cmds.getAttr(node + "." + attribute) == 1 for node in nodes)
     assert sum(not monitored for _, monitored, _ in temporary) == 1
+
+
+@pytest.mark.parametrize("mode", ["values", "bulk_values"])
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "enum",
+        "align_selected",
+        "align_filtered",
+        "paste_all",
+        "paste_filtered",
+        "paste_selected_single",
+        "paste_selected_multi",
+    ],
+)
+def test_enum_edit_paths_use_operation_validation_only_in_bulk_mode(
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: ChannelBoxMode,
+    operation: str,
+) -> None:
+    """enum入力・混合行揃え・各Paste経路の検証方針を表示モードごとに保つ。"""
+    editor.controller.set_mode(mode)
+    _events()
+    memory = _MemoryClipboard()
+    monkeypatch.setattr(editor.controller, "_value_clipboard", memory)
+    original_apply = controller_module.apply_plugs_values
+    policies: list[Literal["per_write", "operation"]] = []
+
+    def apply_and_record(
+        edits: Sequence[MayaPlugsValueEdit],
+        *,
+        edit_session: MayaEditSession | None = None,
+        enum_validation: Literal["per_write", "operation"] = "per_write",
+    ) -> bool:
+        """実適用を維持し、enumを含む要求へ渡した検証方針を記録する。"""
+        assert any(isinstance(edit, MayaEnumValueEdit) for edit in edits)
+        policies.append(enum_validation)
+        return original_apply(
+            edits,
+            edit_session=edit_session,
+            enum_validation=enum_validation,
+        )
+
+    monkeypatch.setattr(
+        controller_module, "apply_plugs_values", apply_and_record
+    )
+    monkeypatch.setattr(
+        scalar_transfer, "apply_plugs_values", apply_and_record
+    )
+    keys = _keys(editor, "free", "mode")
+    if operation == "enum":
+        enum_keys = _keys(editor, "mode")
+        assert editor.controller.apply_enum_values(enum_keys, enum_keys[0], 2)
+    elif operation == "align_selected":
+        assert editor.controller.align_selected_values(keys)
+    elif operation == "align_filtered":
+        assert editor.controller.align_filtered_values("keyable")
+    else:
+        copy_keys = (
+            _keys(editor, "mode")
+            if operation == "paste_selected_single"
+            else keys
+        )
+        editor.controller.copy_selected_values(copy_keys)
+        if operation == "paste_all":
+            assert editor.controller.paste_copied_values()
+        elif operation == "paste_filtered":
+            assert editor.controller.paste_copied_values("keyable")
+        else:
+            assert editor.controller.paste_copied_values_to_selected(copy_keys)
+    assert policies == ["operation" if mode == "bulk_values" else "per_write"]
+    assert _values("mode") == ([2, 2] if operation == "enum" else [1, 1])
 
 
 def test_scalar_types_edit_all_nodes_and_skip_changed_enum_definition(

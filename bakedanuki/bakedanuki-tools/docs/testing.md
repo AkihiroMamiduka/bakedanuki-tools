@@ -430,6 +430,11 @@ utilは`verify.cmd`が成功し、3 versionの型contract、Maya 2025 full pytes
 1000jointの`drawStyle`は実キー入力一回で全対象を編集し、Undo／Redoで復元することを
 確認します。共有enum定義の取得回数が対象数に比例する上限内に収まり、操作時の一時Bindingが
 `monitor=False`で作られて確実に破棄されることも検証します。
+独立したカスタムenumも1000ノードの実キー入力、Undo／Redo、定義取得回数の線形上限で
+検証します。明示入力・選択属性／フィルター対象の値揃え・三つの値Paste APIが、
+多数ノードモードでは`enum_validation="operation"`、通常モードでは`"per_write"`を
+使うことを固定します。操作途中の定義変更と終了時確認による復旧は、utilの
+`tests/maya/ui/test_enum_operation_validation.py`で別行・readonly・同値対象も含めて確認します。
 経過時間そのものをruntime testの固定閾値にせず、属性取得と対象範囲の契約を固定します。
 
 上記の本体runnerは現在の実装を計測します。比較する場合は変更前後で同じMaya version、

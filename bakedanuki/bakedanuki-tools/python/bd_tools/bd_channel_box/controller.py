@@ -302,6 +302,11 @@ class ChannelBoxController(qt.QObject):
         """値入力・状態設定・共有フィルター設定の表示モードを返す。"""
         return self._mode
 
+    @property
+    def _enum_validation(self) -> Literal["per_write", "operation"]:
+        """多数ノードの明示入力だけで操作単位のenum検証を使う。"""
+        return "operation" if self._mode == "bulk_values" else "per_write"
+
     def set_mode(self, mode: ChannelBoxMode) -> None:
         """連続編集を終了し、属性を書き換えずに操作する状態を切り替える。"""
         if mode not in (
@@ -1840,7 +1845,9 @@ class ChannelBoxController(qt.QObject):
                 )
                 continue
             edits.append(MayaEnumValueEdit(row.binding, value))
-        changed = apply_plugs_values(edits)
+        changed = apply_plugs_values(
+            edits, enum_validation=self._enum_validation
+        )
         self._report_excluded(excluded)
         return changed
 
@@ -1948,7 +1955,9 @@ class ChannelBoxController(qt.QObject):
                 edits.append(MayaStringValueEdit(binding, binding.value))
             else:
                 edits.append(MayaFloatValueEdit(binding, binding.value))
-        changed = apply_plugs_values(edits)
+        changed = apply_plugs_values(
+            edits, enum_validation=self._enum_validation
+        )
         self._report_excluded(excluded)
         return changed
 
@@ -2115,7 +2124,10 @@ class ChannelBoxController(qt.QObject):
         transfer = self._value_clipboard.read()
         if display_filter == "all":
             return apply_scalar_value_transfer(
-                self.node_names, transfer, edit_connected=True
+                self.node_names,
+                transfer,
+                edit_connected=True,
+                enum_validation=self._enum_validation,
             ).changed
         paths, _filtered_count, _base_excluded = (
             self._paste_paths_for_display_filter(transfer, display_filter)
@@ -2127,6 +2139,7 @@ class ChannelBoxController(qt.QObject):
             paths,
             transfer,
             edit_connected=True,
+            enum_validation=self._enum_validation,
         ).changed
 
     def _paste_paths_for_display_filter(
@@ -2192,6 +2205,7 @@ class ChannelBoxController(qt.QObject):
                 paths,
                 transfer,
                 edit_connected=True,
+                enum_validation=self._enum_validation,
             )
         else:
             result = apply_scalar_value_transfer_to_paths(
@@ -2199,6 +2213,7 @@ class ChannelBoxController(qt.QObject):
                 paths,
                 transfer,
                 edit_connected=True,
+                enum_validation=self._enum_validation,
             )
         return result.changed
 
