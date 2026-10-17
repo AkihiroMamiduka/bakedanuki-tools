@@ -16,9 +16,10 @@ pushを完了しました。確認したMaya versionは未申告です。
 pushを完了しました。確認したMaya versionは未申告です。
 カスタムフィルターの登録・作成・編集、候補と表示順の複数選択も2026-10-07に
 利用者が動作確認とpushの完了を報告しました。確認したMaya versionは未申告です。
-byte・short・long属性の初回対応は、利用者による操作確認とpushが完了しました。
-確認したMaya versionは未申告です。追加の接続属性編集とEnter・初回クリック操作の
-統一は実装済みで、この追加範囲の利用者によるMaya本体確認はこれからです。
+byte・short・long属性、接続属性編集とEnter・初回クリック操作、整数Stepの保存、
+整数Slider組込みとbyte範囲判定の修正まで、利用者による操作確認・pushが完了しました
+（2026-10-16）。確認したMaya versionは未申告です。今回合意した整数対応の開発は完了しています。
+次回の開発時は[整数対応の完了記録と開発引き継ぎ](#整数対応の完了と開発引き継ぎ)を参照してください。
 
 bool・byte／short／long・float系・enum・stringの複数ノード編集、step操作、表示・ロックの切替、
 5種類の標準表示フィルターとJSONによるカスタムフィルター、
@@ -49,13 +50,16 @@ bd_channel_box.close()
 本変更に対応した `bakedanuki-util` と組み合わせて使用してください。
 
 利用するutilには、複数属性用の`MayaBoolPlugsBinding` / `MayaFloatPlugsBinding`、
-`MayaEnumPlugsBinding`、`MayaStringPlugsBinding`、`EnumComboBox`、`StringLineEdit`、
+`MayaIntPlugsBinding`、`MayaEnumPlugsBinding`、`MayaStringPlugsBinding`、
+`IntValueStepSpinBox`、`IntSliderSpinBox`、`IntStepProfile`、
+`EnumComboBox`、`StringLineEdit`、
 `read_enum_definition()`、enum・string対応の属性列挙、
 属性列挙・選択取得、`BoolCheckBox`、`FloatValueStepSpinBox`の幅指定、
 `FloatSliderSpinBox.layout_order`、`MayaChannelStateBinding`、`MayaEditSession`、
 `RadioButtonSweep` / `CheckBoxSweep`、`apply_plugs_values()`と
 `MayaFloatValueEdit` / `MayaBoolValueEdit` / `MayaEnumValueEdit` /
-`MayaStringValueEdit`、接続属性編集の`edit_connected`引数と
+`MayaStringValueEdit` / `MayaIntValueEdit` / `MayaIntOffsetEdit`、
+整数Slider選別用の`MayaIntPlugsBinding.hard_limits`、接続属性編集の`edit_connected`引数と
 `MayaPlugTargetState.edit_description`、`connected_plug_edit_reason()`、
 時刻変更による操作終了の`FloatSlider.finish_edit()`、
 ドッキングとreloadの基盤が必要です。
@@ -2261,7 +2265,8 @@ bdChannelBoxへの整数Slider組込みは、ロードマップの第三段階�
 第一段階の利用者による操作確認・pushは完了しました（2026-10-16時点、確認version未申告）。
 第二段階としてutilに`IntSliderSpinBox`・`IntRangeSliderSpinBox`とMin／Max／Stepの
 保存・復元、操作サンプルを追加しました。第二段階の利用者確認・pushも完了しました（2026-10-16時点）。
-第三段階としてbdChannelBoxへ整数Sliderを組込みました。利用者確認はこれからです。
+第三段階のbdChannelBoxへの整数Slider組込みも、byte範囲判定の修正を含めて
+利用者確認・pushが完了しました（2026-10-16、確認したMaya versionは未申告）。
 
 ### 整数Sliderの操作確認用scene
 
@@ -2326,3 +2331,32 @@ byteの型既定範囲0～255を両端の組で判定するようutilを修正�
 runnerは終了code 0です。結果保存後の終了待ちが完了せず、runnerが専用processを
 終了したためMaya processの終了codeは1です。正常終了と2026／2027本体の画面操作は未確認です。
 この修正後のtools全runtime testの再実行はしていません。上記47件は関連testの結果です。
+
+### 整数対応の完了と開発引き継ぎ
+
+2026-10-16に利用者から整数Sliderの表示・操作とbyte範囲判定の修正について動作確認・push完了の
+報告を受けました。完了時点はtoolsが`3aee7c3`、utilが`233f2b47`です。
+確認したMaya versionと個別の操作条件は未申告です。
+単一整数MVVMの合意範囲に未完了の実装予定はありません。
+
+- Sliderは代表属性の`hard_limits`が両側あり、`Min < Max`の場合に表示します。
+  入力制約の`IntPresentation`をSlider選別へ流用せず、byteの全範囲0～255だけを除外します。
+  `objectColor`の0～7と`overrideColor`の0～31を表示確認の代表例として維持します。
+- 一括入力は全対象の制約を先に検証し、代表以外の狭い制限も尊重します。
+  ドラッグは一回Undoへまとめ、時刻・選択・ロックなどの変更時に操作を終了します。
+- Slider表示中も保存済みStepを保持し、Step表示への復帰で復元します。
+  選択Step操作はStep欄のある行を対象にし、全属性リセットは非表示の保存値も削除します。
+- 行の`editor`は`IntSliderSpinBox | IntValueStepSpinBox`です。
+  共通の値欄は`editor.spin_box`を使い、SliderやStep固有の操作前に型を分岐します。
+- util更新時は`bd_tools.reload_package(reload_util=True)`で反映します。
+  今回の完了時点ではscene・設定・clipboardの移行は不要です。
+
+回帰検証はtoolsの`tests/maya/test_bd_channel_box_int.py`と
+`test_bd_channel_box_int_slider.py`、型契約の`tests/typecheck/bd_channel_box_contract.py`を入口にします。
+utilの整数binding・Step・Slider・接続編集と保存も変更する場合は、utilの
+`docs/ui/int_binding.md`の開発引き継ぎと`scripts/verify.cmd`を使用します。
+上記の自動検証とMaya 2025本体の操作結果は、利用者報告や全versionの本体確認とは分けて扱います。
+
+整数2／3成分の一体MVVM、64-bit、time、配列・compound親は今回の対象外です。
+Slider操作範囲のカスタマイズや一般接続の編集は用途を確認してから検討する任意候補で、
+確定した次の実装予定ではありません。
