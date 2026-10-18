@@ -1766,6 +1766,9 @@ class ChannelBoxWidget(qt.QWidget):
 
         # 選択・表示更新と、ユーザーによる値変更の経路を分離する
         self.controller = ChannelBoxController(self)
+        self.table_view.selection_changed.connect(
+            self._attribute_selection_changed
+        )
         self.table_view.numeric_input_requested.connect(
             self._apply_numeric_input
         )
@@ -2232,6 +2235,13 @@ class ChannelBoxWidget(qt.QWidget):
             self.header_label.setToolTip("")
             self.selection_count_label.hide()
 
+    def _attribute_selection_changed(self) -> None:
+        """属性行の選択変更では、待機対象と古いドラッグ入力を終了する。"""
+        was_editing = self.controller.value_edit_session.is_editing
+        self.controller.finish_value_edit()
+        if was_editing:
+            self._interrupt_value_input(True)
+
     def _cancel_transient_input(self) -> None:
         """Bindingを破棄する前に、古い選択への入力とメニューを終了する。"""
         self._search_timer.stop()
@@ -2439,6 +2449,22 @@ class ChannelBoxWidget(qt.QWidget):
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
             self._show_error(str(error))
 
+    def _begin_slider_edit(
+        self, editor: FloatSliderSpinBox | IntSliderSpinBox
+    ) -> None:
+        """wheelは単発Undo、押下・キー操作は連続Undoとして開始する。"""
+        self.controller.begin_value_edit(
+            reuse_targets=not editor.slider.is_wheel_editing
+        )
+
+    def _finish_slider_edit(
+        self, editor: FloatSliderSpinBox | IntSliderSpinBox
+    ) -> None:
+        """wheelの正常終了だけ、次の入力へ準備した対象を引き継ぐ。"""
+        self.controller.finish_value_edit(
+            retain_targets=editor.slider.is_wheel_editing and self.isVisible()
+        )
+
     def _configure_value_input(
         self, widget: AttributeRowWidget, key: tuple[str, str]
     ) -> None:
@@ -2459,10 +2485,10 @@ class ChannelBoxWidget(qt.QWidget):
                     partial(self._request_slider_value, key, binding, editor)
                 )
                 editor.slider.editStarted.connect(
-                    self.controller.begin_value_edit
+                    partial(self._begin_slider_edit, editor)
                 )
                 editor.slider.editFinished.connect(
-                    self.controller.finish_value_edit
+                    partial(self._finish_slider_edit, editor)
                 )
         elif isinstance(editor, (IntValueStepSpinBox, IntSliderSpinBox)):
             editor.spin_box.setValueRequestHandler(
@@ -2476,10 +2502,10 @@ class ChannelBoxWidget(qt.QWidget):
                     partial(self._request_int_slider_value, key, editor)
                 )
                 editor.slider.editStarted.connect(
-                    self.controller.begin_value_edit
+                    partial(self._begin_slider_edit, editor)
                 )
                 editor.slider.editFinished.connect(
-                    self.controller.finish_value_edit
+                    partial(self._finish_slider_edit, editor)
                 )
         elif isinstance(editor, BoolCheckBox):
             editor.setValueRequestHandler(
@@ -3565,6 +3591,16 @@ class ChannelBoxWidget(qt.QWidget):
         self._show_operation_report(
             "対象外: " + " / ".join(excluded) if excluded else ""
         )
+
+    def hideEvent(self, event: qt.QtGui.QHideEvent) -> None:
+        """非表示になった時点で、待機中の数値対象も解放する。"""
+        self.controller.finish_value_edit()
+        super().hideEvent(event)
+
+    def closeEvent(self, event: qt.QtGui.QCloseEvent) -> None:
+        """閉じた画面へ対象とUndoの保持を持ち越さない。"""
+        self.controller.finish_value_edit()
+        super().closeEvent(event)
 
     def dispose(self) -> None:
         """画面の入力と監視を即時に終了する。"""

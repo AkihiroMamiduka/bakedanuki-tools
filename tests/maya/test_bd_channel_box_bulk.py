@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
+from math import isclose
 from typing import Literal, cast
 
 import pytest
@@ -913,3 +914,713 @@ def test_thousand_node_nine_attribute_paste_avoids_temporary_view_models(
         for path in paths
     )
     _events()
+
+
+def _record_bulk_drag_rows(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> list[controller_module.ChannelRow]:
+    """一時行だけを記録し、常設行の再生成と区別する。"""
+    original = cast(
+        Callable[..., controller_module.ChannelRow],
+        getattr(editor.controller, "_create_value_row"),
+    )
+    created: list[controller_module.ChannelRow] = []
+
+    def create(
+        attribute: ScalarAttributeInfo,
+        targets: list[str],
+        excluded: list[str],
+        *,
+        monitor: bool = True,
+    ) -> controller_module.ChannelRow:
+        """本来の生成を行い、全対象を持つ一時行だけを保持する。"""
+        row = original(attribute, targets, excluded, monitor=monitor)
+        if not monitor:
+            created.append(row)
+        return row
+
+    monkeypatch.setattr(editor.controller, "_create_value_row", create)
+    return created
+
+
+def _assert_bulk_drag_rows_disposed(
+    rows: Sequence[controller_module.ChannelRow],
+) -> None:
+    """Qtの即時・遅延破棄のどちらでも旧行が入力不能か確認する。"""
+    assert rows
+    assert all(
+        not qt.isValid(row.binding) or row.binding.is_disposed for row in rows
+    )
+
+
+def test_bulk_drag_reuses_resolution_and_releases_between_gestures(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ドラッグ内だけ全対象を一度解決し、表示監視とUndoの区切りを保つ。"""
+    widget = _row(editor, "count")
+    view = widget.editor
+    assert isinstance(view, IntSliderSpinBox)
+    assert widget.row.binding.target_states[0].input_state is not None
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    original = controller_module.inspect_scalar_attributes
+    inspected: list[str] = []
+
+    def inspect(
+        name: str, *, paths: Sequence[str] | None = None
+    ) -> tuple[ScalarAttributeInfo, ...]:
+        """実際の属性解決だけを数え、キャッシュ利用との違いを固定する。"""
+        inspected.append(name)
+        return original(name, paths=paths)
+
+    monkeypatch.setattr(
+        controller_module, "inspect_scalar_attributes", inspect
+    )
+    view.slider.setSliderDown(True)
+    for value in (20, 30, 40):
+        view.slider.setValue(value)
+        assert _values("count") == [value, value]
+        assert len(created) == 1 and len(inspected) == 2
+        assert not created[0].binding.is_disposed
+        assert all(
+            target.input_state is None
+            for target in created[0].binding.target_states
+        )
+    view.slider.setSliderDown(False)
+    _assert_bulk_drag_rows_disposed(created)
+    assert not editor.controller.value_edit_session.is_editing
+    assert widget.row.binding.target_states[0].input_state is not None
+    view.slider.setSliderDown(True)
+    view.slider.setValue(50)
+    assert len(created) == 2 and len(inspected) == 4
+    assert created[0].binding is not created[1].binding
+    view.slider.setSliderDown(False)
+    _assert_bulk_drag_rows_disposed(created)
+    cmds.undo()
+    _events()
+    assert _values("count") == [40, 40]
+    cmds.undo()
+    _events()
+    assert _values("count") == [1, 3]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_bulk_drag_rejects_recreated_secondary_attribute(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ドラッグ中の属性再作成へ旧対象を接続せず、先行入力を維持する。"""
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    view = _row(editor, "count").editor
+    assert isinstance(view, IntSliderSpinBox)
+    view.slider.setSliderDown(True)
+    view.slider.setValue(20)
+    cmds.deleteAttr("bulkOther.count")
+    cmds.addAttr(
+        "bulkOther",
+        longName="count",
+        attributeType="long",
+        minValue=0,
+        maxValue=100,
+        keyable=True,
+    )
+    _set("bulkOther.count", 99)
+    view.slider.setValue(30)
+    assert _values("count") == [99, 20]
+    assert len(created) == 1
+    _assert_bulk_drag_rows_disposed(created)
+    assert not editor.controller.value_edit_session.is_editing
+    assert not view.slider.isSliderDown()
+    assert editor.message_label.isVisible()
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["mode", "time", "selection", "filter", "close", "hide", "dispose"],
+)
+def test_bulk_drag_interruption_releases_cached_targets(
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    reason: str,
+) -> None:
+    """画面や操作対象の切替で一時行を破棄し、後続Undoへ操作を混ぜない。"""
+    marker = cmds.createNode(
+        "network", name="bulkDragUndoMarker", skipSelect=True
+    )
+    cmds.addAttr(marker, longName="value", attributeType="double")
+    cmds.flushUndo()
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    view = _row(editor, "count").editor
+    assert isinstance(view, IntSliderSpinBox)
+    view.slider.setSliderDown(True)
+    view.slider.setValue(20)
+    assert editor.controller.value_edit_session.is_editing
+    if reason == "mode":
+        editor.controller.set_mode("states")
+    elif reason == "time":
+        cmds.currentTime(cmds.currentTime(query=True) + 1)
+    elif reason == "selection":
+        cmds.select("bulkOther", replace=True)
+    elif reason == "filter":
+        editor.controller.set_attribute_filter("hidden")
+    elif reason == "close":
+        editor.close()
+    elif reason == "dispose":
+        editor.controller.dispose()
+    else:
+        editor.hide()
+    _events()
+    _assert_bulk_drag_rows_disposed(created)
+    assert not editor.controller.value_edit_session.is_editing
+    if qt.isValid(view):
+        assert not view.slider.isSliderDown()
+    _set(marker + ".value", 7)
+    cmds.undo()
+    _events()
+    assert cmds.getAttr(marker + ".value") == 0
+    assert _values("count") == [20, 20]
+
+
+@pytest.mark.parametrize("direct", [False, True])
+def test_bulk_drag_rechecks_secondary_lock_and_new_range(
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    direct: bool,
+) -> None:
+    """対象を再利用してもlockと新しい範囲を読み、失敗前の確定値を保つ。"""
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    view = _row(editor, "count").editor
+    assert isinstance(view, IntSliderSpinBox)
+    view.slider.setSliderDown(True)
+    view.slider.setValue(20)
+    cmds.setAttr("bulkOther.count", lock=True)
+    view.slider.setValue(30)
+    assert _values("count") == [20, 30]
+    cmds.setAttr("bulkOther.count", lock=False)
+    view.slider.setValue(40)
+    assert _values("count") == [40, 40]
+    assert len(created) == 1
+    cmds.addAttr("bulkOther.count", edit=True, maxValue=45)
+    if direct:
+        with pytest.raises(ValueError):
+            editor.controller.apply_numeric_values(_keys(editor, "count"), 50)
+    else:
+        view.slider.setValue(50)
+        assert not view.slider.isSliderDown()
+        assert editor.message_label.isVisible()
+    assert _values("count") == [40, 40]
+    _assert_bulk_drag_rows_disposed(created)
+    assert not editor.controller.value_edit_session.is_editing
+    cmds.undo()
+    _events()
+    assert _values("count") == [1, 3]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_bulk_slider_wheel_reuses_targets_and_keeps_separate_undo(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """wheel三イベントの対象は二回だけ準備し、Undoは個別に維持する。"""
+    view = _row(editor, "count").editor
+    assert isinstance(view, IntSliderSpinBox)
+    view.slider.setFocus()
+    _events()
+    assert view.slider.hasFocus()
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    snapshots: list[list[object]] = []
+    for index in range(3):
+        event = qt.QtGui.QWheelEvent(
+            qt.QPointF(5, 5),
+            qt.QPointF(5, 5),
+            qt.QPoint(),
+            qt.QPoint(0, 120),
+            qt.Qt.MouseButton.NoButton,
+            qt.Qt.KeyboardModifier.NoModifier,
+            qt.Qt.ScrollPhase.NoScrollPhase,
+            False,
+        )
+        qt.QApplication.sendEvent(view.slider, event)
+        snapshots.append(_values("count"))
+        assert snapshots[-1][0] == snapshots[-1][1]
+        assert len(created) == min(index + 1, 2)
+        _assert_bulk_drag_rows_disposed(created[:1])
+        if index:
+            assert not created[-1].binding.is_disposed
+        assert not editor.controller.value_edit_session.is_editing
+    assert snapshots[0] != [1, 3] and snapshots[1] != snapshots[0]
+    for expected in reversed(snapshots[:-1]):
+        cmds.undo()
+        _events()
+        assert _values("count") == expected
+    cmds.undo()
+    _events()
+    assert _values("count") == [1, 3]
+    _assert_bulk_drag_rows_disposed(created)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_other_numeric_operation_finishes_cached_drag_before_undo(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """別の増減入力はドラッグのcacheとUndoを閉じてから独立して適用する。"""
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    keys = _keys(editor, "count")
+    editor.controller.begin_value_edit()
+    editor.controller.apply_numeric_values(keys, 20)
+    assert editor.controller.offset_numeric_values(keys, 1)
+    _assert_bulk_drag_rows_disposed(created)
+    assert not editor.controller.value_edit_session.is_editing
+    assert _values("count") == [21, 21]
+    cmds.undo()
+    _events()
+    assert _values("count") == [20, 20]
+    cmds.undo()
+    _events()
+    assert _values("count") == [1, 3]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_bulk_drag_start_failure_closes_edit_session(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """対象監視の初期登録に失敗しても、未書込みの連続編集を終了する。"""
+
+    def fail_register(
+        _registry: controller_module.MayaCallbackRegistry, callback_id: int
+    ) -> int:
+        """作成済みの実callbackを除いてから登録失敗を再現する。"""
+        controller_module.om.MMessage.removeCallback(callback_id)
+        raise RuntimeError("test callback registration")
+
+    monkeypatch.setattr(
+        controller_module.MayaCallbackRegistry, "register", fail_register
+    )
+    editor.controller.begin_value_edit()
+    with pytest.raises(RuntimeError, match="test callback registration"):
+        editor.controller.apply_numeric_values(_keys(editor, "count"), 20)
+    assert not editor.controller.value_edit_session.is_editing
+    assert _values("count") == [1, 3]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_bulk_drag_key_change_never_resolves_replacement_at_old_ancestor_path(
+    editor: ChannelBoxWidget,
+) -> None:
+    """祖先改名後に行を切り替えても、旧pathへ作られた別nodeを編集しない。"""
+    parent = cmds.createNode(
+        "transform", name="bulkDragParent", skipSelect=True
+    )
+    cmds.parent("bulkOther", parent)
+    cmds.select("|bulkDragParent|bulkOther", "bulkReference", replace=True)
+    editor.refresh()
+    _events()
+    count_keys = _keys(editor, "count")
+    gain_keys = _keys(editor, "gain")
+    editor.controller.begin_value_edit()
+    editor.controller.apply_numeric_values(count_keys, 20)
+    cmds.rename(parent, "bulkDragRenamedParent")
+    old_parent = cmds.createNode(
+        "transform", name="bulkDragParent", skipSelect=True
+    )
+    replacement = cmds.createNode(
+        "transform", name="bulkOther", parent=old_parent, skipSelect=True
+    )
+    cmds.addAttr(
+        replacement, longName="gain", attributeType="double", keyable=True
+    )
+    _set("|bulkDragParent|bulkOther.gain", 99)
+    try:
+        editor.controller.apply_numeric_values(gain_keys, 7)
+    except RuntimeError:
+        # Mayaが選択変更も通知した場合は、旧行を終了して入力を拒否する
+        pass
+    finally:
+        editor.controller.finish_value_edit()
+    assert cmds.getAttr("|bulkDragParent|bulkOther.gain") == 99
+
+
+def _wheel(target: qt.QWidget, *, require_accepted: bool = True) -> None:
+    """同じ入力先へフォーカス付きの実wheelイベントを一刻み送る。"""
+    target.setFocus()
+    assert target.hasFocus()
+    event = qt.QtGui.QWheelEvent(
+        qt.QPointF(5, 5),
+        qt.QPointF(5, 5),
+        qt.QPoint(),
+        qt.QPoint(0, 120),
+        qt.Qt.MouseButton.NoButton,
+        qt.Qt.KeyboardModifier.NoModifier,
+        qt.Qt.ScrollPhase.NoScrollPhase,
+        False,
+    )
+    qt.QApplication.sendEvent(target, event)
+    if require_accepted:
+        assert event.isAccepted()
+
+
+def _assert_numeric_values(name: str, expected: Sequence[float | int]) -> None:
+    """数値属性の全対象を、浮動小数点の丸めだけ許容して比較する。"""
+    assert all(
+        isclose(cast(float, actual), value, abs_tol=1e-9)
+        for actual, value in zip(_values(name), expected, strict=True)
+    )
+
+
+def _wheel_targets(editor: ChannelBoxWidget) -> object | None:
+    """非公開の保持対象を、不透明な寿命確認用objectとして参照する。"""
+    return cast(object | None, getattr(editor.controller, "_bulk_value_cache"))
+
+
+def _wheel_pending_keys(editor: ChannelBoxWidget) -> object | None:
+    """初回入力の候補が中断後に残っていないか確認する。"""
+    return cast(
+        object | None, getattr(editor.controller, "_bulk_numeric_keys")
+    )
+
+
+def _wheel_timer(editor: ChannelBoxWidget) -> qt.QTimer:
+    """保持期限の非公開timerを、Qtの型境界で取り出す。"""
+    return cast(qt.QTimer, getattr(editor.controller, "_bulk_value_timer"))
+
+
+@pytest.mark.parametrize("name", ["free", "count"])
+def test_bulk_value_wheel_reuses_targets_and_preserves_relative_undo(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """floatと整数の値欄で差を保ち、三入力を別Undo・Redoで戻す。"""
+    view = _row(editor, name).editor
+    assert isinstance(view, (FloatValueStepSpinBox, IntSliderSpinBox))
+    delta = view.spin_box.singleStep()
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    inspected: list[str] = []
+    original = controller_module.inspect_scalar_attributes
+
+    def inspect(
+        node: str, *, paths: Sequence[str] | None = None
+    ) -> tuple[ScalarAttributeInfo, ...]:
+        """操作対象の照合が三入力目に再実行されないことを数える。"""
+        inspected.append(node)
+        return original(node, paths=paths)
+
+    monkeypatch.setattr(
+        controller_module, "inspect_scalar_attributes", inspect
+    )
+    for index in range(1, 4):
+        _wheel(view.spin_box)
+        _assert_numeric_values(name, [1 + index * delta, 3 + index * delta])
+        assert not editor.controller.value_edit_session.is_editing
+    assert len(created) == 2
+    assert len(inspected) == 4
+    assert not created[-1].binding.is_disposed
+    for index in range(2, -1, -1):
+        cmds.undo()
+        _assert_numeric_values(name, [1 + index * delta, 3 + index * delta])
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    for index in range(1, 4):
+        cmds.redo()
+        _assert_numeric_values(name, [1 + index * delta, 3 + index * delta])
+    _events()
+    _assert_bulk_drag_rows_disposed(created)
+
+
+def test_bulk_wheel_reads_current_value_step_and_lock_each_event(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """対象再利用中も外部値・Step・後続lockの変更を次の入力へ反映する。"""
+    view = _row(editor, "free").editor
+    assert isinstance(view, FloatValueStepSpinBox)
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    _wheel(view.spin_box)
+    _wheel(view.spin_box)
+    view.spin_box.setSingleStep(2)
+    _set("bulkOther.free", 37)
+    _wheel(view.spin_box)
+    assert cmds.getAttr("bulkOther.free") == 39
+    cmds.setAttr("bulkOther.free", lock=True)
+    _wheel(view.spin_box)
+    assert cmds.getAttr("bulkOther.free") == 39
+    cmds.setAttr("bulkOther.free", lock=False)
+    _wheel(view.spin_box)
+    assert cmds.getAttr("bulkOther.free") == 41
+    assert len(created) == 2
+
+
+@pytest.mark.parametrize("name", ["gain", "count"])
+def test_bulk_wheel_revalidates_secondary_range_and_clears_on_failure(
+    editor: ChannelBoxWidget, name: str
+) -> None:
+    """後続だけの範囲違反を毎回検証し、失敗時に全対象と保持期限を解放する。"""
+    keys = _keys(editor, name)
+    for _ in range(2):
+        assert editor.controller.offset_numeric_values(keys, 1)
+    before = _values(name)
+    cmds.addAttr(f"bulkOther.{name}", edit=True, maxValue=3)
+    with pytest.raises(ValueError):
+        editor.controller.offset_numeric_values(keys, 1)
+    assert _values(name) == before
+    assert _wheel_targets(editor) is None
+    assert _wheel_pending_keys(editor) is None
+    assert not _wheel_timer(editor).isActive()
+
+
+def test_bulk_wheel_multiple_rows_read_changed_display_units(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """複数型と単位の行でも、保持中の単位変更後に同じ表示差分を加える。"""
+    view = _row(editor, "free").editor
+    assert isinstance(view, FloatValueStepSpinBox)
+    view.spin_box.setSingleStep(1)
+    editor.table_view.select_keys(
+        _keys(editor, "free", "count", "translateX", "rotateX")
+    )
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    for _ in range(2):
+        _wheel(view.spin_box)
+    assert len(created) == 8
+    cmds.currentUnit(linear="m", angle="rad")
+    before_tx = cast(list[float], _values("translateX"))
+    before_rx = cast(list[float], _values("rotateX"))
+    _wheel(view.spin_box)
+    _assert_numeric_values("translateX", [value + 1 for value in before_tx])
+    _assert_numeric_values("rotateX", [value + 1 for value in before_rx])
+    _assert_numeric_values("count", [4, 6])
+    assert len(created) == 8
+
+
+def test_bulk_wheel_cache_registration_failure_releases_and_keeps_prior_undo(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """二入力目の監視開始失敗でも、前の単発Undoと対象解放を保つ。"""
+    keys = _keys(editor, "count")
+    assert editor.controller.offset_numeric_values(keys, 1)
+
+    def fail_register(
+        _registry: controller_module.MayaCallbackRegistry, callback_id: int
+    ) -> int:
+        """実際に作成されたcallbackを解放してから登録失敗を再現する。"""
+        controller_module.om.MMessage.removeCallback(callback_id)
+        raise RuntimeError("test wheel callback registration")
+
+    monkeypatch.setattr(
+        controller_module.MayaCallbackRegistry, "register", fail_register
+    )
+    with pytest.raises(RuntimeError, match="test wheel callback registration"):
+        editor.controller.offset_numeric_values(keys, 1)
+    assert _wheel_targets(editor) is None
+    assert _wheel_pending_keys(editor) is None
+    assert not _wheel_timer(editor).isActive()
+    assert _values("count") == [2, 4]
+    cmds.undo()
+    assert _values("count") == [1, 3]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_bulk_wheel_expiry_during_write_defers_target_disposal(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """書込み中に期限通知が再入しても対象を先に破棄せず、独立Undoを保つ。"""
+    view = _row(editor, "count").editor
+    assert isinstance(view, IntSliderSpinBox)
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    _wheel(view.spin_box)
+    _wheel(view.spin_box)
+    triggered = False
+
+    def expire(message: int, *_args: object) -> None:
+        """基準の変更時に、Qt待機処理へ再入した期限通知を再現する。"""
+        nonlocal triggered
+        if (
+            triggered
+            or not message & controller_module.om.MNodeMessage.kAttributeSet
+        ):
+            return
+        triggered = True
+        _wheel_timer(editor).timeout.emit()
+        assert not created[-1].binding.is_disposed
+
+    selection = controller_module.om.MSelectionList()
+    selection.add("bulkReference")
+    callback = controller_module.om.MNodeMessage.addAttributeChangedCallback(
+        selection.getDependNode(0), expire
+    )
+    try:
+        _wheel(view.spin_box)
+    finally:
+        controller_module.om.MMessage.removeCallback(callback)
+    assert triggered
+    assert _values("count") == [4, 6]
+    _assert_bulk_drag_rows_disposed(created)
+    assert _wheel_pending_keys(editor) is None
+    cmds.undo()
+    assert _values("count") == [3, 5]
+
+
+def test_bulk_wheel_expires_targets_and_starts_with_single_input_again(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """実timerの期限で監視を解放し、次の単発入力には対象を持ち越さない。"""
+    view = _row(editor, "count").editor
+    assert isinstance(view, IntSliderSpinBox)
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    _wheel(view.spin_box)
+    _wheel(view.spin_box)
+    _wheel_timer(editor).setInterval(5)
+    _wheel_timer(editor).start()
+    loop = qt.QtCore.QEventLoop()
+    stop = qt.QTimer()
+    stop.setSingleShot(True)
+    stop.timeout.connect(loop.quit)
+    stop.start(25)
+    loop.exec()
+    assert _wheel_targets(editor) is None
+    assert _wheel_pending_keys(editor) is None
+    _assert_bulk_drag_rows_disposed(created)
+    _wheel_timer(editor).setInterval(500)
+    _wheel(view.spin_box)
+    assert len(created) == 3
+    assert _wheel_targets(editor) is None
+    _assert_bulk_drag_rows_disposed(created)
+    _wheel(view.spin_box)
+    assert len(created) == 4
+    assert _wheel_targets(editor) is not None
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "rows",
+        "nodes",
+        "mode",
+        "filter",
+        "time",
+        "undo",
+        "hide",
+        "close",
+        "dispose",
+        "refresh",
+        "other",
+        "scene",
+    ],
+)
+def test_bulk_wheel_idle_targets_release_on_interruption(
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    reason: str,
+) -> None:
+    """Undoを開いていない待機中にも、操作条件と画面の切替で監視を解放する。"""
+    view = _row(editor, "count").editor
+    assert isinstance(view, IntSliderSpinBox)
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    _wheel(view.spin_box)
+    _wheel(view.spin_box)
+    assert _wheel_targets(editor) is not None
+    if reason == "rows":
+        editor.table_view.select_keys(_keys(editor, "free"))
+    elif reason == "nodes":
+        cmds.select("bulkOther", replace=True)
+    elif reason == "mode":
+        editor.controller.set_mode("values")
+    elif reason == "filter":
+        editor.controller.set_attribute_filter("all")
+    elif reason == "time":
+        cmds.currentTime(cmds.currentTime(query=True) + 1)
+    elif reason == "undo":
+        cmds.undo()
+    elif reason == "hide":
+        editor.hide()
+    elif reason == "close":
+        editor.close()
+    elif reason == "dispose":
+        editor.controller.dispose()
+    elif reason == "refresh":
+        editor.refresh()
+    elif reason == "other":
+        editor.controller.apply_bool_values(_keys(editor, "enabled"), True)
+    else:
+        cast(Callable[..., str], cmds.file)(new=True, force=True)
+    _events()
+    _assert_bulk_drag_rows_disposed(created)
+    assert _wheel_targets(editor) is None
+    assert _wheel_pending_keys(editor) is None
+    assert not _wheel_timer(editor).isActive()
+    assert not editor.controller.value_edit_session.is_editing
+
+
+def test_bulk_wheel_re_resolves_recreated_attribute_between_events(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """イベント間の同名再作成は旧Bindingを捨て、新しい現在値から加算する。"""
+    view = _row(editor, "count").editor
+    assert isinstance(view, IntSliderSpinBox)
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    _wheel(view.spin_box)
+    _wheel(view.spin_box)
+    cmds.deleteAttr("bulkOther.count")
+    cmds.addAttr(
+        "bulkOther",
+        longName="count",
+        attributeType="long",
+        minValue=0,
+        maxValue=100,
+        defaultValue=50,
+        keyable=True,
+    )
+    _wheel(view.spin_box)
+    assert _values("count") == [51, 6]
+    assert len(created) == 3
+    _assert_bulk_drag_rows_disposed(created)
+    assert _wheel_targets(editor) is None
+
+
+@pytest.mark.parametrize("prior_inputs", [0, 1, 2])
+@pytest.mark.parametrize("part", ["slider", "spin_box"])
+def test_bulk_wheel_recreation_during_write_rolls_back_surviving_targets(
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    prior_inputs: int,
+    part: str,
+) -> None:
+    """保持した対象の書込み中に同名再作成が起きても、別実体を書き換えない。"""
+    view = _row(editor, "count").editor
+    assert isinstance(view, IntSliderSpinBox)
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    target = view.slider if part == "slider" else view.spin_box
+    for _ in range(prior_inputs):
+        _wheel(target)
+    before = _values("count")
+    triggered = False
+
+    def replace(message: int, *_args: object) -> None:
+        """基準値の書込み直後に、後続の属性を別実体へ置き換える。"""
+        nonlocal triggered
+        if (
+            triggered
+            or not message & controller_module.om.MNodeMessage.kAttributeSet
+        ):
+            return
+        triggered = True
+        cmds.deleteAttr("bulkOther.count")
+        cmds.addAttr(
+            "bulkOther",
+            longName="count",
+            attributeType="long",
+            minValue=0,
+            maxValue=100,
+            defaultValue=77,
+            keyable=True,
+        )
+
+    selection = controller_module.om.MSelectionList()
+    selection.add("bulkReference")
+    node = selection.getDependNode(0)
+    callback = controller_module.om.MNodeMessage.addAttributeChangedCallback(
+        node, replace
+    )
+    try:
+        _wheel(target, require_accepted=False)
+    finally:
+        controller_module.om.MMessage.removeCallback(callback)
+    assert triggered
+    assert _values("count") == [77, before[-1]]
+    assert editor.message_label.isVisible()
+    _assert_bulk_drag_rows_disposed(created)
+    assert _wheel_targets(editor) is None
+    assert not _wheel_timer(editor).isActive()

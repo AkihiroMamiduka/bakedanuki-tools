@@ -9,6 +9,8 @@
 
 ### Fixed
 
+- Maya 2027のQt型定義差で、bdChannelBoxの一括数値入力に出るPyright警告を修正。
+  `findChild()`の呼出し境界に型を明示し、入力動作・scene・設定は変更しない。
 - `overrideColor`など、byte属性の下限0または上限255を持つ狭い範囲で
   Step欄が表示される判定をutil側で修正。0～31などは`[値][Slider]`を表示する。
   型既定の全範囲0～255はStep表示を維持する。utilも更新して
@@ -54,6 +56,20 @@
 
 ### Changed
 
+- bdChannelBoxの多数ノードモードで、連続する数値入力の対象準備を短期再利用。
+  最初の単発入力は保持せず、同じ対象への次の入力が処理終了後500ms以内に続いた場合に保持する。
+  値欄wheelの相対値、Slider wheelの同値適用、各イベントの独立Undoを維持する。
+  値・Step・単位・lock・範囲・接続は毎入力で確認し、期限・中断・失敗時に監視を解放する。
+  UI・右クリックメニュー・scene・保存設定は変更しない。utilも更新し、
+  `bd_tools.reload_package(reload_util=True)`で反映する。移行処理は不要。
+- bdChannelBoxの多数ノードモードで、Sliderの押下から解放まで対象の照合と一時Bindingを再利用。
+  値・lock・範囲・接続の再検証と毎回の復旧値取得、一回Undoを維持する。
+  全対象の削除と属性構成変更を監視し、変更・中断・失敗時は旧対象を解放する。
+  操作専用Bindingの表示用キー状態取得も省き、常設の基準表示は維持する。
+  属性行の選択通知と描画を集約し、途中集合を繰り返し通知しない。
+  UI・Step・Slider・右クリックメニュー、wheelの一イベント一Undoは維持する。
+  utilも更新し、`bd_tools.reload_package(reload_util=True)`で反映する。
+  scene・保存設定・clipboardの移行は不要。
 - bdChannelBoxのlock・表示状態編集で、util側の実体索引を使って多数対象の重複走査を削減。
   値Pasteもutilの共通書込み処理を使い、対象ごとの表示用Binding生成を省く。
   既存の対象判定、状態編集のcallback本数、Undoと失敗復旧は維持する。

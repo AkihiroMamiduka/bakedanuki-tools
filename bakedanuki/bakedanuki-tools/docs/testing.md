@@ -440,6 +440,15 @@ lock・表示状態の索引化では、utilの`test_channel_state_binding.py`�
 `test_bd_channel_box_bulk.py`では1,000ノードのlock・表示状態変更と一回Undo／Redoを確認します。
 値Pasteは1,000ノード×9属性を対象に、入力用ViewModelを生成せず全件へ適用できることと、
 一回Undo／Redoを確認します。
+Sliderの対象再利用は同ファイルで、解決回数・一時Bindingの寿命、別ドラッグの独立Undo、
+途中lock・範囲変更、削除と同名再作成、選択・時刻・画面変更による終了を確認します。
+wheelの一イベント一Undoと、常設表示だけがキー状態を追跡することも固定します。
+wheelは実Qtイベントで、float・整数の相対値、独立Undo／Redo、三入力目の対象照合省略、
+実timerの期限、待機中の中断、Step・外部値・後続lock／範囲変更、同名再作成を確認します。
+Sliderのwheel入力種別はutilの`test_slider_wheel_context.py`で開始・終了通知中と例外後を検証します。
+`test_bd_channel_box_selection.py`では一括選択のQt通知と独自通知、検索後の再入を確認します。
+utilの`test_scalar_paste_lifetime.py`では、軽量削除監視の直接・一括入力、書込み中dispose、
+未適用・適用済み・同値対象の削除、監視解除と既定値を確認します。
 経過時間そのものをruntime testの固定閾値にせず、属性取得と対象範囲の契約を固定します。
 
 上記の本体runnerは現在の実装を計測します。比較する場合は変更前後で同じMaya version、

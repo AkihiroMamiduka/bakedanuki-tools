@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from math import isfinite
 from typing import Protocol, cast
@@ -107,6 +108,8 @@ class ChannelTableView(qt.QTableView):
         self._numeric_keys: tuple[_RowKey, ...] = ()
         self._numeric_row = -1
         self._disposed = False
+        self._selection_update_depth = 0
+        self._selection_paint_pending = False
 
         # 行を一つのセルへ置き、一覧の余剰幅を既存layoutへ配分する
         self.setModel(self._row_model)
@@ -143,57 +146,69 @@ class ChannelTableView(qt.QTableView):
         self, rows: Sequence[TableRow], preserve_selection: bool = True
     ) -> None:
         """旧入力を破棄し、残存する属性だけ選択を引き継ぐ。"""
-        selected = self.selected_keys() if preserve_selection else ()
-        current = self.currentIndex().row()
-        current_key = (
-            self.rows[current].key if 0 <= current < len(self.rows) else None
-        )
-        self.finish_numeric_edit(commit=False)
-        self._finish_drag()
-        self._remove_targets()
-        self._row_model.clear()
-        self.rows = tuple(rows)
-        self._anchor = -1
-        self._row_model.setColumnCount(1)
-
-        # Bindingを持つ既存行はdelegateが所有し、値はmodelへ複製しない
-        for index, row in enumerate(self.rows):
-            item = qt.QStandardItem()
-            item.setSizeHint(row.widget.sizeHint())
-            self._row_model.setItem(index, 0, item)
-            self.openPersistentEditor(self._row_model.index(index, 0))
-            self.setRowHeight(index, max(1, row.widget.sizeHint().height()))
-            self._add_target(row.widget, index, numeric=False, editable=False)
-            self._add_target(
-                row.name_label, index, numeric=False, editable=False
+        with self._selection_update():
+            selected = self.selected_keys() if preserve_selection else ()
+            current = self.currentIndex().row()
+            current_key = (
+                self.rows[current].key
+                if 0 <= current < len(self.rows)
+                else None
             )
-            self._remember_palette(row.name_label)
-            if row.input_indicator is not None:
-                self._add_target(
-                    row.input_indicator, index, numeric=False, editable=False
-                )
-            if row.value_field is not None:
-                self._add_target(
-                    row.value_field, index, numeric=True, editable=True
-                )
-                find_children = cast(
-                    Callable[[type[qt.QLineEdit]], list[qt.QLineEdit]],
-                    getattr(row.value_field, "findChildren"),
-                )
-                children = find_children(qt.QLineEdit)
-                for child in children:
-                    self._add_target(child, index, numeric=True, editable=True)
-            if row.text_field is not None:
-                self._add_target(
-                    row.text_field, index, numeric=False, editable=True
-                )
-        self.select_keys(selected)
-        if preserve_selection and current_key is not None:
+            self.finish_numeric_edit(commit=False)
+            self._finish_drag()
+            self._remove_targets()
+            self._row_model.clear()
+            self.rows = tuple(rows)
+            self._anchor = -1
+            self._row_model.setColumnCount(1)
+
+            # Bindingを持つ既存行はdelegateが所有し、値はmodelへ複製しない
             for index, row in enumerate(self.rows):
-                if row.key == current_key:
-                    self._set_current(index)
-                    break
-        self._paint_selection()
+                item = qt.QStandardItem()
+                item.setSizeHint(row.widget.sizeHint())
+                self._row_model.setItem(index, 0, item)
+                self.openPersistentEditor(self._row_model.index(index, 0))
+                self.setRowHeight(
+                    index, max(1, row.widget.sizeHint().height())
+                )
+                self._add_target(
+                    row.widget, index, numeric=False, editable=False
+                )
+                self._add_target(
+                    row.name_label, index, numeric=False, editable=False
+                )
+                self._remember_palette(row.name_label)
+                if row.input_indicator is not None:
+                    self._add_target(
+                        row.input_indicator,
+                        index,
+                        numeric=False,
+                        editable=False,
+                    )
+                if row.value_field is not None:
+                    self._add_target(
+                        row.value_field, index, numeric=True, editable=True
+                    )
+                    find_children = cast(
+                        Callable[[type[qt.QLineEdit]], list[qt.QLineEdit]],
+                        getattr(row.value_field, "findChildren"),
+                    )
+                    children = find_children(qt.QLineEdit)
+                    for child in children:
+                        self._add_target(
+                            child, index, numeric=True, editable=True
+                        )
+                if row.text_field is not None:
+                    self._add_target(
+                        row.text_field, index, numeric=False, editable=True
+                    )
+            self.select_keys(selected)
+            if preserve_selection and current_key is not None:
+                for index, row in enumerate(self.rows):
+                    if row.key == current_key:
+                        self._set_current(index)
+                        break
+            self._paint_selection()
 
     def selected_keys(self) -> tuple[_RowKey, ...]:
         """表示中の選択属性を行順で返し、widgetの寿命から切り離す。"""
@@ -208,80 +223,87 @@ class ChannelTableView(qt.QTableView):
 
     def select_keys(self, keys: Sequence[_RowKey]) -> None:
         """指定した残存属性だけを選択し、属性値を変更しない。"""
-        selected = set(keys)
-        self.selectionModel().clearSelection()
-        first = -1
-        for index, row in enumerate(self.rows):
-            if row.key in selected and not self.isRowHidden(index):
-                self.selectionModel().select(
-                    self._row_model.index(index, 0),
-                    qt.QItemSelectionModel.SelectionFlag.Select
-                    | qt.QItemSelectionModel.SelectionFlag.Rows,
-                )
-                if first < 0:
-                    first = index
-        if first >= 0:
-            self._anchor = first
-            self._set_current(first)
+        with self._selection_update():
+            selected = set(keys)
+            selection = qt.QtCore.QItemSelection()
+            first = -1
+            for index, row in enumerate(self.rows):
+                if row.key in selected and not self.isRowHidden(index):
+                    model_index = self._row_model.index(index, 0)
+                    selection.select(model_index, model_index)
+                    if first < 0:
+                        first = index
+            self.selectionModel().select(
+                selection,
+                qt.QItemSelectionModel.SelectionFlag.ClearAndSelect
+                | qt.QItemSelectionModel.SelectionFlag.Rows,
+            )
+            if first >= 0:
+                self._anchor = first
+                self._set_current(first)
 
     def set_visible_keys(self, keys: Sequence[_RowKey] | None) -> int:
         """指定した行だけを表示し、隠れた行を属性選択から外す。"""
-        selected = self.selected_keys()
-        current = self.currentIndex().row()
-        current_key = (
-            self.rows[current].key if 0 <= current < len(self.rows) else None
-        )
-        visible = None if keys is None else set(keys)
-        visible_count = 0
-
-        # 行WidgetとBindingを維持したまま、Tableの表示だけを切り替える
-        for index, row in enumerate(self.rows):
-            shown = visible is None or row.key in visible
-            self.setRowHidden(index, not shown)
-            visible_count += int(shown)
-
-        # 見えない属性を後続の一括操作へ残さない
-        self.select_keys(selected)
-        current_visible = next(
-            (
-                index
-                for index, row in enumerate(self.rows)
-                if row.key == current_key and not self.isRowHidden(index)
-            ),
-            -1,
-        )
-        first_visible = next(
-            (
-                index
-                for index in range(len(self.rows))
-                if not self.isRowHidden(index)
-            ),
-            -1,
-        )
-        if current_visible >= 0:
-            self._set_current(current_visible)
-        elif first_visible >= 0:
-            self._set_current(first_visible)
-        else:
-            self.setCurrentIndex(qt.QModelIndex())
-        if not 0 <= self._anchor < len(self.rows) or self.isRowHidden(
-            self._anchor
-        ):
-            # Shift選択の起点を、検索で隠れた行へ残さない
-            self._anchor = (
-                current_visible if current_visible >= 0 else first_visible
+        with self._selection_update():
+            selected = self.selected_keys()
+            current = self.currentIndex().row()
+            current_key = (
+                self.rows[current].key
+                if 0 <= current < len(self.rows)
+                else None
             )
-        self._paint_selection()
-        return visible_count
+            visible = None if keys is None else set(keys)
+            visible_count = 0
+
+            # 行WidgetとBindingを維持したまま、Tableの表示だけを切り替える
+            for index, row in enumerate(self.rows):
+                shown = visible is None or row.key in visible
+                self.setRowHidden(index, not shown)
+                visible_count += int(shown)
+
+            # 見えない属性を後続の一括操作へ残さない
+            self.select_keys(selected)
+            current_visible = next(
+                (
+                    index
+                    for index, row in enumerate(self.rows)
+                    if row.key == current_key and not self.isRowHidden(index)
+                ),
+                -1,
+            )
+            first_visible = next(
+                (
+                    index
+                    for index in range(len(self.rows))
+                    if not self.isRowHidden(index)
+                ),
+                -1,
+            )
+            if current_visible >= 0:
+                self._set_current(current_visible)
+            elif first_visible >= 0:
+                self._set_current(first_visible)
+            else:
+                self.setCurrentIndex(qt.QModelIndex())
+            if not 0 <= self._anchor < len(self.rows) or self.isRowHidden(
+                self._anchor
+            ):
+                # Shift選択の起点を、検索で隠れた行へ残さない
+                self._anchor = (
+                    current_visible if current_visible >= 0 else first_visible
+                )
+            self._paint_selection()
+            return visible_count
 
     def select_key(self, key: _RowKey, *, extend: bool = False) -> None:
         """一つの属性を選択し、指定時は現在の選択へ追加する。"""
-        keys = self.selected_keys() if extend else ()
-        self.select_keys((*keys, key))
-        for index, row in enumerate(self.rows):
-            if row.key == key:
-                self._set_current(index)
-                return
+        with self._selection_update():
+            keys = self.selected_keys() if extend else ()
+            self.select_keys((*keys, key))
+            for index, row in enumerate(self.rows):
+                if row.key == key:
+                    self._set_current(index)
+                    return
 
     def ensureWidgetVisible(
         self, widget: qt.QWidget, xmargin: int = 50, ymargin: int = 50
@@ -355,8 +377,26 @@ class ChannelTableView(qt.QTableView):
                 widget.setAutoFillBackground(fill)
         self._palettes.clear()
 
+    @contextmanager
+    def _selection_update(self) -> Generator[None, None, None]:
+        """Qtの選択通知を維持し、複合操作の最終状態だけを描画する。"""
+        self._selection_update_depth += 1
+        try:
+            yield
+        finally:
+            self._selection_update_depth -= 1
+            if (
+                not self._selection_update_depth
+                and self._selection_paint_pending
+            ):
+                self._selection_paint_pending = False
+                self._paint_selection()
+
     def _paint_selection(self, *_args: object) -> None:
         """常時表示の属性名だけに選択状態を表示する。"""
+        if self._selection_update_depth:
+            self._selection_paint_pending = True
+            return
         selected = set(self.selected_keys())
         for widget, original, fill in self._palettes:
             if not qt.isValid(widget):
@@ -525,7 +565,12 @@ class ChannelTableView(qt.QTableView):
         field = row.value_field
         if field is None or not field.isEnabled():
             return False
-        source = field.findChild(qt.QLineEdit)
+        # bindingごとのfindChildの型差を、入力欄の検索境界だけで閉じる
+        find_child = cast(
+            Callable[[type[qt.QLineEdit]], qt.QLineEdit | None],
+            getattr(field, "findChild"),
+        )
+        source = find_child(qt.QLineEdit)
         if not isinstance(source, qt.QLineEdit):
             source = None
         cursor = source.cursorPosition() if source is not None else 0

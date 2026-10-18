@@ -32,6 +32,71 @@ from bd_tools.bd_channel_box.controller import (
 from bd_tools.bd_channel_box.widget import AttributeRowWidget, ChannelBoxWidget
 
 
+def test_batch_selection_notifies_native_and_final_state_once(
+    editor: ChannelBoxWidget,
+) -> None:
+    """全行選択はQt通知を保ち、currentも確定した最終選択だけを一回通知する。"""
+    table = editor.table_view
+    table.select_keys(())
+    keys = tuple(row.key for row in table.rows)
+    native: list[tuple[tuple[str, str], ...]] = []
+    observed: list[tuple[tuple[tuple[str, str], ...], int]] = []
+
+    def native_changed(*_args: object) -> None:
+        """Qt本来の選択通知が最終集合を通知することを記録する。"""
+        native.append(table.selected_keys())
+
+    def changed() -> None:
+        """独自通知ではcurrent行も確定済みであることを記録する。"""
+        observed.append((table.selected_keys(), table.currentIndex().row()))
+
+    table.selectionModel().selectionChanged.connect(native_changed)
+    table.selection_changed.connect(changed)
+    table.select_keys(keys)
+    assert native == [keys]
+    assert observed == [(keys, 0)]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    # 同じ集合の再指定では空選択や途中集合を外部へ通知しない
+    native.clear()
+    observed.clear()
+    table.select_keys(keys)
+    assert not native and not observed
+    table.select_keys(())
+    assert native == [()]
+    assert observed == [((), 0)]
+
+
+def test_visibility_selection_flush_allows_reentrant_selection(
+    editor: ChannelBoxWidget,
+) -> None:
+    """非表示除外の最終通知から再選択しても、外側のcurrent復元へ戻らない。"""
+    table = editor.table_view
+    keys = tuple(row.key for row in table.rows)
+    table.select_keys(keys)
+    before = editor.row_widgets
+    visible = keys[3:7]
+    replacement = (visible[-1],)
+    observed: list[tuple[tuple[str, str], ...]] = []
+
+    def changed() -> None:
+        """最終状態を記録し、一度だけ別の表示行を選び直す。"""
+        observed.append(table.selected_keys())
+        if len(observed) == 1:
+            table.select_keys(replacement)
+
+    table.selection_changed.connect(changed)
+    assert table.set_visible_keys(visible) == len(visible)
+    table.selection_changed.disconnect(changed)
+    assert observed == [visible, replacement]
+    assert table.selected_keys() == replacement
+    assert table.rows[table.currentIndex().row()].key == replacement[0]
+    assert editor.row_widgets == before
+    table.set_visible_keys(None)
+    assert table.selected_keys() == replacement
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
 class _StaticValueClipboard:
     """OS clipboardを使わず固定した搬送値を返すtest用境界。"""
 

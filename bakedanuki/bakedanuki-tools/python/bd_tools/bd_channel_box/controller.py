@@ -101,6 +101,7 @@ _DEFAULT_FILTERS: dict[ChannelBoxMode, ChannelAttributeFilter] = {
     "custom_filter_setup": "all",
 }
 _SELECTION_LIMIT = 50
+_BULK_NUMERIC_IDLE_MS = 500
 _Params = ParamSpec("_Params")
 _Result = TypeVar("_Result")
 
@@ -121,6 +122,16 @@ def _bulk_operation(
             return method(self, *args, **kwargs)
 
     return execute
+
+
+@dataclass
+class _BulkValueCache:
+    """数値入力で再利用する対象行と、属性構成だけを監視する寿命。"""
+
+    rows: dict[tuple[str, str], ChannelRow]
+    registry: MayaCallbackRegistry
+    keys: tuple[tuple[str, str], ...] | None = None
+    invalidated: bool = False
 
 
 __all__ = [
@@ -218,6 +229,15 @@ class ChannelBoxController(qt.QObject):
         self._node_handles: tuple[om.MObjectHandle, ...] = ()
         self._node_paths: tuple[om.MDagPath | None, ...] = ()
         self._bulk_rows: dict[tuple[str, str], ChannelRow] | None = None
+        self._bulk_value_cache: _BulkValueCache | None = None
+        self._bulk_numeric_keys: tuple[tuple[str, str], ...] | None = None
+        self._bulk_numeric_generation = 0
+        self._bulk_value_edit_reuse = True
+        self._retain_bulk_value_targets = False
+        self._bulk_value_timer = qt.QTimer(self)
+        self._bulk_value_timer.setSingleShot(True)
+        self._bulk_value_timer.setInterval(_BULK_NUMERIC_IDLE_MS)
+        self._bulk_value_timer.timeout.connect(self._discard_bulk_value_cache)
         self.selection_limit_exceeded = False
         self._mode: ChannelBoxMode = "values"
         self._filters: dict[ChannelBoxMode, ChannelDisplayFilter] = {
@@ -241,6 +261,7 @@ class ChannelBoxController(qt.QObject):
         self._value_clipboard = MayaScalarValueClipboard()
         self._animation_curve_copy: _AnimationCurveCopy | None = None
         self.state_edit_session.finished.connect(self._finish_state_edit)
+        self.value_edit_session.finished.connect(self._on_value_edit_finished)
         self._filter_refresh_pending = False
         self._events = MayaCallbackRegistry(self)
         self._nodes = MayaCallbackRegistry(self)
@@ -391,7 +412,7 @@ class ChannelBoxController(qt.QObject):
 
     def _finish_value_edit(self) -> None:
         """行を切り替える前に、値の連続編集とUndoのまとまりを閉じる。"""
-        self.value_edit_session.finish()
+        self.finish_value_edit()
         for row in self.rows:
             if isinstance(row, ChannelRow) and isinstance(
                 row.binding, (MayaFloatPlugsBinding, MayaIntPlugsBinding)
@@ -405,16 +426,36 @@ class ChannelBoxController(qt.QObject):
         self._finish_value_edit()
         self.state_edit_session.begin()
 
-    def begin_value_edit(self) -> None:
-        """Sliderによる複数属性の連続入力を一つのUndoとして開始する。"""
+    def begin_value_edit(self, *, reuse_targets: bool = True) -> None:
+        """SliderのUndoを開始し、wheelだけは単発入力用の対象保持を使う。"""
+        if type(reuse_targets) is not bool:
+            raise TypeError("reuse_targetsにはboolを指定してください")
         if self._disposed or self._mode not in ("values", "bulk_values"):
             return
         self.state_edit_session.finish()
+        if reuse_targets and not self.value_edit_session.is_editing:
+            self._discard_bulk_value_cache()
+        self._bulk_value_edit_reuse = reuse_targets
         self.value_edit_session.begin()
 
-    def finish_value_edit(self) -> None:
-        """複数属性の連続入力を確定してUndoのまとまりを閉じる。"""
-        self.value_edit_session.finish()
+    def finish_value_edit(self, *, retain_targets: bool = False) -> None:
+        """Undoを閉じ、wheelの正常終了時だけ対象を短時間保持する。"""
+        if type(retain_targets) is not bool:
+            raise TypeError("retain_targetsにはboolを指定してください")
+        self._retain_bulk_value_targets = retain_targets
+        try:
+            self.value_edit_session.finish()
+        finally:
+            self._retain_bulk_value_targets = False
+        if retain_targets and self._bulk_numeric_keys is not None:
+            self._bulk_value_timer.start()
+        else:
+            self._discard_bulk_value_cache()
+
+    def _on_value_edit_finished(self) -> None:
+        """外部中断では、待機対象もUndoと同時に解放する。"""
+        if not self._retain_bulk_value_targets:
+            self._discard_bulk_value_cache()
 
     def _on_time_changed(self, *_args: object) -> None:
         """時刻が変わると旧時刻の入力を終了し、同時刻の再評価は維持する。"""
@@ -427,6 +468,7 @@ class ChannelBoxController(qt.QObject):
         was_editing = self.value_edit_session.is_editing
         if was_editing:
             self.value_edit_session.finish()
+        self._discard_bulk_value_cache()
         self.time_changed.emit(was_editing)
 
     def _finish_state_edit(self) -> None:
@@ -762,16 +804,21 @@ class ChannelBoxController(qt.QObject):
                 [resolve_bool_plug(n, path) for n in targets],
                 parent=self,
                 edit_connected=True,
-                track_input_state=True,
+                track_input_state=monitor,
                 monitor=monitor,
+                monitor_lifetime=self._bulk_value_cache is not None,
             )
         elif attribute.kind in ("byte", "short", "long"):
             binding = MayaIntPlugsBinding(
                 [resolve_int_plug(n, path) for n in targets],
                 parent=self,
                 edit_connected=True,
-                track_input_state=True,
+                track_input_state=monitor,
                 monitor=monitor,
+                monitor_lifetime=(
+                    self._bulk_value_cache is not None
+                    or self._bulk_numeric_keys is not None
+                ),
             )
         elif attribute.kind == "enum":
             binding = self._create_enum_binding(
@@ -781,16 +828,21 @@ class ChannelBoxController(qt.QObject):
             binding = MayaStringPlugsBinding(
                 [resolve_string_plug(n, path) for n in targets],
                 parent=self,
-                track_input_state=True,
+                track_input_state=monitor,
                 monitor=monitor,
+                monitor_lifetime=self._bulk_value_cache is not None,
             )
         else:
             binding = MayaFloatPlugsBinding(
                 [resolve_float_plug(n, path) for n in targets],
                 parent=self,
                 edit_connected=True,
-                track_input_state=True,
+                track_input_state=monitor,
                 monitor=monitor,
+                monitor_lifetime=(
+                    self._bulk_value_cache is not None
+                    or self._bulk_numeric_keys is not None
+                ),
             )
         binding.edit_failed.connect(self.error_occurred.emit)
         return ChannelRow(attribute, binding, tuple(excluded), tuple(targets))
@@ -832,8 +884,9 @@ class ChannelBoxController(qt.QObject):
             plugs,
             parent=self,
             edit_connected=True,
-            track_input_state=True,
+            track_input_state=monitor,
             monitor=monitor,
+            monitor_lifetime=self._bulk_value_cache is not None,
         )
 
     def _dispose_rows(self) -> None:
@@ -848,7 +901,7 @@ class ChannelBoxController(qt.QObject):
         if self._active_state_binding is not None:
             self._active_state_binding.dispose()
         self.state_edit_session.finish()
-        self.value_edit_session.finish()
+        self.finish_value_edit()
         rows, self.rows = self.rows, ()
         for row in rows:
             self._dispose_row(row)
@@ -869,25 +922,70 @@ class ChannelBoxController(qt.QObject):
             return None
         return selection.getDagPath(0)
 
-    @contextmanager
-    def _bulk_targets(self) -> Generator[None, None, None]:
-        """選択時の実体を操作直前に解決し、一時Bindingを操作終了時に解放する。"""
-        if self._mode != "bulk_values" or self._bulk_rows is not None:
-            yield
-            return
-        if self._disposed or self._timer.isActive():
-            raise RuntimeError(
-                "対象が変わりました。表示更新後に操作してください"
-            )
-        if not self._node_handles:
-            raise RuntimeError("操作するノードが選択されていません")
-        if (
-            not self._node_handles[-1].isValid()
-            or not self._node_handles[-1].isAlive()
-        ):
-            raise RuntimeError("基準ノードが削除されました")
+    def _invalidate_bulk_value_cache(self, *_args: object) -> None:
+        """構成変更のcallback内では破棄せず、次の入力で旧対象を拒否する。"""
+        if self._bulk_value_cache is not None:
+            self._bulk_value_cache.invalidated = True
 
-        # 保存した実体から現在名を取得し、同名再作成された別nodeを対象にしない
+    def _bulk_value_attribute_changed(
+        self, message: int, *_args: object
+    ) -> None:
+        """値・lock通知は無視し、追加・削除・改名時だけ対象を無効化する。"""
+        if message & (
+            om.MNodeMessage.kAttributeAdded
+            | om.MNodeMessage.kAttributeRemoved
+            | om.MNodeMessage.kAttributeRenamed
+        ):
+            self._invalidate_bulk_value_cache()
+
+    def _start_bulk_value_cache(self) -> _BulkValueCache:
+        """現在の選択実体に構成監視を結び、値通知の全件同期を避ける。"""
+        cache = _BulkValueCache({}, MayaCallbackRegistry(self))
+        self._bulk_value_cache = cache
+        try:
+            for handle in self._node_handles:
+                node = handle.object()
+                cache.registry.register(
+                    om.MNodeMessage.addAttributeChangedCallback(
+                        node, self._bulk_value_attribute_changed
+                    )
+                )
+                cache.registry.register(
+                    om.MNodeMessage.addNameChangedCallback(
+                        node, self._invalidate_bulk_value_cache
+                    )
+                )
+                cache.registry.register(
+                    om.MNodeMessage.addNodePreRemovalCallback(
+                        node, self._invalidate_bulk_value_cache
+                    )
+                )
+        except Exception:
+            self._discard_bulk_value_cache()
+            raise
+        return cache
+
+    def _discard_bulk_value_cache(self) -> None:
+        """書込み中は終了だけ予約し、復旧が終わってから対象と監視を解放する。"""
+        self._bulk_value_timer.stop()
+        self._bulk_numeric_keys = None
+        self._bulk_numeric_generation += 1
+        cache = self._bulk_value_cache
+        if cache is None:
+            return
+        if self._bulk_rows is cache.rows:
+            cache.invalidated = True
+            return
+        self._bulk_value_cache = None
+        try:
+            for row in cache.rows.values():
+                self._dispose_row(row)
+        finally:
+            cache.registry.dispose()
+            cache.registry.deleteLater()
+
+    def _refresh_bulk_node_names(self) -> None:
+        """保持した実体から名前を読み直し、祖先改名後も別nodeを解決しない。"""
         names: list[str] = []
         handles: list[om.MObjectHandle] = []
         paths: list[om.MDagPath | None] = []
@@ -918,13 +1016,111 @@ class ChannelBoxController(qt.QObject):
             om.MFnDependencyNode(handle.object()).uuid().asString()
             for handle in handles
         )
-        self._bulk_rows = {}
+
+    @contextmanager
+    def _numeric_targets(
+        self,
+        keys: Sequence[tuple[str, str]],
+        *,
+        reuse_value_edit: bool = False,
+    ) -> Generator[None, None, None]:
+        """数値入力の対象保持を選び、開始失敗でもUndoと旧対象を解放する。"""
+        try:
+            with self._bulk_targets(
+                reuse_value_edit=reuse_value_edit, numeric_keys=keys
+            ):
+                yield
+        except Exception:
+            self.finish_value_edit()
+            raise
+
+    @contextmanager
+    def _bulk_targets(
+        self,
+        *,
+        reuse_value_edit: bool = False,
+        numeric_keys: Sequence[tuple[str, str]] | None = None,
+    ) -> Generator[None, None, None]:
+        """実体を確認し、連続する数値入力だけ対象準備を引き継ぐ。"""
+        if self._mode != "bulk_values":
+            yield
+            return
+        if self._disposed or self._timer.isActive():
+            raise RuntimeError(
+                "対象が変わりました。表示更新後に操作してください"
+            )
+        continuous = (
+            reuse_value_edit
+            and self.value_edit_session.is_editing
+            and self._bulk_value_edit_reuse
+        )
+        cache = self._bulk_value_cache
+        if cache is not None and cache.invalidated:
+            self.finish_value_edit()
+            if continuous or self._bulk_rows is not None:
+                raise RuntimeError(
+                    "対象の構成が変わりました。操作し直してください"
+                )
+            cache = None
+        if self._bulk_rows is not None:
+            yield
+            return
+        keys = (
+            None
+            if numeric_keys is None
+            else tuple(dict.fromkeys(numeric_keys))
+        )
+        if keys is None:
+            self.finish_value_edit()
+        elif not reuse_value_edit and self.value_edit_session.is_editing:
+            # ドラッグから値欄へ移った場合は、前のUndoを必ず先に閉じる
+            self.finish_value_edit()
+        if keys is not None and self._bulk_numeric_keys not in (None, keys):
+            self._discard_bulk_value_cache()
+        cache = self._bulk_value_cache
+        repeat = keys is not None and keys == self._bulk_numeric_keys
+        self._bulk_value_timer.stop()
+        if not self._node_handles:
+            raise RuntimeError("操作するノードが選択されていません")
+        if (
+            not self._node_handles[-1].isValid()
+            or not self._node_handles[-1].isAlive()
+        ):
+            raise RuntimeError("基準ノードが削除されました")
+
+        # 単発入力は保持せず、二回目またはドラッグで構成監視を開始する
+        if cache is None:
+            self._refresh_bulk_node_names()
+            if continuous or repeat:
+                cache = self._start_bulk_value_cache()
+        temporary = {} if cache is None else cache.rows
+        self._bulk_rows = temporary
+        # 保持しない最初の入力にも、書込み中の削除履歴の監視を付ける
+        if keys and not continuous:
+            self._bulk_numeric_keys = keys
+        generation = self._bulk_numeric_generation
+        failed = True
         try:
             yield
+            failed = False
         finally:
-            temporary, self._bulk_rows = self._bulk_rows, None
-            for row in temporary.values():
-                self._dispose_row(row)
+            self._bulk_rows = None
+            if cache is None:
+                for row in temporary.values():
+                    self._dispose_row(row)
+            interrupted = (
+                failed
+                or self._disposed
+                or generation != self._bulk_numeric_generation
+                or (cache is not None and cache.invalidated)
+                or (continuous and not self.value_edit_session.is_editing)
+            )
+            if interrupted:
+                self.finish_value_edit()
+            elif keys and not continuous:
+                self._bulk_numeric_keys = keys
+                if not self.value_edit_session.is_editing:
+                    self._bulk_value_timer.start()
             if not self._disposed:
                 for row in self.rows:
                     if (
@@ -937,10 +1133,19 @@ class ChannelBoxController(qt.QObject):
     def _resolve_bulk_rows(
         self, rows: Sequence[ChannelRow | ChannelStateRow]
     ) -> tuple[ChannelRow, ...]:
-        """操作に必要なpathだけを全対象で照合し、監視しないBindingへ結ぶ。"""
+        """必要なpathだけを照合し、値の表示同期を省くBindingへ結ぶ。"""
         cache = self._bulk_rows
         if cache is None:
             raise RuntimeError("多数ノードの操作境界が開始されていません")
+        gesture = self._bulk_value_cache
+        if gesture is not None and gesture.rows is cache:
+            keys = tuple((r.attribute.path, r.attribute.kind) for r in rows)
+            if gesture.keys is not None and gesture.keys != keys:
+                self._refresh_bulk_node_names()
+                for previous in cache.values():
+                    self._dispose_row(previous)
+                cache.clear()
+            gesture.keys = keys
         missing = tuple(
             row
             for row in rows
@@ -1686,11 +1891,17 @@ class ChannelBoxController(qt.QObject):
         """一曲線は型を問わず選択属性へ、複数曲線は同じパスへ貼る。"""
         return self._paste_animation_curves(keys)
 
-    @_bulk_operation
     def apply_numeric_values(
         self, keys: Sequence[tuple[str, str]], display_value: float | int
     ) -> bool:
         """明示入力を選択中のfloat・整数行へ型を保って一括適用する。"""
+        with self._numeric_targets(keys, reuse_value_edit=True):
+            return self._apply_numeric_values(keys, display_value)
+
+    def _apply_numeric_values(
+        self, keys: Sequence[tuple[str, str]], display_value: float | int
+    ) -> bool:
+        """検証済みの数値行へ、毎回新しい書込み計画で絶対値を適用する。"""
         rows = self._selected_rows(keys)
         edits: list[MayaPlugsValueEdit] = []
         excluded: list[str] = []
@@ -1734,11 +1945,17 @@ class ChannelBoxController(qt.QObject):
         self._report_excluded(excluded)
         return changed
 
-    @_bulk_operation
     def offset_numeric_values(
         self, keys: Sequence[tuple[str, str]], display_offset: float | int
     ) -> bool:
         """各float・整数の現在値へ、型に合う同じ増減量を加える。"""
+        with self._numeric_targets(keys):
+            return self._offset_numeric_values(keys, display_offset)
+
+    def _offset_numeric_values(
+        self, keys: Sequence[tuple[str, str]], display_offset: float | int
+    ) -> bool:
+        """対象だけを再利用し、差分と復旧値は各入力の現在値から作る。"""
         edits: list[MayaPlugsValueEdit] = []
         excluded: list[str] = []
         for row in self._selected_rows(keys):
