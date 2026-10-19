@@ -2,13 +2,14 @@
 """属性行の選択と、明示的な一括数値入力・状態操作を検証する。"""
 
 import importlib
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from math import isclose
 from typing import Literal, NoReturn, cast
 
 import pytest
 from maya import cmds
 
+from bd_util.maya.node.inspection import ScalarAttributeInfo
 from bd_util.maya.ui import (
     MayaCallbackRegistry,
     MayaScalarValueClipboard,
@@ -2991,6 +2992,42 @@ def test_freeze_transforms_preserves_shape_and_undoes_once(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
+@pytest.mark.parametrize("with_transform", [False, True])
+def test_freeze_availability_stops_at_first_eligible_transform(
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    with_transform: bool,
+) -> None:
+    """有効判定は最初の通常transformで終え、jointだけなら最後まで確認する。"""
+    other = cmds.createNode("network", skipSelect=True)
+    joint = cmds.createNode("joint", skipSelect=True)
+    reference = cmds.createNode("joint", skipSelect=True)
+    selected = (
+        (other, joint, "multiB", "multiA")
+        if with_transform
+        else (other, joint, reference)
+    )
+    cmds.select(*selected, replace=True)
+    editor.controller.set_mode("bulk_values")
+    editor.refresh()
+    checked: list[str] = []
+    original = cast(
+        Callable[[str], bool], getattr(editor.controller, "_is_transform_node")
+    )
+
+    def is_transform_node(name: str) -> bool:
+        """基準確認と、存在判定で実際に調べたnode順を記録する。"""
+        checked.append(name)
+        return original(name)
+
+    monkeypatch.setattr(
+        editor.controller, "_is_transform_node", is_transform_node
+    )
+    assert editor.controller.can_freeze_translation() is with_transform
+    node_names = editor.controller.node_names
+    assert checked == [node_names[-1], *node_names[:3]]
+
+
 def test_freeze_menu_uses_base_transform_and_skips_other_node_types(
     editor: ChannelBoxWidget,
 ) -> None:
@@ -3893,6 +3930,158 @@ def test_animation_curve_copy_selected_and_paste_same_attributes(
     assert not cmds.keyframe(
         "multiB.translateX", query=True, keyframeCount=True
     )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize("scope", ["same", "selected", "empty"])
+def test_bulk_curve_paste_inspects_candidate_paths_without_value_bindings(
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    scope: str,
+) -> None:
+    """候補属性だけを調べ、一曲線の複数属性への展開と一回のUndoを保つ。"""
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    cmds.setKeyframe("multiA.translateX", time=1, value=1)
+    cmds.setKeyframe("multiA.translateX", time=10, value=4)
+    assert (
+        editor.controller.copy_animation_curves_selected(
+            _keys(editor, "translateX")
+        )
+        == 1
+    )
+    for node in ("pasteFirst", "pasteReference"):
+        cmds.createNode("transform", name=node)
+    cmds.select("pasteFirst", "pasteReference", replace=True)
+    cmds.currentTime(20)
+    editor.controller.set_mode("bulk_values")
+    editor.refresh()
+    keys = (
+        _keys(editor, "translateX", "translateY")
+        if scope == "selected"
+        else ()
+    )
+    expected_paths = (
+        tuple(key[0] for key in keys)
+        if scope != "same"
+        else (_keys(editor, "translateX")[0][0],)
+    )
+    inspected: list[str] = []
+    original = controller_module.inspect_scalar_attributes
+
+    def inspect(
+        node: str, *, paths: Sequence[str] | None = None
+    ) -> tuple[ScalarAttributeInfo, ...]:
+        """無関係な属性の全列挙を要求していないことを確認する。"""
+        assert paths == expected_paths
+        inspected.append(node)
+        return original(node, paths=paths)
+
+    def unexpected_binding(*_args: object, **_kwargs: object) -> NoReturn:
+        """貼付先pathの準備で値編集用Bindingを作る回帰を検出する。"""
+        raise AssertionError("カーブ貼付で不要な値Bindingを生成しています")
+
+    cmds.flushUndo()
+    with monkeypatch.context() as patch:
+        patch.setattr(controller_module, "inspect_scalar_attributes", inspect)
+        patch.setattr(
+            editor.controller, "_create_value_row", unexpected_binding
+        )
+        count = (
+            editor.controller.paste_animation_curves_same_attributes()
+            if scope == "same"
+            else editor.controller.paste_animation_curves_to_selected(keys)
+        )
+    assert inspected == list(editor.controller.node_names)
+    assert count == 2 * len(expected_paths)
+    if not expected_paths:
+        assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+        return
+    for node in ("pasteFirst", "pasteReference"):
+        for path in expected_paths:
+            assert cmds.keyframe(
+                f"{node}.{path}", query=True, valueChange=True
+            ) == [1, 4]
+    cmds.undo()
+    _events()
+    for node in ("pasteFirst", "pasteReference"):
+        assert not cmds.keyframe(node, query=True, keyframeCount=True)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_curve_paste_ambiguous_leaf_falls_back_to_exact_path_comparison(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """貼付先で曖昧になったleaf名を誤解決せず、従来どおり対象外にする。"""
+    cmds.addAttr(
+        "multiA", longName="envelope", attributeType="double", keyable=True
+    )
+    cmds.select("multiA", replace=True)
+    editor.refresh()
+    cmds.setKeyframe("multiA.envelope", time=1, value=2)
+    assert (
+        editor.controller.copy_animation_curves_selected(
+            _keys(editor, "envelope")
+        )
+        == 1
+    )
+    node = cmds.createNode("hierarchyTestNode4")
+    cmds.select(node, replace=True)
+    editor.controller.set_mode("bulk_values")
+    editor.refresh()
+    original = controller_module.inspect_scalar_attributes
+    inspected: list[Sequence[str] | None] = []
+
+    def inspect(
+        name: str, *, paths: Sequence[str] | None = None
+    ) -> tuple[ScalarAttributeInfo, ...]:
+        """限定解決の曖昧エラーだけを旧来の正式path列挙で補う。"""
+        inspected.append(paths)
+        return original(name, paths=paths)
+
+    monkeypatch.setattr(
+        controller_module, "inspect_scalar_attributes", inspect
+    )
+    cmds.flushUndo()
+    assert editor.controller.paste_animation_curves_same_attributes() == 0
+    assert inspected == [("envelope",), None]
+    assert not cmds.keyframe(node, query=True, keyframeCount=True)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_bulk_curve_copy_compacts_only_nodes_with_keys_in_selection_order(
+    editor: ChannelBoxWidget,
+) -> None:
+    """キーなしnodeを挟んでも、残る曲線を選択順で対応付けて貼り付ける。"""
+    cmds.createNode("transform", name="curveWithoutKeys")
+    cmds.setKeyframe("multiA.translateX", time=1, value=11)
+    cmds.setKeyframe("multiB.translateX", time=1, value=22)
+    cmds.select("multiB", "curveWithoutKeys", "multiA", replace=True)
+    editor.controller.set_mode("bulk_values")
+    editor.refresh()
+    assert (
+        editor.controller.copy_animation_curves_selected(
+            _keys(editor, "translateX")
+        )
+        == 2
+    )
+    for node in ("compactFirst", "compactSecond"):
+        cmds.createNode("transform", name=node)
+    cmds.select("compactFirst", "compactSecond", replace=True)
+    cmds.currentTime(20)
+    editor.refresh()
+    cmds.flushUndo()
+    assert editor.controller.paste_animation_curves_same_attributes() == 2
+    assert cmds.keyframe("compactFirst.tx", query=True, valueChange=True) == [
+        22
+    ]
+    assert cmds.keyframe("compactSecond.tx", query=True, valueChange=True) == [
+        11
+    ]
+    cmds.undo()
+    _events()
+    assert not cmds.keyframe("compactFirst", query=True, keyframeCount=True)
+    assert not cmds.keyframe("compactSecond", query=True, keyframeCount=True)
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 

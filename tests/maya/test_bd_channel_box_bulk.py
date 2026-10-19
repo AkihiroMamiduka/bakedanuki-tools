@@ -943,6 +943,66 @@ def _record_bulk_drag_rows(
     return created
 
 
+@pytest.mark.parametrize("name", ["free", "count"])
+@pytest.mark.parametrize("offset", [False, True])
+def test_bulk_numeric_refreshes_all_targets_only_after_input(
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    offset: bool,
+) -> None:
+    """再利用中の全体同期を一回に保ち、各入力で対象全体を更新する。"""
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    keys = _keys(editor, name)
+    apply = (
+        editor.controller.offset_numeric_values
+        if offset
+        else editor.controller.apply_numeric_values
+    )
+    assert apply(keys, 1)
+    assert apply(keys, 2)
+    binding = created[-1].binding
+    store = binding.store
+    original_refresh = store.refresh
+    calls: list[bool] = []
+
+    def refresh() -> bool:
+        """一時Bindingだけの全対象同期を記録する。"""
+        calls.append(True)
+        return original_refresh()
+
+    monkeypatch.setattr(store, "refresh", refresh)
+    assert apply(keys, 3)
+    assert len(calls) == 1
+    assert _values(name) == ([7, 9] if offset else [3, 3])
+
+
+@pytest.mark.parametrize("name", ["free", "count"])
+def test_bulk_numeric_rechecks_reference_lock_and_reports_current_reason(
+    editor: ChannelBoxWidget, name: str
+) -> None:
+    """基準のlock変更をQt同期前に検出し、解除後は同じ対象へ再入力できる。"""
+    controller = editor.controller
+    keys = _keys(editor, name)
+    assert controller.apply_numeric_values(keys, 4)
+    assert controller.apply_numeric_values(keys, 5)
+    reports: list[str] = []
+    controller.operation_reported.connect(reports.append)
+    cmds.setAttr("bulkReference." + name, lock=True)
+    assert not controller.apply_numeric_values(keys, 6)
+    assert _values(name) == [5, 5]
+    assert "ロック" in reports[-1]
+    assert not _row(
+        editor, name
+    ).row.binding.view_model.set_value_command.can_execute
+    cmds.setAttr("bulkReference." + name, lock=False)
+    assert controller.apply_numeric_values(keys, 7)
+    assert _values(name) == [7, 7]
+    assert _row(
+        editor, name
+    ).row.binding.view_model.set_value_command.can_execute
+
+
 def _assert_bulk_drag_rows_disposed(
     rows: Sequence[controller_module.ChannelRow],
 ) -> None:

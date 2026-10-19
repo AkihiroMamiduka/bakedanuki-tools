@@ -1568,10 +1568,11 @@ class ChannelBoxController(qt.QObject):
             api_clipboard.set(previous)
 
         # キーを持つコピー元だけでノード順を詰め、次の貼り付けへ保持する
+        copied_node_indices = {curve.node_index for curve in copied}
         source_indices = tuple(
             index
             for index in range(len(self.node_names))
-            if any(curve.node_index == index for curve in copied)
+            if index in copied_node_indices
         )
         compact_indices = {
             source_index: index
@@ -1597,17 +1598,18 @@ class ChannelBoxController(qt.QObject):
     ) -> int:
         """選択行と対応する各選択ノードの全時間の曲線をコピーする。"""
         # Maya標準clipboardへも、Bindingの代表順ではなく元の選択順で渡す
-        sources = tuple(
-            _AnimationCurveSource(
-                index,
-                row.attribute.path,
-                row.attribute.kind,
+        sources: list[_AnimationCurveSource] = []
+        for row in self._selected_rows(keys):
+            if not isinstance(row, ChannelRow):
+                continue
+            target_names = set(row.target_names)
+            sources.extend(
+                _AnimationCurveSource(
+                    index, row.attribute.path, row.attribute.kind
+                )
+                for index, node in enumerate(self.node_names)
+                if node in target_names
             )
-            for row in self._selected_rows(keys)
-            if isinstance(row, ChannelRow)
-            for index, node in enumerate(self.node_names)
-            if node in row.target_names
-        )
         return len(self._copy_animation_curves(sources))
 
     @_bulk_operation
@@ -1796,7 +1798,11 @@ class ChannelBoxController(qt.QObject):
             raise ValueError(
                 "複数ノードのカーブは、同じ数の選択ノードへ貼り付けてください"
             )
-        selected_rows = self._selected_rows(keys) if keys is not None else None
+        selected_rows = (
+            self._selected_rows(keys, resolve_targets=False)
+            if keys is not None
+            else None
+        )
         selected_paths = (
             tuple(
                 row.attribute.path
@@ -1806,18 +1812,30 @@ class ChannelBoxController(qt.QObject):
             if selected_rows is not None
             else None
         )
+        # 元の曲線順を保って分類し、各nodeで全曲線を探索し直さない
+        curves_by_node: dict[int, list[_CopiedAnimationCurve]] = {}
+        for curve in copied.curves:
+            curves_by_node.setdefault(curve.node_index, []).append(curve)
         targets: list[tuple[int, str]] = []
         for destination_index, node in enumerate(self.node_names):
             source_index = 0 if copied.node_count == 1 else destination_index
-            source_curves = tuple(
-                curve
-                for curve in copied.curves
-                if curve.node_index == source_index
+            source_curves = curves_by_node.get(source_index, ())
+            candidate_paths = (
+                selected_paths
+                if selected_paths is not None
+                else tuple(
+                    dict.fromkeys(curve.path for curve in source_curves)
+                )
             )
             # 行の値編集対象から外れた異種型ノードも、曲線操作では個別に調べる
-            available_paths = {
-                info.path for info in inspect_scalar_attributes(node)
-            }
+            try:
+                attributes = inspect_scalar_attributes(
+                    node, paths=candidate_paths
+                )
+            except ValueError:
+                # 曖昧なleaf名は旧来の正式path比較で対象外として扱う
+                attributes = inspect_scalar_attributes(node)
+            available_paths = {info.path for info in attributes}
             if selected_paths is not None:
                 available_paths.intersection_update(selected_paths)
             for curve in source_curves:
@@ -1912,8 +1930,7 @@ class ChannelBoxController(qt.QObject):
             ):
                 excluded.append(f"{row.attribute.nice_name}: 数値入力の対象外")
                 continue
-            row.binding.refresh()
-            if not row.binding.view_model.set_value_command.can_execute:
+            if not self._prepare_numeric_input(row.binding):
                 excluded.append(
                     f"{row.attribute.nice_name}: 値を編集できません"
                 )
@@ -1929,9 +1946,11 @@ class ChannelBoxController(qt.QObject):
                 edits.append(
                     MayaFloatValueEdit(
                         row.binding,
-                        row.binding.view_model.presentation.from_display(
-                            display_value
-                        ),
+                        (
+                            row.binding.store.presentation
+                            if self._mode == "bulk_values"
+                            else row.binding.view_model.presentation
+                        ).from_display(display_value),
                     )
                 )
         changed = apply_plugs_values(
@@ -1964,8 +1983,7 @@ class ChannelBoxController(qt.QObject):
             ):
                 excluded.append(f"{row.attribute.nice_name}: 数値操作の対象外")
                 continue
-            row.binding.refresh()
-            if not row.binding.view_model.set_value_command.can_execute:
+            if not self._prepare_numeric_input(row.binding):
                 excluded.append(
                     f"{row.attribute.nice_name}: 値を編集できません"
                 )
@@ -1985,14 +2003,32 @@ class ChannelBoxController(qt.QObject):
                 edits.append(
                     MayaFloatOffsetEdit(
                         row.binding,
-                        row.binding.view_model.presentation.from_display(
-                            display_offset
-                        ),
+                        (
+                            row.binding.store.presentation
+                            if self._mode == "bulk_values"
+                            else row.binding.view_model.presentation
+                        ).from_display(display_offset),
                     )
                 )
         changed = apply_plugs_values(edits)
         self._report_excluded(excluded)
         return changed
+
+    def _prepare_numeric_input(
+        self, binding: MayaFloatPlugsBinding | MayaIntPlugsBinding
+    ) -> bool:
+        """多数nodeの一時Bindingは代表だけを確認し、全体同期を適用後へ集約する。"""
+        if self._mode == "bulk_values":
+            if (
+                not binding.view_model.is_disposed
+                and binding.store.is_writable
+            ):
+                return True
+            # 全行が対象外でも最新の除外理由を報告できるよう同期する
+            binding.refresh()
+            return False
+        binding.refresh()
+        return binding.view_model.set_value_command.can_execute
 
     @_bulk_operation
     def apply_bool_values(
@@ -2462,8 +2498,9 @@ class ChannelBoxController(qt.QObject):
 
     def can_freeze_translation(self) -> bool:
         """基準ノードがtransform系で、移動をフリーズできる対象があるか返す。"""
-        return self.has_transform_context() and bool(
-            self._freeze_targets(translate_only=True)
+        return self.has_transform_context() and any(
+            self._is_transform_node(name) and cmds.nodeType(name) != "joint"
+            for name in self.node_names
         )
 
     def can_consolidate_rotation(self) -> bool:
