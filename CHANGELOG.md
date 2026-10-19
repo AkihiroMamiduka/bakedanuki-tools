@@ -56,6 +56,14 @@
 
 ### Changed
 
+- bdChannelBoxの多数ノード操作で、対象照合は正式path・型だけを取得し、
+  同時に生成する値Bindingの削除監視をnodeごとに共有する。
+  各Bindingの検証・削除履歴・Undo・失敗復旧と、Step／Sliderは維持する。
+  値編集行の右クリックメニューは初回利用時に生成・接続し、表示・Undo時の準備を削減。
+  UI参照コードの`row.align_action`などは`row.context_menu.align_action`へ移行する。
+  `context_menu`は型付きの`AttributeRowMenu`を返す。未使用メニューの終了処理には
+  `close_context_menu()`を使う。utilも更新し、`bd_tools.reload_package(reload_util=True)`
+  で反映する。scene・設定・clipboardの移行は不要。
 - bdChannelBoxの選択カーブのカット・削除で値Bindingの準備を省き、
   一属性選択時はその正式pathだけを調査する。曖昧名は全列挙へ戻し、
   複数属性のnode内順序、異種型の対象、共有曲線の除外とUndoを維持する。

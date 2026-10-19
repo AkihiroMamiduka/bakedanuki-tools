@@ -133,7 +133,7 @@ def test_three_node_selection_uses_last_enum_as_reference(
     )
     assert _combo(enum_editor).currentText() == "Negative"
     cmds.flushUndo()
-    _row(enum_editor).align_action.trigger()
+    _row(enum_editor).context_menu.align_action.trigger()
     assert _values() == [-2, -2, -2]
     cmds.undo()
     _events()
@@ -162,9 +162,9 @@ def test_enum_explicit_alignment_and_noop_do_not_duplicate_undo(
     enum_editor: ChannelBoxWidget,
 ) -> None:
     """代表と同じ値への明示入力だけを適用し、同値入力は履歴を増やさない。"""
-    _row(enum_editor).align_action.trigger()
+    _row(enum_editor).context_menu.align_action.trigger()
     assert _values() == [5, 5, 5]
-    assert not _row(enum_editor).align_action.isEnabled()
+    assert not _row(enum_editor).context_menu.align_action.isEnabled()
     assert not _row(enum_editor).row.binding.apply_representative_value()
     cmds.undo()
     _events()
@@ -221,7 +221,7 @@ def test_enum_definition_changes_block_until_regrouped_without_writing(
     assert not combo.isEnabled()
     assert "0/3" in combo.toolTip()
     assert "enum定義" in combo.toolTip()
-    assert not _row(enum_editor).align_action.isEnabled()
+    assert not _row(enum_editor).context_menu.align_action.isEnabled()
     cmds.flushUndo()
     enum_editor.refresh()
     _events()
@@ -245,7 +245,7 @@ def test_enum_undefined_representative_can_be_replaced_but_not_aligned(
     assert combo.currentIndex() == -1
     assert combo.placeholderText() == "未定義 (2)"
     assert combo.isEnabled()
-    assert not _row(enum_editor).align_action.isEnabled()
+    assert not _row(enum_editor).context_menu.align_action.isEnabled()
     assert "未定義 (2)" in combo.toolTip()
     cmds.flushUndo()
     combo.setCurrentIndex(0)

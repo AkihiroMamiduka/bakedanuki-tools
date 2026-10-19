@@ -40,6 +40,7 @@ from bd_tools.bd_channel_box.custom_filters import (
 from bd_tools.bd_channel_box.custom_filter_editor import CustomFilterDraft
 from bd_tools.bd_channel_box.custom_filter_setup import CustomFilterSetupPanel
 from bd_tools.bd_channel_box.widget import (
+    AttributeRowMenu,
     AttributeRowWidget,
     AttributeStateRowWidget,
     ChannelBoxWidget,
@@ -67,7 +68,7 @@ row = bd_channel_box.show().widget.row_widgets[0]
 assert_type(row, AttributeRowWidget | AttributeStateRowWidget)
 if isinstance(row, AttributeRowWidget):
     assert_type(row.row, ChannelRow)
-    assert_type(row.context_menu, qt.QMenu)
+    assert_type(row.context_menu, AttributeRowMenu)
     assert_type(
         row.editor,
         BoolCheckBox
@@ -78,45 +79,45 @@ if isinstance(row, AttributeRowWidget):
         | IntSliderSpinBox
         | StringLineEdit,
     )
-    assert_type(row.align_action, qt.QAction)
-    assert_type(row.mute_menu, qt.QMenu)
-    assert_type(row.mute_selected_action, qt.QAction)
-    assert_type(row.mute_all_animation_action, qt.QAction)
-    assert_type(row.unmute_menu, qt.QMenu)
-    assert_type(row.unmute_selected_action, qt.QAction)
-    assert_type(row.unmute_all_animation_action, qt.QAction)
-    assert_type(row.animation_copy_menu, qt.QMenu)
-    assert_type(row.animation_copy_selected_action, qt.QAction)
-    assert_type(row.animation_copy_all_action, qt.QAction)
-    assert_type(row.animation_paste_menu, qt.QMenu)
-    assert_type(row.animation_paste_same_action, qt.QAction)
-    assert_type(row.animation_paste_selected_action, qt.QAction)
-    assert_type(row.animation_cut_menu, qt.QMenu)
-    assert_type(row.animation_cut_selected_action, qt.QAction)
-    assert_type(row.animation_cut_all_action, qt.QAction)
-    assert_type(row.animation_delete_menu, qt.QMenu)
-    assert_type(row.animation_delete_selected_action, qt.QAction)
-    assert_type(row.animation_delete_all_action, qt.QAction)
-    assert_type(row.copy_menu, qt.QMenu)
-    assert_type(row.copy_all_values_action, qt.QAction)
-    assert_type(row.copy_selected_values_action, qt.QAction)
-    assert_type(row.paste_menu, qt.QMenu)
+    assert_type(row.context_menu.align_action, qt.QAction)
+    assert_type(row.context_menu.mute_menu, qt.QMenu)
+    assert_type(row.context_menu.mute_selected_action, qt.QAction)
+    assert_type(row.context_menu.mute_all_animation_action, qt.QAction)
+    assert_type(row.context_menu.unmute_menu, qt.QMenu)
+    assert_type(row.context_menu.unmute_selected_action, qt.QAction)
+    assert_type(row.context_menu.unmute_all_animation_action, qt.QAction)
+    assert_type(row.context_menu.animation_copy_menu, qt.QMenu)
+    assert_type(row.context_menu.animation_copy_selected_action, qt.QAction)
+    assert_type(row.context_menu.animation_copy_all_action, qt.QAction)
+    assert_type(row.context_menu.animation_paste_menu, qt.QMenu)
+    assert_type(row.context_menu.animation_paste_same_action, qt.QAction)
+    assert_type(row.context_menu.animation_paste_selected_action, qt.QAction)
+    assert_type(row.context_menu.animation_cut_menu, qt.QMenu)
+    assert_type(row.context_menu.animation_cut_selected_action, qt.QAction)
+    assert_type(row.context_menu.animation_cut_all_action, qt.QAction)
+    assert_type(row.context_menu.animation_delete_menu, qt.QMenu)
+    assert_type(row.context_menu.animation_delete_selected_action, qt.QAction)
+    assert_type(row.context_menu.animation_delete_all_action, qt.QAction)
+    assert_type(row.context_menu.copy_menu, qt.QMenu)
+    assert_type(row.context_menu.copy_all_values_action, qt.QAction)
+    assert_type(row.context_menu.copy_selected_values_action, qt.QAction)
+    assert_type(row.context_menu.paste_menu, qt.QMenu)
     assert_type(
-        row.paste_copied_values_actions,
+        row.context_menu.paste_copied_values_actions,
         dict[ChannelAttributeFilter, qt.QAction],
     )
-    assert_type(row.paste_copied_values_action, qt.QAction)
-    assert_type(row.paste_selected_values_action, qt.QAction)
-    assert_type(row.round_menu, qt.QMenu | None)
-    assert_type(row.child_set_action, qt.QAction | None)
+    assert_type(row.context_menu.paste_copied_values_action, qt.QAction)
+    assert_type(row.context_menu.paste_selected_values_action, qt.QAction)
+    assert_type(row.context_menu.round_menu, qt.QMenu | None)
+    assert_type(row.context_menu.child_set_action, qt.QAction | None)
     assert_type(row.round_decimal_limit(), int)
-    assert_type(row.rotation_menu, qt.QMenu | None)
-    assert_type(row.freeze_menu, qt.QMenu)
+    assert_type(row.context_menu.rotation_menu, qt.QMenu | None)
+    assert_type(row.context_menu.freeze_menu, qt.QMenu)
     assert_type(row.freeze_separator_action, qt.QAction)
-    assert_type(row.freeze_translate_action, qt.QAction)
-    assert_type(row.freeze_rotate_action, qt.QAction)
-    assert_type(row.freeze_scale_action, qt.QAction)
-    assert_type(row.freeze_all_action, qt.QAction)
+    assert_type(row.context_menu.freeze_translate_action, qt.QAction)
+    assert_type(row.context_menu.freeze_rotate_action, qt.QAction)
+    assert_type(row.context_menu.freeze_scale_action, qt.QAction)
+    assert_type(row.context_menu.freeze_all_action, qt.QAction)
     assert_type(row.default_single_step(), int | float)
     assert_type(row.set_wheel_editing_without_focus(True), None)
 else:

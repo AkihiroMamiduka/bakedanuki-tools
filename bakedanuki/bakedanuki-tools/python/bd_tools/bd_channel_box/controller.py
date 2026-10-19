@@ -20,6 +20,7 @@ from bd_util.maya.node.inspection import (
     ScalarAttributeKind,
     filter_scalar_attribute_paths,
     inspect_scalar_attributes,
+    inspect_scalar_attribute_types,
     matches_scalar_attribute_display_filter,
     selected_node_names,
 )
@@ -65,6 +66,7 @@ from bd_util.maya.ui import (
     resolve_float_plug,
     resolve_int_plug,
     resolve_string_plug,
+    shared_plugs_lifetime,
 )
 from bd_util.ui import qt
 
@@ -1160,15 +1162,21 @@ class ChannelBoxController(qt.QObject):
             for row in rows
             if (row.attribute.path, row.attribute.kind) not in cache
         )
-        for targets in self._resolve_bulk_targets(missing):
-            attribute = targets.attribute
-            key = (attribute.path, attribute.kind)
-            cache[key] = self._create_value_row(
-                attribute,
-                list(targets.target_names),
-                list(targets.excluded),
-                monitor=False,
+        if not missing:
+            return tuple(
+                cache[(r.attribute.path, r.attribute.kind)] for r in rows
             )
+        # 同時に作る行の削除通知だけを共有し、各Bindingの復旧寿命は保つ
+        with shared_plugs_lifetime():
+            for targets in self._resolve_bulk_targets(missing):
+                attribute = targets.attribute
+                key = (attribute.path, attribute.kind)
+                cache[key] = self._create_value_row(
+                    attribute,
+                    list(targets.target_names),
+                    list(targets.excluded),
+                    monitor=False,
+                )
         return tuple(cache[(r.attribute.path, r.attribute.kind)] for r in rows)
 
     def _resolve_bulk_targets(
@@ -1183,7 +1191,7 @@ class ChannelBoxController(qt.QObject):
             tuple(
                 {
                     a.path: a
-                    for a in inspect_scalar_attributes(name, paths=paths)
+                    for a in inspect_scalar_attribute_types(name, paths=paths)
                 }
                 for name in ordered_names
             )

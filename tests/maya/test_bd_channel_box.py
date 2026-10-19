@@ -269,7 +269,7 @@ def test_last_selected_node_drives_rows_and_alignment(
 
     # 明示的な揃える操作では末尾ノードの未丸め値を他対象へ適用する
     cmds.flushUndo()
-    row.align_action.trigger()
+    row.context_menu.align_action.trigger()
     assert cmds.getAttr("channelA.weight") == 0.75
     assert cmds.getAttr("channelB.weight") == 0.75
     cmds.undo()
@@ -380,7 +380,7 @@ def test_node_name_edit_changes_only_last_selected_node_and_updates_actions(
     assert cmds.objExists("|channelB")
     assert editor.controller.node_names == ("|channelB", "|renamedChannel")
     assert editor.controller.representative_node_name == "|renamedChannel"
-    _row(editor, "weight").align_action.trigger()
+    _row(editor, "weight").context_menu.align_action.trigger()
     assert cmds.getAttr("channelB.weight") == 0.25
     assert cmds.getAttr("renamedChannel.weight") == 0.25
 
@@ -680,7 +680,7 @@ def test_bool_input_and_explicit_alignment(
     assert cmds.getAttr("channelA.visibility") is True
     assert cmds.getAttr("channelB.visibility") is False
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
-    row.align_action.trigger()
+    row.context_menu.align_action.trigger()
     assert cmds.getAttr("channelA.visibility") is True
     assert cmds.getAttr("channelB.visibility") is True
     row.editor.click()
@@ -731,15 +731,15 @@ def test_context_alignment_preserves_unrounded_value_and_one_undo(
     row.editor.spin_box.setDecimals(3)
     _open_context_menu(row.name_label)
     assert row.context_menu.isVisible()
-    assert row.align_action.isEnabled()
+    assert row.context_menu.align_action.isEnabled()
     assert cmds.getAttr("channelB.weight") == 0.75
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
     row.context_menu.close()
-    row.align_action.trigger()
+    row.context_menu.align_action.trigger()
     _events()
     assert cmds.getAttr("channelA.weight") == value
     assert cmds.getAttr("channelB.weight") == value
-    assert not row.align_action.isEnabled()
+    assert not row.context_menu.align_action.isEnabled()
     assert not row.name_label.text().startswith("• ")
     cmds.undo()
     _events()
@@ -888,7 +888,7 @@ def test_animated_representative_follows_auto_key(
     assert isclose(binding.value, 0.8, rel_tol=0, abs_tol=1e-12)
     assert binding.view_model.set_value_command.can_execute
     row = _row(editor, "weight")
-    assert row.align_action.isEnabled()
+    assert row.context_menu.align_action.isEnabled()
     assert "2/2" in row.name_label.toolTip()
     assert "Auto Key" in row.name_label.toolTip()
     assert isinstance(row.editor, FloatSliderSpinBox)

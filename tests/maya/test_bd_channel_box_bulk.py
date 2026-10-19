@@ -11,7 +11,10 @@ import pytest
 from maya import cmds
 from maya.api import OpenMaya as om
 
-from bd_util.maya.node.inspection import ScalarAttributeInfo
+from bd_util.maya.node.inspection import (
+    ScalarAttributeInfo,
+    ScalarAttributeTypeInfo,
+)
 from bd_util.maya.ui import (
     MayaEditSession,
     MayaEnumPlugsBinding,
@@ -58,6 +61,63 @@ def _row(editor: ChannelBoxWidget, name: str) -> AttributeRowWidget:
     )
     assert isinstance(result, AttributeRowWidget)
     return result
+
+
+def test_menus_stay_uncreated_during_input_undo_and_rebuild(
+    editor: ChannelBoxWidget,
+) -> None:
+    """表示・値同期・Undo/Redo・終了で未使用の行メニューを作らない。"""
+    assert all(
+        not widget.has_context_menu
+        for widget in editor.row_widgets
+        if isinstance(widget, AttributeRowWidget)
+    )
+    key = (_row(editor, "free").row.attribute.path, "number")
+    cmds.flushUndo()
+    assert editor.controller.offset_numeric_values((key,), 1.0)
+    editor.controller.finish_value_edit()
+    _events()
+    for operation in (cmds.undo, cmds.redo, editor.refresh):
+        operation()
+        _events()
+        assert all(
+            not widget.has_context_menu
+            for widget in editor.row_widgets
+            if isinstance(widget, AttributeRowWidget)
+        )
+    rows = editor.row_widgets
+    editor.dispose()
+    assert all(
+        not widget.has_context_menu
+        for widget in rows
+        if isinstance(widget, AttributeRowWidget)
+    )
+
+
+def test_row_menu_is_created_and_connected_only_once(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """初回利用時だけ対象行のメニューを作り、操作の接続を重複させない。"""
+    row = _row(editor, "free")
+    calls: list[tuple[str, tuple[str, str]]] = []
+
+    def record(action: str, key: tuple[str, str]) -> None:
+        """選択属性の操作が一回だけ呼ばれることを記録する。"""
+        calls.append((action, key))
+
+    monkeypatch.setattr(editor, "_run_selected_action", record)
+    menu = row.context_menu
+    assert row.context_menu is menu
+    menu.aboutToShow.emit()
+    menu.aboutToShow.emit()
+    menu.set_key_selected_action.trigger()
+    assert calls == [("key_selected", (row.row.attribute.path, "number"))]
+    assert all(
+        not widget.has_context_menu
+        for widget in editor.row_widgets
+        if isinstance(widget, AttributeRowWidget) and widget is not row
+    )
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def _keys(
@@ -762,7 +822,7 @@ def test_copy_uses_reference_and_paste_menu_edits_all_targets(
     memory = _MemoryClipboard()
     monkeypatch.setattr(editor.controller, "_value_clipboard", memory)
     editor.table_view.select_keys(_keys(editor, "free"))
-    _row(editor, "free").copy_selected_values_action.trigger()
+    _row(editor, "free").context_menu.copy_selected_values_action.trigger()
     copied = memory.read()
     assert len(copied.nodes) == 1
     assert copied.nodes[0].values[0].value == 3
@@ -770,8 +830,8 @@ def test_copy_uses_reference_and_paste_menu_edits_all_targets(
     _events()
     row = _row(editor, "free")
     row.context_menu.aboutToShow.emit()
-    assert row.paste_selected_values_action.isEnabled()
-    row.paste_selected_values_action.trigger()
+    assert row.context_menu.paste_selected_values_action.isEnabled()
+    row.context_menu.paste_selected_values_action.trigger()
     _events()
     assert _values("free") == [3, 3]
 
@@ -783,8 +843,8 @@ def test_align_lock_and_keyframe_menus_keep_all_targets(
     row = _row(editor, "free")
     editor.table_view.select_keys(_keys(editor, "free"))
     row.context_menu.aboutToShow.emit()
-    assert row.align_action.isEnabled()
-    row.align_action.trigger()
+    assert row.context_menu.align_action.isEnabled()
+    row.context_menu.align_action.trigger()
     assert _values("free") == [3, 3]
     editor.controller.set_selected_locked(_keys(editor, "free"), True)
     assert all(
@@ -1178,18 +1238,18 @@ def test_bulk_drag_reuses_resolution_and_releases_between_gestures(
     assert isinstance(view, IntSliderSpinBox)
     assert widget.row.binding.target_states[0].input_state is not None
     created = _record_bulk_drag_rows(editor, monkeypatch)
-    original = controller_module.inspect_scalar_attributes
+    original = controller_module.inspect_scalar_attribute_types
     inspected: list[str] = []
 
     def inspect(
         name: str, *, paths: Sequence[str] | None = None
-    ) -> tuple[ScalarAttributeInfo, ...]:
+    ) -> tuple[ScalarAttributeTypeInfo, ...]:
         """実際の属性解決だけを数え、キャッシュ利用との違いを固定する。"""
         inspected.append(name)
         return original(name, paths=paths)
 
     monkeypatch.setattr(
-        controller_module, "inspect_scalar_attributes", inspect
+        controller_module, "inspect_scalar_attribute_types", inspect
     )
     view.slider.setSliderDown(True)
     for value in (20, 30, 40):
@@ -1507,17 +1567,17 @@ def test_bulk_value_wheel_reuses_targets_and_preserves_relative_undo(
     delta = view.spin_box.singleStep()
     created = _record_bulk_drag_rows(editor, monkeypatch)
     inspected: list[str] = []
-    original = controller_module.inspect_scalar_attributes
+    original = controller_module.inspect_scalar_attribute_types
 
     def inspect(
         node: str, *, paths: Sequence[str] | None = None
-    ) -> tuple[ScalarAttributeInfo, ...]:
+    ) -> tuple[ScalarAttributeTypeInfo, ...]:
         """操作対象の照合が三入力目に再実行されないことを数える。"""
         inspected.append(node)
         return original(node, paths=paths)
 
     monkeypatch.setattr(
-        controller_module, "inspect_scalar_attributes", inspect
+        controller_module, "inspect_scalar_attribute_types", inspect
     )
     for index in range(1, 4):
         _wheel(view.spin_box)

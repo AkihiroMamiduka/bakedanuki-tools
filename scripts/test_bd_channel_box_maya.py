@@ -1264,12 +1264,16 @@ class _MayaSmokeSession:
 
         row = self._row("mode")
         self._open_context_menu(row.name_label)
-        row.context_menu.setActiveAction(row.align_menu.menuAction())
+        row.context_menu.setActiveAction(
+            row.context_menu.align_menu.menuAction()
+        )
         self._key(row.context_menu, qt.Qt.Key.Key_Right)
-        if not row.align_menu.isVisible():
+        if not row.context_menu.align_menu.isVisible():
             raise AssertionError("揃えるサブメニューを開けません")
-        row.align_menu.setActiveAction(row.align_action)
-        self._key(row.align_menu, qt.Qt.Key.Key_Return)
+        row.context_menu.align_menu.setActiveAction(
+            row.context_menu.align_action
+        )
+        self._key(row.context_menu.align_menu, qt.Qt.Key.Key_Return)
         self._flush_gui()
         self._assert_values("mode", (5, 5))
         self.steps.append("enum_context_alignment")
@@ -1369,7 +1373,7 @@ class _MayaSmokeSession:
         from bd_util.ui import qt
 
         row = self._row("enabled")
-        if not row.align_action.isEnabled():
+        if not row.context_menu.align_action.isEnabled():
             raise AssertionError("混在値を揃える操作が無効になっています")
         cmds.flushUndo()
         self._open_context_menu(row.name_label)
@@ -1379,12 +1383,16 @@ class _MayaSmokeSession:
         if not row.context_menu.grab().save(str(image_path)):
             raise RuntimeError("属性行のメニュー画像を保存できません")
         self.screenshots.append(str(image_path))
-        row.context_menu.setActiveAction(row.align_menu.menuAction())
+        row.context_menu.setActiveAction(
+            row.context_menu.align_menu.menuAction()
+        )
         self._key(row.context_menu, qt.Qt.Key.Key_Right)
-        if not row.align_menu.isVisible():
+        if not row.context_menu.align_menu.isVisible():
             raise AssertionError("揃えるサブメニューを開けません")
-        row.align_menu.setActiveAction(row.align_action)
-        self._key(row.align_menu, qt.Qt.Key.Key_Return)
+        row.context_menu.align_menu.setActiveAction(
+            row.context_menu.align_action
+        )
+        self._key(row.context_menu.align_menu, qt.Qt.Key.Key_Return)
         self._assert_values("enabled", (False, False))
         self.steps.append("align_representative_bool_value")
 
@@ -2693,7 +2701,7 @@ class _MayaSmokeSession:
                 )
             )
             self._open_context_menu(target_row.name_label)
-            paste_action = target_row.paste_copied_values_action
+            paste_action = target_row.context_menu.paste_copied_values_action
             if not paste_action.isEnabled():
                 raise AssertionError("対応clipboardのPasteが有効になりません")
             paste_action.trigger()
@@ -2752,27 +2760,31 @@ class _MayaSmokeSession:
             )
             actual_labels = tuple(
                 action.text()
-                for action in target_row.paste_copied_values_actions.values()
+                for action in target_row.context_menu.paste_copied_values_actions.values()
             )
             if actual_labels != expected_labels:
                 raise AssertionError(
                     f"表示状態Pasteメニューが不正です: {actual_labels}"
                 )
-            target_row.paste_menu.popup(
+            target_row.context_menu.paste_menu.popup(
                 target_row.name_label.mapToGlobal(
                     qt.QPoint(target_row.name_label.width(), 0)
                 )
             )
             self._flush_gui()
             filter_menu_path = self.output / "33-clipboard-filter-menu.png"
-            if not target_row.paste_menu.grab().save(str(filter_menu_path)):
+            if not target_row.context_menu.paste_menu.grab().save(
+                str(filter_menu_path)
+            ):
                 raise RuntimeError(
                     "表示状態でPaste対象を選ぶメニュー画像を保存できません"
                 )
             self.screenshots.append(str(filter_menu_path))
             cmds.flushUndo()
-            target_row.paste_copied_values_actions["channel_box"].trigger()
-            target_row.paste_menu.close()
+            target_row.context_menu.paste_copied_values_actions[
+                "channel_box"
+            ].trigger()
+            target_row.context_menu.paste_menu.close()
             target_row.context_menu.close()
             self._flush_gui()
             self._assert_values("weight", (0.9, 0.9))

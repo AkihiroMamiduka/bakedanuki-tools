@@ -60,6 +60,7 @@ from .custom_filters import CustomFilterError, CustomFilterSelection
 from .table import ChannelTableView, TableRow
 
 __all__ = [
+    "AttributeRowMenu",
     "AttributeRowWidget",
     "AttributeStateRowWidget",
     "CustomFilterManagerDialog",
@@ -333,46 +334,22 @@ class _LockCheckBox(qt.QCheckBox):
         )
 
 
-class AttributeRowWidget(qt.QWidget):
-    """右揃えの属性名と入力Viewを並べ、詳細と操作を必要時に表示する。"""
-
-    step_changed = qt.Signal(object)
+class AttributeRowMenu(qt.QMenu):
+    """初回の右クリックで生成する、値編集行の操作メニュー。"""
 
     def __init__(
-        self,
-        row: ChannelRow,
-        selection_count: int,
-        parent: qt.QWidget,
-        *,
-        single_step: int | float | None = None,
-        align_callback: Callable[[], None] | None = None,
-        wheel_editing_without_focus: bool = False,
-        representative_only: bool = False,
+        self, widget: AttributeRowWidget, align_callback: Callable[[], None]
     ) -> None:
-        """初期値を書き込まず、Bindingと表示部品を接続する。"""
-        if type(wheel_editing_without_focus) is not bool:
-            raise TypeError(
-                "wheel_editing_without_focusにはboolを指定してください"
-            )
-        super().__init__(parent)
-        self.row = row
-        self.selection_count = selection_count
-        self.representative_only = representative_only
-        self._align_callback = align_callback
-        self.setObjectName(f"channel_{row.attribute.path}")
-        self.name_label = _AttributeNameLabel(row.attribute.nice_name, self)
-        self.name_label.setAlignment(
-            qt.Qt.AlignmentFlag.AlignRight | qt.Qt.AlignmentFlag.AlignVCenter
-        )
-        self.input_indicator = _InputStateIndicator(self)
-        self.context_menu = qt.QMenu(self)
-        self.align_menu = qt.QMenu("表示ノードの値に揃える", self.context_menu)
+        """属性の型に応じた項目を、従来の順序で作成する。"""
+        super().__init__(widget)
+        row = widget.row
+        self.align_menu = qt.QMenu("表示ノードの値に揃える", self)
         self.align_action = qt.QAction("選択属性", self)
         self.align_action.setObjectName("align_selected")
         self.align_action.setToolTip(
             "選択した各属性を表示ノードの同じ属性の値へ揃える"
         )
-        self.align_action.triggered.connect(self._align_values)
+        self.align_action.triggered.connect(align_callback)
         align_actions = cast(_MenuActions, self.align_menu)
         align_actions.addAction(self.align_action)
         self.align_filtered_actions: dict[
@@ -387,7 +364,7 @@ class AttributeRowWidget(qt.QWidget):
             )
             self.align_filtered_actions[display_filter] = action
             align_actions.addAction(action)
-        self.keyframe_menu = qt.QMenu("キーフレーム", self.context_menu)
+        self.keyframe_menu = qt.QMenu("キーフレーム", self)
         self.set_key_all_keyable_action = qt.QAction("全 Keyable", self)
         self.set_key_all_keyable_action.setObjectName("set_key_all_keyable")
         self.set_key_all_keyable_action.setToolTip(
@@ -401,9 +378,7 @@ class AttributeRowWidget(qt.QWidget):
         keyframe_actions = cast(_MenuActions, self.keyframe_menu)
         keyframe_actions.addAction(self.set_key_selected_action)
         keyframe_actions.addAction(self.set_key_all_keyable_action)
-        self.breakdown_menu = qt.QMenu(
-            "ブレイクダウンフレーム", self.context_menu
-        )
+        self.breakdown_menu = qt.QMenu("ブレイクダウンフレーム", self)
         self.set_breakdown_all_keyable_action = qt.QAction("全 Keyable", self)
         self.set_breakdown_all_keyable_action.setObjectName(
             "set_breakdown_all_keyable"
@@ -421,7 +396,7 @@ class AttributeRowWidget(qt.QWidget):
         breakdown_actions = cast(_MenuActions, self.breakdown_menu)
         breakdown_actions.addAction(self.set_breakdown_selected_action)
         breakdown_actions.addAction(self.set_breakdown_all_keyable_action)
-        self.mute_menu = qt.QMenu("ミュート", self.context_menu)
+        self.mute_menu = qt.QMenu("ミュート", self)
         self.mute_selected_action = qt.QAction("選択属性", self)
         self.mute_selected_action.setObjectName("mute_selected")
         self.mute_selected_action.setToolTip(
@@ -438,7 +413,7 @@ class AttributeRowWidget(qt.QWidget):
         mute_actions = cast(_MenuActions, self.mute_menu)
         mute_actions.addAction(self.mute_selected_action)
         mute_actions.addAction(self.mute_all_animation_action)
-        self.unmute_menu = qt.QMenu("ミュート解除", self.context_menu)
+        self.unmute_menu = qt.QMenu("ミュート解除", self)
         self.unmute_selected_action = qt.QAction("選択属性", self)
         self.unmute_selected_action.setObjectName("unmute_selected")
         self.unmute_selected_action.setToolTip(
@@ -456,7 +431,7 @@ class AttributeRowWidget(qt.QWidget):
         unmute_actions.addAction(self.unmute_selected_action)
         unmute_actions.addAction(self.unmute_all_animation_action)
         self.animation_copy_menu = qt.QMenu(
-            "アニメーションカーブ：コピー", self.context_menu
+            "アニメーションカーブ：コピー", self
         )
         self.animation_copy_selected_action = qt.QAction("選択属性", self)
         self.animation_copy_selected_action.setObjectName(
@@ -476,7 +451,7 @@ class AttributeRowWidget(qt.QWidget):
         animation_copy_actions.addAction(self.animation_copy_selected_action)
         animation_copy_actions.addAction(self.animation_copy_all_action)
         self.animation_paste_menu = qt.QMenu(
-            "アニメーションカーブ：ペースト", self.context_menu
+            "アニメーションカーブ：ペースト", self
         )
         self.animation_paste_same_action = qt.QAction(
             "コピー元と同じ属性", self
@@ -496,7 +471,7 @@ class AttributeRowWidget(qt.QWidget):
         animation_paste_actions.addAction(self.animation_paste_selected_action)
         animation_paste_actions.addAction(self.animation_paste_same_action)
         self.animation_cut_menu = qt.QMenu(
-            "アニメーションカーブ：カット", self.context_menu
+            "アニメーションカーブ：カット", self
         )
         self.animation_cut_selected_action = qt.QAction("選択属性", self)
         self.animation_cut_selected_action.setObjectName(
@@ -516,7 +491,7 @@ class AttributeRowWidget(qt.QWidget):
         animation_cut_actions.addAction(self.animation_cut_selected_action)
         animation_cut_actions.addAction(self.animation_cut_all_action)
         self.animation_delete_menu = qt.QMenu(
-            "アニメーションカーブ：削除", self.context_menu
+            "アニメーションカーブ：削除", self
         )
         self.animation_delete_selected_action = qt.QAction("選択属性", self)
         self.animation_delete_selected_action.setObjectName(
@@ -543,13 +518,13 @@ class AttributeRowWidget(qt.QWidget):
             self.animation_layer_add_menu,
             self.animation_layer_add_selected_action,
             self.animation_layer_add_all_keyable_action,
-        ) = _create_animation_layer_menu(self.context_menu, "add")
+        ) = _create_animation_layer_menu(self, "add")
         (
             self.animation_layer_remove_menu,
             self.animation_layer_remove_selected_action,
             self.animation_layer_remove_all_keyable_action,
-        ) = _create_animation_layer_menu(self.context_menu, "remove")
-        self.copy_menu = qt.QMenu("コピー", self.context_menu)
+        ) = _create_animation_layer_menu(self, "remove")
+        self.copy_menu = qt.QMenu("コピー", self)
         self.copy_all_values_action = qt.QAction("全属性", self)
         self.copy_all_values_action.setObjectName("copy_all_values")
         self.copy_all_values_action.setToolTip(
@@ -563,7 +538,7 @@ class AttributeRowWidget(qt.QWidget):
         copy_actions = cast(_MenuActions, self.copy_menu)
         copy_actions.addAction(self.copy_selected_values_action)
         copy_actions.addAction(self.copy_all_values_action)
-        self.paste_menu = qt.QMenu("ペースト", self.context_menu)
+        self.paste_menu = qt.QMenu("ペースト", self)
         self.paste_copied_values_actions: dict[
             ChannelAttributeFilter, qt.QAction
         ] = {}
@@ -596,7 +571,7 @@ class AttributeRowWidget(qt.QWidget):
         self.round_scope_menus: dict[_RoundScope, qt.QMenu] = {}
         self.round_menu_decimals: int | None = None
         if isinstance(row.binding, MayaFloatPlugsBinding):
-            self.round_menu = qt.QMenu("小数点の四捨五入", self.context_menu)
+            self.round_menu = qt.QMenu("小数点の四捨五入", self)
             for scope, label in (
                 ("selected", "選択属性"),
                 *((key, title) for key, title, _ in _PASTE_FILTER_OPTIONS),
@@ -617,7 +592,7 @@ class AttributeRowWidget(qt.QWidget):
         if self.xyz_round_kind == "translate":
             menu = qt.QMenu(
                 "translateXYZ 小数点の四捨五入（子の座標を保持）",
-                self.context_menu,
+                self,
             )
             self.xyz_round_menus[False] = menu
             self.xyz_round_leaf_menus[(False, "rotate")] = menu
@@ -628,7 +603,7 @@ class AttributeRowWidget(qt.QWidget):
             ):
                 menu = qt.QMenu(
                     f"{self.xyz_round_kind}XYZ 小数点の四捨五入（{label}）",
-                    self.context_menu,
+                    self,
                 )
                 self.xyz_round_menus[preserve_translation] = menu
                 for child_attr in ("rotate", "jointOrient"):
@@ -674,7 +649,7 @@ class AttributeRowWidget(qt.QWidget):
         self.rotation_menu: qt.QMenu | None = None
         self.rotation_actions: dict[RotationDestination, qt.QAction] = {}
         if row.attribute.path in ROTATION_ATTRIBUTE_PATHS:
-            self.rotation_menu = qt.QMenu("回転を集約", self.context_menu)
+            self.rotation_menu = qt.QMenu("回転を集約", self)
             for destination in ("rotate", "rotateAxis", "jointOrient"):
                 action = qt.QAction(
                     f"{destination} に集約", self.rotation_menu
@@ -686,7 +661,7 @@ class AttributeRowWidget(qt.QWidget):
                 )
                 self.rotation_actions[destination] = action
                 cast(_MenuActions, self.rotation_menu).addAction(action)
-        self.freeze_menu = qt.QMenu("フリーズ", self.context_menu)
+        self.freeze_menu = qt.QMenu("フリーズ", self)
         self.freeze_translate_action = qt.QAction("移動", self)
         self.freeze_translate_action.setObjectName("freeze_translate")
         self.freeze_rotate_action = qt.QAction("回転", self)
@@ -703,38 +678,74 @@ class AttributeRowWidget(qt.QWidget):
             self.freeze_all_action,
         ):
             freeze_actions.addAction(action)
-        self.context_menu.addMenu(self.keyframe_menu)
-        self.context_menu.addMenu(self.breakdown_menu)
-        self.context_menu.addMenu(self.mute_menu)
-        self.context_menu.addMenu(self.unmute_menu)
-        self.context_menu.addSeparator()
-        self.context_menu.addMenu(self.animation_copy_menu)
-        self.context_menu.addMenu(self.animation_paste_menu)
-        self.context_menu.addMenu(self.animation_cut_menu)
-        self.context_menu.addMenu(self.animation_delete_menu)
-        self.context_menu.addSeparator()
-        self.context_menu.addMenu(self.animation_layer_add_menu)
-        self.context_menu.addMenu(self.animation_layer_remove_menu)
-        self.context_menu.addSeparator()
-        self.context_menu.addMenu(self.align_menu)
-        self.context_menu.addMenu(self.copy_menu)
-        self.context_menu.addMenu(self.paste_menu)
+        self.addMenu(self.keyframe_menu)
+        self.addMenu(self.breakdown_menu)
+        self.addMenu(self.mute_menu)
+        self.addMenu(self.unmute_menu)
+        self.addSeparator()
+        self.addMenu(self.animation_copy_menu)
+        self.addMenu(self.animation_paste_menu)
+        self.addMenu(self.animation_cut_menu)
+        self.addMenu(self.animation_delete_menu)
+        self.addSeparator()
+        self.addMenu(self.animation_layer_add_menu)
+        self.addMenu(self.animation_layer_remove_menu)
+        self.addSeparator()
+        self.addMenu(self.align_menu)
+        self.addMenu(self.copy_menu)
+        self.addMenu(self.paste_menu)
         if self.child_set_action is not None:
-            cast(_MenuActions, self.context_menu).addAction(
-                self.child_set_action
-            )
+            cast(_MenuActions, self).addAction(self.child_set_action)
         if self.rotation_set_action is not None:
-            cast(_MenuActions, self.context_menu).addAction(
-                self.rotation_set_action
-            )
+            cast(_MenuActions, self).addAction(self.rotation_set_action)
         if self.rotation_menu is not None:
-            self.context_menu.addMenu(self.rotation_menu)
+            self.addMenu(self.rotation_menu)
         if self.round_menu is not None:
-            self.context_menu.addMenu(self.round_menu)
+            self.addMenu(self.round_menu)
         for xyz_menu in self.xyz_round_menus.values():
-            self.context_menu.addMenu(xyz_menu)
-        self.context_menu.addSeparator()
-        self.context_menu.addMenu(self.freeze_menu)
+            self.addMenu(xyz_menu)
+        self.addSeparator()
+        self.addMenu(self.freeze_menu)
+
+
+class AttributeRowWidget(qt.QWidget):
+    """右揃えの属性名と入力Viewを並べ、詳細と操作を必要時に表示する。"""
+
+    step_changed = qt.Signal(object)
+
+    def __init__(
+        self,
+        row: ChannelRow,
+        selection_count: int,
+        parent: qt.QWidget,
+        *,
+        single_step: int | float | None = None,
+        align_callback: Callable[[], None] | None = None,
+        wheel_editing_without_focus: bool = False,
+        representative_only: bool = False,
+        context_menu_initializer: (
+            Callable[[AttributeRowWidget], None] | None
+        ) = None,
+    ) -> None:
+        """初期値を書き込まず、Bindingと表示部品を接続する。"""
+        if type(wheel_editing_without_focus) is not bool:
+            raise TypeError(
+                "wheel_editing_without_focusにはboolを指定してください"
+            )
+        super().__init__(parent)
+        self.row = row
+        self.selection_count = selection_count
+        self.representative_only = representative_only
+        self._align_callback = align_callback
+        self.setObjectName(f"channel_{row.attribute.path}")
+        self.name_label = _AttributeNameLabel(row.attribute.nice_name, self)
+        self.name_label.setAlignment(
+            qt.Qt.AlignmentFlag.AlignRight | qt.Qt.AlignmentFlag.AlignVCenter
+        )
+        self.input_indicator = _InputStateIndicator(self)
+        self._context_menu: AttributeRowMenu | None = None
+        self._context_menu_initializer = context_menu_initializer
+        self._align_enabled = False
         self.editor = self._create_editor(
             single_step,
             wheel_editing_without_focus,
@@ -770,10 +781,36 @@ class AttributeRowWidget(qt.QWidget):
         self._update_state()
 
     @property
+    def context_menu(self) -> AttributeRowMenu:
+        """初回参照時だけ全項目を生成・接続し、その後は同じメニューを返す。"""
+        if self._context_menu is None:
+            menu = AttributeRowMenu(self, self._align_values)
+            self._context_menu = menu
+            try:
+                menu.align_action.setEnabled(self._align_enabled)
+                if self._context_menu_initializer is not None:
+                    self._context_menu_initializer(self)
+            except Exception:
+                self._context_menu = None
+                menu.deleteLater()
+                raise
+        return self._context_menu
+
+    @property
+    def has_context_menu(self) -> bool:
+        """メニューを生成せず、既に利用したか返す。"""
+        return self._context_menu is not None
+
+    def close_context_menu(self) -> None:
+        """未使用のメニューを生成せず、表示中のものだけ閉じる。"""
+        if self._context_menu is not None:
+            self._context_menu.close()
+
+    @property
     def freeze_separator_action(self) -> qt.QAction:
         """配置リセットで再生成される区切りを、現在のメニューから取得する。"""
         actions = self.context_menu.actions()
-        freeze_action = self.freeze_menu.menuAction()
+        freeze_action = self.context_menu.freeze_menu.menuAction()
         for previous, action in zip(actions, actions[1:]):
             if action == freeze_action and previous.isSeparator():
                 return previous
@@ -1018,7 +1055,9 @@ class AttributeRowWidget(qt.QWidget):
             if self.representative_only
             else binding.is_mixed
         )
-        self.align_action.setEnabled(editable and can_align and defined)
+        self._align_enabled = editable and can_align and defined
+        if self._context_menu is not None:
+            self._context_menu.align_action.setEnabled(self._align_enabled)
 
     def _align_values(self) -> None:
         """選択属性を明示した場合だけ、表示ノードの値へ揃える。"""
@@ -2249,7 +2288,7 @@ class ChannelBoxWidget(qt.QWidget):
         self.context_menu.close()
         for widget in self.row_widgets:
             if isinstance(widget, AttributeRowWidget):
-                widget.context_menu.close()
+                widget.close_context_menu()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
 
@@ -2697,9 +2736,9 @@ class ChannelBoxWidget(qt.QWidget):
     def _prepare_round_menu(self, widget: AttributeRowWidget) -> None:
         """開いた数値行の表示桁数まで、各対象範囲の候補を遅延生成する。"""
         decimals = widget.round_decimal_limit()
-        if widget.round_menu_decimals == decimals:
+        if widget.context_menu.round_menu_decimals == decimals:
             return
-        for scope, submenu in widget.round_scope_menus.items():
+        for scope, submenu in widget.context_menu.round_scope_menus.items():
             submenu.clear()
             for digits in range(decimals + 1):
                 label = (
@@ -2716,7 +2755,7 @@ class ChannelBoxWidget(qt.QWidget):
                     partial(self._round_values, widget, scope, digits)
                 )
                 cast(_MenuActions, submenu).addAction(item)
-        widget.round_menu_decimals = decimals
+        widget.context_menu.round_menu_decimals = decimals
 
     def _round_values(
         self, widget: AttributeRowWidget, scope: _RoundScope, decimals: int
@@ -2739,9 +2778,9 @@ class ChannelBoxWidget(qt.QWidget):
     def _prepare_xyz_round_menu(self, widget: AttributeRowWidget) -> None:
         """開いた行の表示桁数に合わせてXYZ丸め候補を遅延生成する。"""
         decimals = widget.round_decimal_limit()
-        if widget.xyz_round_menu_decimals == decimals:
+        if widget.context_menu.xyz_round_menu_decimals == decimals:
             return
-        kind = widget.xyz_round_kind
+        kind = widget.context_menu.xyz_round_kind
         if kind is None:
             return
 
@@ -2749,7 +2788,7 @@ class ChannelBoxWidget(qt.QWidget):
         for (
             preserve_translation,
             child_attr,
-        ), submenu in widget.xyz_round_leaf_menus.items():
+        ), submenu in widget.context_menu.xyz_round_leaf_menus.items():
             submenu.clear()
             for digits in range(decimals + 1):
                 label = (
@@ -2776,7 +2815,7 @@ class ChannelBoxWidget(qt.QWidget):
                     )
                 )
                 cast(_MenuActions, submenu).addAction(item)
-        widget.xyz_round_menu_decimals = decimals
+        widget.context_menu.xyz_round_menu_decimals = decimals
 
     def _round_transform_xyz(
         self,
@@ -3039,14 +3078,14 @@ class ChannelBoxWidget(qt.QWidget):
         has_layers = bool(self.controller.selected_animation_layers())
         for menu, selected_action, all_action in (
             (
-                widget.animation_layer_add_menu,
-                widget.animation_layer_add_selected_action,
-                widget.animation_layer_add_all_keyable_action,
+                widget.context_menu.animation_layer_add_menu,
+                widget.context_menu.animation_layer_add_selected_action,
+                widget.context_menu.animation_layer_add_all_keyable_action,
             ),
             (
-                widget.animation_layer_remove_menu,
-                widget.animation_layer_remove_selected_action,
-                widget.animation_layer_remove_all_keyable_action,
+                widget.context_menu.animation_layer_remove_menu,
+                widget.context_menu.animation_layer_remove_selected_action,
+                widget.context_menu.animation_layer_remove_all_keyable_action,
             ),
         ):
             menu.setEnabled(has_nodes and has_layers)
@@ -3059,33 +3098,35 @@ class ChannelBoxWidget(qt.QWidget):
         can_paste_animation = (
             has_nodes and self.controller.can_paste_animation_curves()
         )
-        widget.animation_copy_selected_action.setEnabled(
+        widget.context_menu.animation_copy_selected_action.setEnabled(
             has_nodes and has_selection
         )
-        widget.animation_copy_all_action.setEnabled(has_nodes)
-        widget.animation_paste_same_action.setEnabled(can_paste_animation)
-        widget.animation_paste_selected_action.setEnabled(
+        widget.context_menu.animation_copy_all_action.setEnabled(has_nodes)
+        widget.context_menu.animation_paste_same_action.setEnabled(
+            can_paste_animation
+        )
+        widget.context_menu.animation_paste_selected_action.setEnabled(
             can_paste_animation and has_selection
         )
-        widget.animation_cut_selected_action.setEnabled(
+        widget.context_menu.animation_cut_selected_action.setEnabled(
             has_nodes and has_selection
         )
-        widget.animation_cut_all_action.setEnabled(has_nodes)
-        widget.animation_delete_selected_action.setEnabled(
+        widget.context_menu.animation_cut_all_action.setEnabled(has_nodes)
+        widget.context_menu.animation_delete_selected_action.setEnabled(
             has_nodes and has_selection
         )
-        widget.animation_delete_all_action.setEnabled(has_nodes)
-        widget.copy_all_values_action.setEnabled(has_nodes)
-        widget.copy_selected_values_action.setEnabled(
+        widget.context_menu.animation_delete_all_action.setEnabled(has_nodes)
+        widget.context_menu.copy_all_values_action.setEnabled(has_nodes)
+        widget.context_menu.copy_selected_values_action.setEnabled(
             has_nodes and has_selection
         )
-        for action in widget.paste_copied_values_actions.values():
+        for action in widget.context_menu.paste_copied_values_actions.values():
             action.setEnabled(can_paste)
-        widget.paste_selected_values_action.setEnabled(
+        widget.context_menu.paste_selected_values_action.setEnabled(
             can_paste and has_selection
         )
-        if widget.round_menu is not None:
-            widget.round_scope_menus["selected"].setEnabled(
+        if widget.context_menu.round_menu is not None:
+            widget.context_menu.round_scope_menus["selected"].setEnabled(
                 any(
                     isinstance(row, ChannelRow)
                     and isinstance(row.binding, MayaFloatPlugsBinding)
@@ -3093,37 +3134,39 @@ class ChannelBoxWidget(qt.QWidget):
                     for row in self.controller.rows
                 )
             )
-        for xyz_menu in widget.xyz_round_menus.values():
+        for xyz_menu in widget.context_menu.xyz_round_menus.values():
             xyz_menu.menuAction().setVisible(
                 self.controller.has_transform_context()
             )
-        if widget.child_set_action is not None:
-            widget.child_set_action.setVisible(
+        if widget.context_menu.child_set_action is not None:
+            widget.context_menu.child_set_action.setVisible(
                 self.controller.can_set_child_compensated_value()
             )
-        if widget.rotation_set_action is not None:
-            widget.rotation_set_action.setVisible(
+        if widget.context_menu.rotation_set_action is not None:
+            widget.context_menu.rotation_set_action.setVisible(
                 self.controller.can_set_rotation_preserving_pose()
             )
-        if widget.rotation_menu is not None:
-            widget.rotation_menu.menuAction().setVisible(
+        if widget.context_menu.rotation_menu is not None:
+            widget.context_menu.rotation_menu.menuAction().setVisible(
                 self.controller.can_consolidate_rotation()
             )
-            widget.rotation_actions["jointOrient"].setVisible(
+            widget.context_menu.rotation_actions["jointOrient"].setVisible(
                 bool(
                     self.controller.representative_node_name
                     and cmds.nodeType(self.controller.representative_node_name)
                     == "joint"
                 )
             )
-        self._set_paste_selected_tooltip(widget.paste_selected_values_action)
+        self._set_paste_selected_tooltip(
+            widget.context_menu.paste_selected_values_action
+        )
         show_freeze = self.controller.has_transform_context()
         widget.freeze_separator_action.setVisible(show_freeze)
-        widget.freeze_menu.menuAction().setVisible(show_freeze)
-        widget.freeze_translate_action.setEnabled(
+        widget.context_menu.freeze_menu.menuAction().setVisible(show_freeze)
+        widget.context_menu.freeze_translate_action.setEnabled(
             self.controller.can_freeze_translation()
         )
-        widget.align_action.setEnabled(
+        widget.context_menu.align_action.setEnabled(
             any(
                 isinstance(row, ChannelRow)
                 and (row.attribute.path, row.attribute.kind) in selected
@@ -3140,8 +3183,10 @@ class ChannelBoxWidget(qt.QWidget):
                 for row in self.controller.rows
             )
         )
-        widget.align_menu.setEnabled(len(self.controller.node_names) > 1)
-        for action in widget.align_filtered_actions.values():
+        widget.context_menu.align_menu.setEnabled(
+            len(self.controller.node_names) > 1
+        )
+        for action in widget.context_menu.align_filtered_actions.values():
             action.setEnabled(len(self.controller.node_names) > 1)
         self._prepare_step_settings_menu()
 
@@ -3174,13 +3219,190 @@ class ChannelBoxWidget(qt.QWidget):
             menu.addMenu(group)
         menu.aboutToShow.connect(partial(self._prepare_row_menu, widget))
 
+    def _connect_row_menu(self, widget: AttributeRowWidget) -> None:
+        """初回生成時だけ、この行の全メニューを操作へ接続する。"""
+        key = (widget.row.attribute.path, widget.row.attribute.kind)
+        for (
+            display_filter,
+            action,
+        ) in widget.context_menu.align_filtered_actions.items():
+            action.triggered.connect(
+                partial(
+                    self._align_filtered_values,
+                    display_filter,
+                )
+            )
+        widget.context_menu.set_key_all_keyable_action.triggered.connect(
+            partial(self._set_keyframes_all_keyable, False)
+        )
+        widget.context_menu.set_key_selected_action.triggered.connect(
+            partial(self._run_selected_action, "key_selected", key)
+        )
+        widget.context_menu.set_breakdown_all_keyable_action.triggered.connect(
+            partial(self._set_keyframes_all_keyable, True)
+        )
+        widget.context_menu.set_breakdown_selected_action.triggered.connect(
+            partial(
+                self._run_selected_action,
+                "breakdown_selected",
+                key,
+            )
+        )
+        widget.context_menu.mute_selected_action.triggered.connect(
+            partial(self._run_selected_action, "mute_selected", key)
+        )
+        widget.context_menu.mute_all_animation_action.triggered.connect(
+            partial(self._set_muted_all_visible, True)
+        )
+        widget.context_menu.unmute_selected_action.triggered.connect(
+            partial(self._run_selected_action, "unmute_selected", key)
+        )
+        widget.context_menu.unmute_all_animation_action.triggered.connect(
+            partial(self._set_muted_all_visible, False)
+        )
+        widget.context_menu.animation_copy_selected_action.triggered.connect(
+            partial(
+                self._run_selected_action,
+                "animation_copy_selected",
+                key,
+            )
+        )
+        widget.context_menu.animation_copy_all_action.triggered.connect(
+            self._copy_animation_curves_all_visible
+        )
+        widget.context_menu.animation_paste_same_action.triggered.connect(
+            self._paste_animation_curves_same_attributes
+        )
+        widget.context_menu.animation_paste_selected_action.triggered.connect(
+            partial(
+                self._run_selected_action,
+                "animation_paste_selected",
+                key,
+            )
+        )
+        widget.context_menu.animation_cut_selected_action.triggered.connect(
+            partial(
+                self._run_selected_action,
+                "animation_cut_selected",
+                key,
+            )
+        )
+        widget.context_menu.animation_cut_all_action.triggered.connect(
+            self._cut_animation_curves_all_visible
+        )
+        widget.context_menu.animation_delete_selected_action.triggered.connect(
+            partial(
+                self._run_selected_action,
+                "animation_delete_selected",
+                key,
+            )
+        )
+        widget.context_menu.animation_delete_all_action.triggered.connect(
+            self._delete_animation_curves_all_visible
+        )
+        widget.context_menu.copy_all_values_action.triggered.connect(
+            self._copy_all_values
+        )
+        widget.context_menu.copy_selected_values_action.triggered.connect(
+            partial(
+                self._run_selected_action,
+                "copy_selected",
+                key,
+            )
+        )
+        for (
+            display_filter,
+            action,
+        ) in widget.context_menu.paste_copied_values_actions.items():
+            action.triggered.connect(
+                partial(
+                    self._paste_copied_values,
+                    display_filter,
+                )
+            )
+        widget.context_menu.paste_selected_values_action.triggered.connect(
+            partial(
+                self._run_selected_action,
+                "paste_selected",
+                key,
+            )
+        )
+        if widget.context_menu.round_menu is not None:
+            widget.context_menu.round_menu.aboutToShow.connect(
+                partial(self._prepare_round_menu, widget)
+            )
+        for xyz_menu in widget.context_menu.xyz_round_menus.values():
+            xyz_menu.aboutToShow.connect(
+                partial(self._prepare_xyz_round_menu, widget)
+            )
+        if (
+            widget.context_menu.child_set_action is not None
+            and widget.context_menu.xyz_round_kind is not None
+        ):
+            widget.context_menu.child_set_action.triggered.connect(
+                partial(
+                    self._open_child_compensated_set_window,
+                    widget.context_menu.xyz_round_kind,
+                )
+            )
+        if (
+            widget.context_menu.rotation_set_action is not None
+            and widget.context_menu.rotation_set_target is not None
+        ):
+            widget.context_menu.rotation_set_action.triggered.connect(
+                partial(
+                    self._open_rotation_set_window,
+                    widget.context_menu.rotation_set_target,
+                )
+            )
+        for (
+            destination,
+            action,
+        ) in widget.context_menu.rotation_actions.items():
+            action.triggered.connect(
+                partial(self._consolidate_rotation, destination)
+            )
+        widget.context_menu.freeze_translate_action.triggered.connect(
+            partial(self._freeze_transforms, "translate")
+        )
+        widget.context_menu.freeze_rotate_action.triggered.connect(
+            partial(self._freeze_transforms, "rotate")
+        )
+        widget.context_menu.freeze_scale_action.triggered.connect(
+            partial(self._freeze_transforms, "scale")
+        )
+        widget.context_menu.freeze_all_action.triggered.connect(
+            partial(self._freeze_transforms, "all")
+        )
+        self._add_selection_menu(widget)
+        widget.context_menu.animation_layer_add_selected_action.triggered.connect(
+            partial(
+                self._run_selected_action,
+                "animation_layer_add_selected",
+                key,
+            )
+        )
+        widget.context_menu.animation_layer_add_all_keyable_action.triggered.connect(
+            partial(self._edit_animation_layers_all_keyable, True)
+        )
+        widget.context_menu.animation_layer_remove_selected_action.triggered.connect(
+            partial(
+                self._run_selected_action,
+                "animation_layer_remove_selected",
+                key,
+            )
+        )
+        widget.context_menu.animation_layer_remove_all_keyable_action.triggered.connect(
+            partial(self._edit_animation_layers_all_keyable, False)
+        )
+
     def _rebuild_rows(self) -> None:
         """古いViewを破棄して、新しい選択の入力行を配置する。"""
         self.state_sweep.clear()
         self.lock_sweep.clear()
         for widget in self.row_widgets:
             if isinstance(widget, AttributeRowWidget):
-                widget.context_menu.close()
+                widget.close_context_menu()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
             widget.hide()
@@ -3251,6 +3473,7 @@ class ChannelBoxWidget(qt.QWidget):
                         row,
                         len(names),
                         self.table_view.viewport(),
+                        context_menu_initializer=self._connect_row_menu,
                         single_step=self._saved_single_step(key),
                         representative_only=self.controller.mode
                         == "bulk_values",
@@ -3261,185 +3484,10 @@ class ChannelBoxWidget(qt.QWidget):
                             self.wheel_editing_action.isChecked()
                         ),
                     )
-                    for (
-                        display_filter,
-                        action,
-                    ) in widget.align_filtered_actions.items():
-                        action.triggered.connect(
-                            partial(
-                                self._align_filtered_values,
-                                display_filter,
-                            )
-                        )
                     widget.step_changed.connect(
                         partial(self._apply_step_value, key)
                     )
-                    widget.set_key_all_keyable_action.triggered.connect(
-                        partial(self._set_keyframes_all_keyable, False)
-                    )
-                    widget.set_key_selected_action.triggered.connect(
-                        partial(self._run_selected_action, "key_selected", key)
-                    )
-                    widget.set_breakdown_all_keyable_action.triggered.connect(
-                        partial(self._set_keyframes_all_keyable, True)
-                    )
-                    widget.set_breakdown_selected_action.triggered.connect(
-                        partial(
-                            self._run_selected_action,
-                            "breakdown_selected",
-                            key,
-                        )
-                    )
-                    widget.mute_selected_action.triggered.connect(
-                        partial(
-                            self._run_selected_action, "mute_selected", key
-                        )
-                    )
-                    widget.mute_all_animation_action.triggered.connect(
-                        partial(self._set_muted_all_visible, True)
-                    )
-                    widget.unmute_selected_action.triggered.connect(
-                        partial(
-                            self._run_selected_action, "unmute_selected", key
-                        )
-                    )
-                    widget.unmute_all_animation_action.triggered.connect(
-                        partial(self._set_muted_all_visible, False)
-                    )
-                    widget.animation_copy_selected_action.triggered.connect(
-                        partial(
-                            self._run_selected_action,
-                            "animation_copy_selected",
-                            key,
-                        )
-                    )
-                    widget.animation_copy_all_action.triggered.connect(
-                        self._copy_animation_curves_all_visible
-                    )
-                    widget.animation_paste_same_action.triggered.connect(
-                        self._paste_animation_curves_same_attributes
-                    )
-                    widget.animation_paste_selected_action.triggered.connect(
-                        partial(
-                            self._run_selected_action,
-                            "animation_paste_selected",
-                            key,
-                        )
-                    )
-                    widget.animation_cut_selected_action.triggered.connect(
-                        partial(
-                            self._run_selected_action,
-                            "animation_cut_selected",
-                            key,
-                        )
-                    )
-                    widget.animation_cut_all_action.triggered.connect(
-                        self._cut_animation_curves_all_visible
-                    )
-                    widget.animation_delete_selected_action.triggered.connect(
-                        partial(
-                            self._run_selected_action,
-                            "animation_delete_selected",
-                            key,
-                        )
-                    )
-                    widget.animation_delete_all_action.triggered.connect(
-                        self._delete_animation_curves_all_visible
-                    )
-                    widget.copy_all_values_action.triggered.connect(
-                        self._copy_all_values
-                    )
-                    widget.copy_selected_values_action.triggered.connect(
-                        partial(
-                            self._run_selected_action,
-                            "copy_selected",
-                            key,
-                        )
-                    )
-                    for (
-                        display_filter,
-                        action,
-                    ) in widget.paste_copied_values_actions.items():
-                        action.triggered.connect(
-                            partial(
-                                self._paste_copied_values,
-                                display_filter,
-                            )
-                        )
-                    widget.paste_selected_values_action.triggered.connect(
-                        partial(
-                            self._run_selected_action,
-                            "paste_selected",
-                            key,
-                        )
-                    )
-                    if widget.round_menu is not None:
-                        widget.round_menu.aboutToShow.connect(
-                            partial(self._prepare_round_menu, widget)
-                        )
-                    for xyz_menu in widget.xyz_round_menus.values():
-                        xyz_menu.aboutToShow.connect(
-                            partial(self._prepare_xyz_round_menu, widget)
-                        )
-                    if (
-                        widget.child_set_action is not None
-                        and widget.xyz_round_kind is not None
-                    ):
-                        widget.child_set_action.triggered.connect(
-                            partial(
-                                self._open_child_compensated_set_window,
-                                widget.xyz_round_kind,
-                            )
-                        )
-                    if (
-                        widget.rotation_set_action is not None
-                        and widget.rotation_set_target is not None
-                    ):
-                        widget.rotation_set_action.triggered.connect(
-                            partial(
-                                self._open_rotation_set_window,
-                                widget.rotation_set_target,
-                            )
-                        )
-                    for destination, action in widget.rotation_actions.items():
-                        action.triggered.connect(
-                            partial(self._consolidate_rotation, destination)
-                        )
-                    widget.freeze_translate_action.triggered.connect(
-                        partial(self._freeze_transforms, "translate")
-                    )
-                    widget.freeze_rotate_action.triggered.connect(
-                        partial(self._freeze_transforms, "rotate")
-                    )
-                    widget.freeze_scale_action.triggered.connect(
-                        partial(self._freeze_transforms, "scale")
-                    )
-                    widget.freeze_all_action.triggered.connect(
-                        partial(self._freeze_transforms, "all")
-                    )
                     self._configure_value_input(widget, key)
-                if isinstance(widget, AttributeRowWidget):
-                    self._add_selection_menu(widget)
-                    widget.animation_layer_add_selected_action.triggered.connect(
-                        partial(
-                            self._run_selected_action,
-                            "animation_layer_add_selected",
-                            key,
-                        )
-                    )
-                    widget.animation_layer_add_all_keyable_action.triggered.connect(
-                        partial(self._edit_animation_layers_all_keyable, True)
-                    )
-                    widget.animation_layer_remove_selected_action.triggered.connect(
-                        partial(
-                            self._run_selected_action,
-                            "animation_layer_remove_selected",
-                            key,
-                        )
-                    )
-                    widget.animation_layer_remove_all_keyable_action.triggered.connect(
-                        partial(self._edit_animation_layers_all_keyable, False)
-                    )
                 widgets.append(widget)
         except Exception:
             self.controller.dispose()
@@ -3616,7 +3664,7 @@ class ChannelBoxWidget(qt.QWidget):
         self.context_menu.close()
         for widget in self.row_widgets:
             if isinstance(widget, AttributeRowWidget):
-                widget.context_menu.close()
+                widget.close_context_menu()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
         self.controller.dispose()

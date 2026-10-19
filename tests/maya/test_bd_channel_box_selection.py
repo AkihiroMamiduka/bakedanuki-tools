@@ -1727,7 +1727,7 @@ def test_last_selected_node_filters_alignment_from_row_menu(
 
     row = _row(editor, "translateX")
     _open_row_menu(row)
-    row.align_filtered_actions["keyable"].trigger()
+    row.context_menu.align_filtered_actions["keyable"].trigger()
     row.context_menu.close()
     _events()
     assert cmds.getAttr("multiA.gain") == 7.0
@@ -1749,7 +1749,7 @@ def test_last_selected_node_is_value_copy_source(
 
     row = _row(editor, "translateX")
     _open_row_menu(row)
-    row.copy_selected_values_action.trigger()
+    row.context_menu.copy_selected_values_action.trigger()
     row.context_menu.close()
     transfer = memory.read()
     assert len(transfer.nodes[0].values) == 1
@@ -1915,8 +1915,8 @@ def test_selected_menu_lock_hide_and_alignment(
     qt.QApplication.sendEvent(row.name_label, event)
     _events()
     assert editor.table_view.selected_keys() == selected
-    assert row.align_action.isEnabled()
-    row.align_action.trigger()
+    assert row.context_menu.align_action.isEnabled()
+    row.context_menu.align_action.trigger()
     row.context_menu.close()
     _events()
     assert cmds.getAttr("multiB.translateX") == 5.0
@@ -1992,7 +1992,9 @@ def test_selected_menu_lock_hide_and_alignment(
         ("ロック", False),
         ("表示", False),
     ]
-    assert [action.text() for action in row.align_menu.actions()] == [
+    assert [
+        action.text() for action in row.context_menu.align_menu.actions()
+    ] == [
         "選択属性",
         "全て",
         "Keyable + ChannelBox",
@@ -2002,56 +2004,56 @@ def test_selected_menu_lock_hide_and_alignment(
     ]
     assert [
         (action.text(), action.objectName())
-        for action in row.keyframe_menu.actions()
+        for action in row.context_menu.keyframe_menu.actions()
     ] == [
         ("選択属性", "set_key_selected"),
         ("全 Keyable", "set_key_all_keyable"),
     ]
     assert [
         (action.text(), action.objectName())
-        for action in row.breakdown_menu.actions()
+        for action in row.context_menu.breakdown_menu.actions()
     ] == [
         ("選択属性", "set_breakdown_selected"),
         ("全 Keyable", "set_breakdown_all_keyable"),
     ]
     assert [
         (action.text(), action.objectName())
-        for action in row.mute_menu.actions()
+        for action in row.context_menu.mute_menu.actions()
     ] == [
         ("選択属性", "mute_selected"),
         ("全アニメーション属性", "mute_all_animation"),
     ]
     assert [
         (action.text(), action.objectName())
-        for action in row.unmute_menu.actions()
+        for action in row.context_menu.unmute_menu.actions()
     ] == [
         ("選択属性", "unmute_selected"),
         ("全アニメーション属性", "unmute_all_animation"),
     ]
     assert [
         (action.text(), action.objectName())
-        for action in row.animation_copy_menu.actions()
+        for action in row.context_menu.animation_copy_menu.actions()
     ] == [
         ("選択属性", "animation_copy_selected"),
         ("全アニメーション属性", "animation_copy_all"),
     ]
     assert [
         (action.text(), action.objectName())
-        for action in row.animation_paste_menu.actions()
+        for action in row.context_menu.animation_paste_menu.actions()
     ] == [
         ("選択属性", "animation_paste_selected"),
         ("コピー元と同じ属性", "animation_paste_same"),
     ]
     assert [
         (action.text(), action.objectName())
-        for action in row.animation_cut_menu.actions()
+        for action in row.context_menu.animation_cut_menu.actions()
     ] == [
         ("選択属性", "animation_cut_selected"),
         ("全アニメーション属性", "animation_cut_all"),
     ]
     assert [
         (action.text(), action.objectName())
-        for action in row.freeze_menu.actions()
+        for action in row.context_menu.freeze_menu.actions()
     ] == [
         ("移動", "freeze_translate"),
         ("回転", "freeze_rotate"),
@@ -2060,27 +2062,30 @@ def test_selected_menu_lock_hide_and_alignment(
     ]
     assert [
         (action.text(), action.objectName())
-        for action in row.animation_delete_menu.actions()
+        for action in row.context_menu.animation_delete_menu.actions()
     ] == [
         ("選択属性", "animation_delete_selected"),
         ("全アニメーション属性", "animation_delete_all"),
     ]
     assert [
         (action.text(), action.objectName())
-        for action in row.animation_layer_add_menu.actions()
+        for action in row.context_menu.animation_layer_add_menu.actions()
     ] == [
         ("選択属性", "animation_layer_add_selected"),
         ("全 Keyable", "animation_layer_add_all_keyable"),
     ]
     assert [
         (action.text(), action.objectName())
-        for action in row.animation_layer_remove_menu.actions()
+        for action in row.context_menu.animation_layer_remove_menu.actions()
     ] == [
         ("選択属性", "animation_layer_remove_selected"),
         ("全 Keyable", "animation_layer_remove_all_keyable"),
     ]
-    assert row.animation_layer_remove_menu.toolTipsVisible()
-    assert "キーも削除" in row.animation_layer_remove_selected_action.toolTip()
+    assert row.context_menu.animation_layer_remove_menu.toolTipsVisible()
+    assert (
+        "キーも削除"
+        in row.context_menu.animation_layer_remove_selected_action.toolTip()
+    )
     lock_menu, display_menu = selection_menus[-2:]
     assert [action.text() for action in lock_menu.actions()] == [
         "ロック",
@@ -2163,7 +2168,7 @@ def test_align_filtered_values_uses_display_node_and_one_undo(
     row = _row(editor, "translateX")
     _open_row_menu(row)
     assert editor.table_view.selected_keys() == _keys(editor, "translateX")
-    assert row.align_filtered_actions[display_filter].isEnabled()
+    assert row.context_menu.align_filtered_actions[display_filter].isEnabled()
     row.context_menu.close()
 
     clipboard = qt.QApplication.clipboard()
@@ -2171,7 +2176,7 @@ def test_align_filtered_values_uses_display_node_and_one_undo(
     try:
         clipboard.setText("align clipboard sentinel")
         cmds.flushUndo()
-        row.align_filtered_actions[display_filter].trigger()
+        row.context_menu.align_filtered_actions[display_filter].trigger()
         _events()
         assert clipboard.text() == "align clipboard sentinel"
         assert (
@@ -2202,7 +2207,7 @@ def test_align_menu_is_disabled_for_one_node(
     _events()
     row = _row(editor, "translateX")
     _open_row_menu(row)
-    assert not row.align_menu.isEnabled()
+    assert not row.context_menu.align_menu.isEnabled()
     row.context_menu.close()
     cmds.flushUndo()
     assert not editor.controller.align_filtered_values("all")
@@ -2214,9 +2219,12 @@ def test_round_menu_uses_current_row_precision_until_refresh(
 ) -> None:
     """桁数候補は表示中の行と一致し、更新後にMaya設定へ追従する。"""
     row = _row(editor, "translateX")
-    assert row.round_menu is not None
-    assert _row(editor, "enabled").round_menu is None
-    assert all(not menu.actions() for menu in row.round_scope_menus.values())
+    assert row.context_menu.round_menu is not None
+    assert _row(editor, "enabled").context_menu.round_menu is None
+    assert all(
+        not menu.actions()
+        for menu in row.context_menu.round_scope_menus.values()
+    )
     view = row.editor
     assert isinstance(view, FloatValueStepSpinBox)
     view.spin_box.setDecimals(3)
@@ -2228,10 +2236,12 @@ def test_round_menu_uses_current_row_precision_until_refresh(
     )
     try:
         cmds.optionVar(intValue=("channelsPrecision", 15))
-        row.round_menu.aboutToShow.emit()
+        row.context_menu.round_menu.aboutToShow.emit()
         assert [
             action.text()
-            for action in row.round_scope_menus["selected"].actions()
+            for action in row.context_menu.round_scope_menus[
+                "selected"
+            ].actions()
         ] == [
             "0（整数）",
             "0.1",
@@ -2241,10 +2251,12 @@ def test_round_menu_uses_current_row_precision_until_refresh(
         editor.refresh()
         _events()
         refreshed = _row(editor, "translateX")
-        assert refreshed.round_menu is not None
+        assert refreshed.context_menu.round_menu is not None
         assert refreshed.round_decimal_limit() == 15
-        refreshed.round_menu.aboutToShow.emit()
-        actions = refreshed.round_scope_menus["selected"].actions()
+        refreshed.context_menu.round_menu.aboutToShow.emit()
+        actions = refreshed.context_menu.round_scope_menus[
+            "selected"
+        ].actions()
         assert len(actions) == 16
         assert actions[-1].text() == "0.123456789012345"
     finally:
@@ -2264,49 +2276,67 @@ def test_xyz_round_menus_follow_axis_rows_and_menu_order(
     for kind in ("translate", "rotate", "rotateAxis"):
         for axis in "XYZ":
             row = _row(editor, f"{kind}{axis}")
-            assert row.xyz_round_kind == kind
-            assert row.round_menu is not None
-            assert row.child_set_action is not None
-            assert row.child_set_action.objectName() == (
+            assert row.context_menu.xyz_round_kind == kind
+            assert row.context_menu.round_menu is not None
+            assert row.context_menu.child_set_action is not None
+            assert row.context_menu.child_set_action.objectName() == (
                 "set_transform_compensate_children"
             )
             actions = row.context_menu.actions()
-            round_index = actions.index(row.round_menu.menuAction())
+            round_index = actions.index(
+                row.context_menu.round_menu.menuAction()
+            )
             assert (
                 actions[round_index + 1]
-                == row.xyz_round_menus[False].menuAction()
+                == row.context_menu.xyz_round_menus[False].menuAction()
             )
             if kind == "translate":
-                assert list(row.xyz_round_menus) == [False]
-                assert row.rotation_set_action is None
-                assert actions[round_index - 2] == row.paste_menu.menuAction()
-                assert actions[round_index - 1] == row.child_set_action
+                assert list(row.context_menu.xyz_round_menus) == [False]
+                assert row.context_menu.rotation_set_action is None
+                assert (
+                    actions[round_index - 2]
+                    == row.context_menu.paste_menu.menuAction()
+                )
+                assert (
+                    actions[round_index - 1]
+                    == row.context_menu.child_set_action
+                )
                 assert actions[round_index + 2].isSeparator()
             else:
-                assert list(row.xyz_round_menus) == [False, True]
-                assert row.rotation_menu is not None
-                assert row.rotation_set_action is not None
-                assert actions[round_index - 4] == row.paste_menu.menuAction()
-                assert actions[round_index - 3] == row.child_set_action
-                assert actions[round_index - 2] == row.rotation_set_action
+                assert list(row.context_menu.xyz_round_menus) == [False, True]
+                assert row.context_menu.rotation_menu is not None
+                assert row.context_menu.rotation_set_action is not None
                 assert (
-                    actions[round_index - 1] == row.rotation_menu.menuAction()
+                    actions[round_index - 4]
+                    == row.context_menu.paste_menu.menuAction()
+                )
+                assert (
+                    actions[round_index - 3]
+                    == row.context_menu.child_set_action
+                )
+                assert (
+                    actions[round_index - 2]
+                    == row.context_menu.rotation_set_action
+                )
+                assert (
+                    actions[round_index - 1]
+                    == row.context_menu.rotation_menu.menuAction()
                 )
                 assert (
                     actions[round_index + 2]
-                    == row.xyz_round_menus[True].menuAction()
+                    == row.context_menu.xyz_round_menus[True].menuAction()
                 )
                 assert actions[round_index + 3].isSeparator()
-                for menu in row.xyz_round_menus.values():
+                for menu in row.context_menu.xyz_round_menus.values():
                     assert [action.text() for action in menu.actions()] == [
                         "子 joint は、rotate で調整",
                         "子 joint は、jointOrient で調整",
                     ]
     for name in ("scaleX", "gain", "enabled"):
-        assert _row(editor, name).xyz_round_kind is None
-        assert not _row(editor, name).xyz_round_menus
-        assert _row(editor, name).child_set_action is None
-        assert _row(editor, name).rotation_set_action is None
+        assert _row(editor, name).context_menu.xyz_round_kind is None
+        assert not _row(editor, name).context_menu.xyz_round_menus
+        assert _row(editor, name).context_menu.child_set_action is None
+        assert _row(editor, name).context_menu.rotation_set_action is None
 
     joint = cmds.createNode("joint", name="roundMenuJoint")
     cmds.select(joint, replace=True)
@@ -2314,24 +2344,32 @@ def test_xyz_round_menus_follow_axis_rows_and_menu_order(
     _events()
     for axis in "XYZ":
         row = _row(editor, f"jointOrient{axis}")
-        assert row.xyz_round_kind == "jointOrient"
-        assert list(row.xyz_round_menus) == [False, True]
-        assert row.rotation_menu is not None
+        assert row.context_menu.xyz_round_kind == "jointOrient"
+        assert list(row.context_menu.xyz_round_menus) == [False, True]
+        assert row.context_menu.rotation_menu is not None
         actions = row.context_menu.actions()
-        assert row.round_menu is not None
-        round_index = actions.index(row.round_menu.menuAction())
+        assert row.context_menu.round_menu is not None
+        round_index = actions.index(row.context_menu.round_menu.menuAction())
         assert (
-            actions[round_index + 1] == row.xyz_round_menus[False].menuAction()
+            actions[round_index + 1]
+            == row.context_menu.xyz_round_menus[False].menuAction()
         )
         assert (
-            actions[round_index + 2] == row.xyz_round_menus[True].menuAction()
+            actions[round_index + 2]
+            == row.context_menu.xyz_round_menus[True].menuAction()
         )
-        assert row.rotation_set_action is not None
-        assert row.child_set_action is not None
-        assert actions[round_index - 4] == row.paste_menu.menuAction()
-        assert actions[round_index - 3] == row.child_set_action
-        assert actions[round_index - 2] == row.rotation_set_action
-        assert actions[round_index - 1] == row.rotation_menu.menuAction()
+        assert row.context_menu.rotation_set_action is not None
+        assert row.context_menu.child_set_action is not None
+        assert (
+            actions[round_index - 4]
+            == row.context_menu.paste_menu.menuAction()
+        )
+        assert actions[round_index - 3] == row.context_menu.child_set_action
+        assert actions[round_index - 2] == row.context_menu.rotation_set_action
+        assert (
+            actions[round_index - 1]
+            == row.context_menu.rotation_menu.menuAction()
+        )
 
 
 def test_xyz_round_menu_uses_current_row_precision_until_refresh(
@@ -2351,29 +2389,31 @@ def test_xyz_round_menu_uses_current_row_precision_until_refresh(
             view = row.editor
             assert isinstance(view, FloatValueStepSpinBox)
             view.spin_box.setDecimals(3)
-            assert not row.xyz_round_leaf_menus[(False, "rotate")].actions()
-            row.xyz_round_menus[False].aboutToShow.emit()
+            assert not row.context_menu.xyz_round_leaf_menus[
+                (False, "rotate")
+            ].actions()
+            row.context_menu.xyz_round_menus[False].aboutToShow.emit()
             assert [
                 action.text()
-                for action in row.xyz_round_leaf_menus[
+                for action in row.context_menu.xyz_round_leaf_menus[
                     (False, "rotate")
                 ].actions()
             ] == ["0（整数）", "0.1", "0.12", "0.123"]
             if name == "rotateX":
                 assert all(
                     len(menu.actions()) == 4
-                    for menu in row.xyz_round_leaf_menus.values()
+                    for menu in row.context_menu.xyz_round_leaf_menus.values()
                 )
         editor.refresh()
         _events()
         for name in ("translateX", "rotateX"):
             row = _row(editor, name)
             assert row.round_decimal_limit() == 15
-            row.xyz_round_menus[False].aboutToShow.emit()
+            row.context_menu.xyz_round_menus[False].aboutToShow.emit()
             assert all(
                 len(menu.actions()) == 16
                 and menu.actions()[-1].text() == "0.123456789012345"
-                for menu in row.xyz_round_leaf_menus.values()
+                for menu in row.context_menu.xyz_round_leaf_menus.values()
             )
     finally:
         if existed:
@@ -2405,8 +2445,8 @@ def test_rotation_set_action_opens_window_with_clicked_group(
     }
     for attribute in ("rotateX", "rotateAxisY"):
         row = _row(editor, attribute)
-        assert row.rotation_set_action is not None
-        row.rotation_set_action.trigger()
+        assert row.context_menu.rotation_set_action is not None
+        row.context_menu.rotation_set_action.trigger()
     assert before_transform == {
         target: _rotation_triplet("multiA." + target)
         for target in ("rotate", "rotateAxis")
@@ -2420,8 +2460,8 @@ def test_rotation_set_action_opens_window_with_clicked_group(
         for target in ("rotate", "rotateAxis", "jointOrient")
     }
     row = _row(editor, "jointOrientZ")
-    assert row.rotation_set_action is not None
-    row.rotation_set_action.trigger()
+    assert row.context_menu.rotation_set_action is not None
+    row.context_menu.rotation_set_action.trigger()
     assert [target for target, _ in opened] == [
         "rotate",
         "rotateAxis",
@@ -2460,8 +2500,8 @@ def test_child_set_action_opens_window_with_clicked_group(
     }
     for attribute in ("translateX", "rotateY", "rotateAxisZ"):
         row = _row(editor, attribute)
-        assert row.child_set_action is not None
-        row.child_set_action.trigger()
+        assert row.context_menu.child_set_action is not None
+        row.context_menu.child_set_action.trigger()
     assert before_transform == {
         target: _rotation_triplet("multiA." + target)
         for target in ("translate", "rotate", "rotateAxis")
@@ -2475,8 +2515,8 @@ def test_child_set_action_opens_window_with_clicked_group(
         for target in ("translate", "rotate", "rotateAxis", "jointOrient")
     }
     row = _row(editor, "jointOrientZ")
-    assert row.child_set_action is not None
-    row.child_set_action.trigger()
+    assert row.context_menu.child_set_action is not None
+    row.context_menu.child_set_action.trigger()
     assert [(tab, target) for tab, target, _ in opened] == [
         ("translate", "translate"),
         ("rotation", "rotate"),
@@ -2530,8 +2570,10 @@ def test_xyz_round_actions_dispatch_child_compensation_options(
         view = row.editor
         assert isinstance(view, FloatValueStepSpinBox)
         view.spin_box.setDecimals(3)
-        row.xyz_round_menus[preserve].aboutToShow.emit()
-        row.xyz_round_leaf_menus[(preserve, child_attr)].actions()[2].trigger()
+        row.context_menu.xyz_round_menus[preserve].aboutToShow.emit()
+        row.context_menu.xyz_round_leaf_menus[
+            (preserve, child_attr)
+        ].actions()[2].trigger()
     joint = cmds.createNode("joint", name="roundActionJoint")
     cmds.select(joint, replace=True)
     editor.refresh()
@@ -2540,8 +2582,10 @@ def test_xyz_round_actions_dispatch_child_compensation_options(
     view = row.editor
     assert isinstance(view, FloatValueStepSpinBox)
     view.spin_box.setDecimals(3)
-    row.xyz_round_menus[False].aboutToShow.emit()
-    row.xyz_round_leaf_menus[(False, "jointOrient")].actions()[2].trigger()
+    row.context_menu.xyz_round_menus[False].aboutToShow.emit()
+    row.context_menu.xyz_round_leaf_menus[(False, "jointOrient")].actions()[
+        2
+    ].trigger()
     assert calls == [
         ("translate", 2, False, "rotate"),
         ("rotate", 2, False, "rotate"),
@@ -2576,10 +2620,10 @@ def test_round_selected_values_preserves_each_node_and_one_undo(
     _open_row_menu(row)
     assert editor.table_view.selected_keys() == selected
     row.context_menu.close()
-    assert row.round_menu is not None
-    row.round_menu.aboutToShow.emit()
+    assert row.context_menu.round_menu is not None
+    row.context_menu.round_menu.aboutToShow.emit()
     cmds.flushUndo()
-    row.round_scope_menus["selected"].actions()[2].trigger()
+    row.context_menu.round_scope_menus["selected"].actions()[2].trigger()
     _events()
     assert tuple(
         cmds.getAttr(path)
@@ -2639,13 +2683,13 @@ def test_round_filter_uses_display_node_flags_outside_current_rows(
     _events()
     assert "gain" not in {row.row.attribute.name for row in editor.row_widgets}
     row = _row(editor, "translateX")
-    assert row.round_menu is not None
+    assert row.context_menu.round_menu is not None
     view = row.editor
     assert isinstance(view, FloatValueStepSpinBox)
     view.spin_box.setDecimals(3)
-    row.round_menu.aboutToShow.emit()
+    row.context_menu.round_menu.aboutToShow.emit()
     cmds.flushUndo()
-    row.round_scope_menus[scope].actions()[2].trigger()
+    row.context_menu.round_scope_menus[scope].actions()[2].trigger()
     _events()
     for name, original, after, should_round in zip(
         names,
@@ -2679,34 +2723,45 @@ def test_rotation_menu_consolidates_transform_nodes_with_one_undo(
     editor.refresh()
     editor.controller.set_attribute_filter("all")
     _events()
-    assert _row(editor, "translateX").rotation_menu is None
+    assert _row(editor, "translateX").context_menu.rotation_menu is None
     row = _row(editor, "rotateX")
-    assert _row(editor, "rotateAxisX").rotation_menu is not None
-    assert row.rotation_menu is not None
-    assert [action.text() for action in row.rotation_menu.actions()] == [
+    assert _row(editor, "rotateAxisX").context_menu.rotation_menu is not None
+    assert row.context_menu.rotation_menu is not None
+    assert [
+        action.text() for action in row.context_menu.rotation_menu.actions()
+    ] == [
         "rotate に集約",
         "rotateAxis に集約",
         "jointOrient に集約",
     ]
     menu_actions = row.context_menu.actions()
-    assert row.round_menu is not None
-    round_index = menu_actions.index(row.round_menu.menuAction())
+    assert row.context_menu.round_menu is not None
+    round_index = menu_actions.index(row.context_menu.round_menu.menuAction())
     assert (
         menu_actions[round_index + 1]
-        == row.xyz_round_menus[False].menuAction()
+        == row.context_menu.xyz_round_menus[False].menuAction()
     )
     assert (
-        menu_actions[round_index + 2] == row.xyz_round_menus[True].menuAction()
+        menu_actions[round_index + 2]
+        == row.context_menu.xyz_round_menus[True].menuAction()
     )
-    assert row.rotation_set_action is not None
-    assert row.child_set_action is not None
-    assert menu_actions[round_index - 4] == row.paste_menu.menuAction()
-    assert menu_actions[round_index - 3] == row.child_set_action
-    assert menu_actions[round_index - 2] == row.rotation_set_action
-    assert menu_actions[round_index - 1] == row.rotation_menu.menuAction()
+    assert row.context_menu.rotation_set_action is not None
+    assert row.context_menu.child_set_action is not None
+    assert (
+        menu_actions[round_index - 4]
+        == row.context_menu.paste_menu.menuAction()
+    )
+    assert menu_actions[round_index - 3] == row.context_menu.child_set_action
+    assert (
+        menu_actions[round_index - 2] == row.context_menu.rotation_set_action
+    )
+    assert (
+        menu_actions[round_index - 1]
+        == row.context_menu.rotation_menu.menuAction()
+    )
     assert menu_actions[round_index + 3].isSeparator()
     _open_row_menu(row)
-    assert not row.rotation_actions["jointOrient"].isVisible()
+    assert not row.context_menu.rotation_actions["jointOrient"].isVisible()
     row.context_menu.close()
     before = {
         node: (
@@ -2717,7 +2772,7 @@ def test_rotation_menu_consolidates_transform_nodes_with_one_undo(
         for node in ("multiA", "multiB")
     }
     cmds.flushUndo()
-    row.rotation_actions["rotate"].trigger()
+    row.context_menu.rotation_actions["rotate"].trigger()
     _events()
     for node in ("multiA", "multiB"):
         assert _rotation_triplet(f"{node}.rotateAxis") == (0.0,) * 3
@@ -2749,20 +2804,20 @@ def test_rotation_menu_joint_target_skips_transform_and_noop(
     editor.controller.set_attribute_filter("all")
     _events()
     row = _row(editor, "jointOrientX")
-    assert row.rotation_menu is not None
+    assert row.context_menu.rotation_menu is not None
     _open_row_menu(row)
-    assert row.rotation_actions["jointOrient"].isVisible()
+    assert row.context_menu.rotation_actions["jointOrient"].isVisible()
     row.context_menu.close()
     before_matrix = _local_matrix("jointC")
     cmds.flushUndo()
-    row.rotation_actions["jointOrient"].trigger()
+    row.context_menu.rotation_actions["jointOrient"].trigger()
     _events()
     assert _rotation_triplet("jointC.rotate") == (0.0,) * 3
     assert _rotation_triplet("jointC.rotateAxis") == (0.0,) * 3
     _assert_local_matrix_close(_local_matrix("jointC"), before_matrix)
     assert "multiA" in editor.message_label.text()
     cmds.flushUndo()
-    row.rotation_actions["jointOrient"].trigger()
+    row.context_menu.rotation_actions["jointOrient"].trigger()
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
@@ -2785,7 +2840,7 @@ def test_rotation_menu_rotate_axis_skips_locked_node_in_radian_unit(
     matrix = _local_matrix("multiA")
     blocked = _rotation_triplet("multiB.rotateAxis")
     cmds.flushUndo()
-    row.rotation_actions["rotateAxis"].trigger()
+    row.context_menu.rotation_actions["rotateAxis"].trigger()
     _events()
     assert _rotation_triplet("multiA.rotate") == (0.0,) * 3
     _assert_local_matrix_close(_local_matrix("multiA"), matrix)
@@ -2815,7 +2870,7 @@ def test_animation_layer_selected_adds_to_all_selected_layers_and_undoes(
     _events()
     row = _row(editor, "gain")
     _open_row_menu(row)
-    assert not row.animation_layer_add_menu.isEnabled()
+    assert not row.context_menu.animation_layer_add_menu.isEnabled()
     row.context_menu.close()
 
     cmds.animLayer(first, edit=True, selected=True)
@@ -2825,11 +2880,11 @@ def test_animation_layer_selected_adds_to_all_selected_layers_and_undoes(
     editor.table_view.select_keys(_keys(editor, "translateX", "gain", "tag"))
     row = _row(editor, "gain")
     _open_row_menu(row)
-    assert row.animation_layer_add_menu.isEnabled()
+    assert row.context_menu.animation_layer_add_menu.isEnabled()
     row.context_menu.close()
     cmds.flushUndo()
 
-    row.animation_layer_add_selected_action.trigger()
+    row.context_menu.animation_layer_add_selected_action.trigger()
     _events()
     expected = {
         f"{node}.{attribute}"
@@ -2839,7 +2894,9 @@ def test_animation_layer_selected_adds_to_all_selected_layers_and_undoes(
     for layer in (first, second):
         assert _animation_layer_attributes(layer) == expected
     assert not editor.message_label.isVisible()
-    _row(editor, "gain").animation_layer_add_selected_action.trigger()
+    _row(
+        editor, "gain"
+    ).context_menu.animation_layer_add_selected_action.trigger()
     _events()
     cmds.undo()
     _events()
@@ -2863,7 +2920,7 @@ def test_animation_layer_all_keyable_uses_each_node_flags(
     }
     cmds.flushUndo()
 
-    row.animation_layer_add_all_keyable_action.trigger()
+    row.context_menu.animation_layer_add_all_keyable_action.trigger()
     _events()
     members = _animation_layer_attributes(layer)
     assert "multiB.gain" in members
@@ -2880,7 +2937,9 @@ def test_animation_layer_all_keyable_uses_each_node_flags(
         cmds.animLayer(layer, edit=True, attribute=name)
     _events()
     cmds.flushUndo()
-    _row(editor, "gain").animation_layer_remove_all_keyable_action.trigger()
+    _row(
+        editor, "gain"
+    ).context_menu.animation_layer_remove_all_keyable_action.trigger()
     _events()
     assert _animation_layer_attributes(layer) == {"multiA.gain"}
     cmds.undo()
@@ -2914,7 +2973,9 @@ def test_animation_layer_remove_deletes_layer_keys_and_undo_restores(
     )
     cmds.flushUndo()
 
-    _row(editor, "translateX").animation_layer_remove_selected_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_layer_remove_selected_action.trigger()
     _events()
     assert "multiA.translateX" not in _animation_layer_attributes(layer)
     assert (
@@ -2963,10 +3024,10 @@ def test_freeze_transforms_preserves_shape_and_undoes_once(
     editor.refresh()
     row = _row(editor, "translateX")
     actions = {
-        "translate": row.freeze_translate_action,
-        "rotate": row.freeze_rotate_action,
-        "scale": row.freeze_scale_action,
-        "all": row.freeze_all_action,
+        "translate": row.context_menu.freeze_translate_action,
+        "rotate": row.context_menu.freeze_rotate_action,
+        "scale": row.context_menu.freeze_scale_action,
+        "all": row.context_menu.freeze_all_action,
     }
     cmds.flushUndo()
 
@@ -3044,10 +3105,12 @@ def test_freeze_menu_uses_base_transform_and_skips_other_node_types(
     editor.refresh()
     row = _row(editor, "gain")
     _open_row_menu(row)
-    assert not row.freeze_menu.menuAction().isVisible()
+    assert not row.context_menu.freeze_menu.menuAction().isVisible()
     assert not row.freeze_separator_action.isVisible()
     actions = row.context_menu.actions()
-    following = actions[actions.index(row.freeze_menu.menuAction()) + 1]
+    following = actions[
+        actions.index(row.context_menu.freeze_menu.menuAction()) + 1
+    ]
     assert following.isSeparator()
     assert following.isVisible()
     row.context_menu.close()
@@ -3056,12 +3119,12 @@ def test_freeze_menu_uses_base_transform_and_skips_other_node_types(
     editor.refresh()
     row = _row(editor, "translateX")
     _open_row_menu(row)
-    assert row.freeze_menu.menuAction().isVisible()
+    assert row.context_menu.freeze_menu.menuAction().isVisible()
     assert row.freeze_separator_action.isVisible()
-    assert row.freeze_translate_action.isEnabled()
+    assert row.context_menu.freeze_translate_action.isEnabled()
     row.context_menu.close()
     cmds.flushUndo()
-    row.freeze_translate_action.trigger()
+    row.context_menu.freeze_translate_action.trigger()
     _events()
     assert cmds.getAttr("multiA.translateX") == 0.0
     assert cmds.getAttr(f"{other}.gain") == 7.0
@@ -3096,15 +3159,20 @@ def test_freeze_separator_tracks_regenerated_qt_action(
     with pytest.raises(RuntimeError):
         _ = row.freeze_separator_action
 
-    replacement = menu.insertSeparator(row.freeze_menu.menuAction())
+    replacement = menu.insertSeparator(
+        row.context_menu.freeze_menu.menuAction()
+    )
     actions = menu.actions()
-    freeze_index = actions.index(row.freeze_menu.menuAction())
+    freeze_index = actions.index(row.context_menu.freeze_menu.menuAction())
     assert actions[freeze_index - 1] == replacement
     assert row.freeze_separator_action == replacement
     replacement.setVisible(not transform_reference)
     _show_row_menu(row)
     assert replacement.isVisible() is transform_reference
-    assert row.freeze_menu.menuAction().isVisible() is transform_reference
+    assert (
+        row.context_menu.freeze_menu.menuAction().isVisible()
+        is transform_reference
+    )
 
 
 def test_freeze_joint_keeps_translation_and_disables_move(
@@ -3119,12 +3187,12 @@ def test_freeze_joint_keeps_translation_and_disables_move(
     editor.refresh()
     row = _row(editor, "translateX")
     _open_row_menu(row)
-    assert row.freeze_menu.menuAction().isVisible()
-    assert not row.freeze_translate_action.isEnabled()
+    assert row.context_menu.freeze_menu.menuAction().isVisible()
+    assert not row.context_menu.freeze_translate_action.isEnabled()
     row.context_menu.close()
     cmds.flushUndo()
 
-    row.freeze_all_action.trigger()
+    row.context_menu.freeze_all_action.trigger()
     _events()
     assert isclose(cmds.getAttr(f"{joint}.translateX"), 1.0)
     assert isclose(cmds.getAttr(f"{joint}.rotateY"), 0.0)
@@ -3146,7 +3214,7 @@ def test_freeze_reports_maya_error_without_removing_animation(
     editor.refresh()
     cmds.flushUndo()
 
-    _row(editor, "translateX").freeze_translate_action.trigger()
+    _row(editor, "translateX").context_menu.freeze_translate_action.trigger()
     _events()
     assert cmds.keyframe("multiA.translateX", query=True, keyframeCount=True)
     assert editor.message_label.isVisible()
@@ -3178,9 +3246,9 @@ def test_set_key_all_keyable_uses_each_selected_node(
 
     row = _row(editor, "translateY")
     action = (
-        row.set_breakdown_all_keyable_action
+        row.context_menu.set_breakdown_all_keyable_action
         if breakdown
-        else row.set_key_all_keyable_action
+        else row.context_menu.set_key_all_keyable_action
     )
     action.trigger()
     _events()
@@ -3234,9 +3302,9 @@ def test_set_key_selected_skips_unavailable_plugs_silently(
 
     row = _row(editor, "translateX")
     action = (
-        row.set_breakdown_selected_action
+        row.context_menu.set_breakdown_selected_action
         if breakdown
-        else row.set_key_selected_action
+        else row.context_menu.set_key_selected_action
     )
     action.trigger()
     _events()
@@ -3289,9 +3357,9 @@ def test_set_key_selected_uses_active_animation_layer(
 
     row = _row(editor, "translateX")
     action = (
-        row.set_breakdown_selected_action
+        row.context_menu.set_breakdown_selected_action
         if breakdown
-        else row.set_key_selected_action
+        else row.context_menu.set_key_selected_action
     )
     action.trigger()
     _events()
@@ -3325,9 +3393,9 @@ def test_set_key_selected_with_no_keyable_targets_is_noop(
 
     row = _row(editor, "translateX")
     action = (
-        row.set_breakdown_selected_action
+        row.context_menu.set_breakdown_selected_action
         if breakdown
-        else row.set_key_selected_action
+        else row.context_menu.set_key_selected_action
     )
     action.trigger()
     _events()
@@ -3349,7 +3417,9 @@ def test_set_key_and_breakdown_convert_existing_key(
     _events()
     cmds.flushUndo()
 
-    _row(editor, "translateX").set_breakdown_selected_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.set_breakdown_selected_action.trigger()
     assert _has_breakdown("multiA.translateX", 7)
     assert cmds.keyframe(
         "multiA.translateX", query=True, time=(7, 7), valueChange=True
@@ -3364,7 +3434,7 @@ def test_set_key_and_breakdown_convert_existing_key(
 
     cmds.setKeyframe("multiA.translateX", breakdown=True)
     cmds.flushUndo()
-    _row(editor, "translateX").set_key_selected_action.trigger()
+    _row(editor, "translateX").context_menu.set_key_selected_action.trigger()
     assert not _has_breakdown("multiA.translateX", 7)
     cmds.undo()
     _events()
@@ -3387,7 +3457,11 @@ def test_mute_selected_includes_hidden_attributes_and_undoes_together(
     cmds.flushUndo()
 
     row = _row(editor, "translateX")
-    action = row.mute_selected_action if muted else row.unmute_selected_action
+    action = (
+        row.context_menu.mute_selected_action
+        if muted
+        else row.context_menu.unmute_selected_action
+    )
     action.trigger()
     _events()
     for node in ("multiA", "multiB"):
@@ -3433,9 +3507,9 @@ def test_mute_all_uses_visible_flags_independent_of_filter(
 
     row = _row(editor, "translateX")
     action = (
-        row.mute_all_animation_action
+        row.context_menu.mute_all_animation_action
         if muted
-        else row.unmute_all_animation_action
+        else row.context_menu.unmute_all_animation_action
     )
     action.trigger()
     _events()
@@ -3458,7 +3532,7 @@ def test_mute_all_without_connections_is_noop(
 ) -> None:
     """未接続属性しかない全操作ではmuteノードもUndo項目も作らない。"""
     cmds.flushUndo()
-    _row(editor, "translateX").mute_all_animation_action.trigger()
+    _row(editor, "translateX").context_menu.mute_all_animation_action.trigger()
     _events()
     assert not cmds.ls(type="mute")
     assert not editor.message_label.isVisible()
@@ -3476,7 +3550,7 @@ def test_mute_all_covers_visible_noncurve_inputs(
     editor.refresh()
     cmds.flushUndo()
 
-    _row(editor, "rotateX").mute_all_animation_action.trigger()
+    _row(editor, "rotateX").context_menu.mute_all_animation_action.trigger()
     _events()
     assert cmds.mute("multiA.rotateX", query=True) is True
     assert cmds.mute("multiB.rotateX", query=True) is True
@@ -3505,7 +3579,7 @@ def test_unmute_selected_preserves_animated_mute_node(
     editor.refresh()
     cmds.flushUndo()
 
-    _row(editor, "translateX").unmute_selected_action.trigger()
+    _row(editor, "translateX").context_menu.unmute_selected_action.trigger()
     _events()
     assert cmds.mute("multiA.translateX", query=True) is False
     assert cmds.objExists(mute_node)
@@ -3529,7 +3603,9 @@ def test_animation_curve_cut_selected_updates_both_clipboards_and_undoes_once(
     cmds.setKeyframe("multiA.translateY", time=1, value=8)
     cmds.flushUndo()
 
-    _row(editor, "translateX").animation_cut_selected_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_cut_selected_action.trigger()
     _events()
     assert not cmds.keyframe(
         "multiA.translateX", query=True, keyframeCount=True
@@ -3537,7 +3613,9 @@ def test_animation_curve_cut_selected_updates_both_clipboards_and_undoes_once(
     assert cmds.keyframe("multiA.translateY", query=True, keyframeCount=True)
     assert editor.controller.can_paste_animation_curves()
     assert not editor.message_label.isVisible()
-    _row(editor, "translateX").animation_cut_selected_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_cut_selected_action.trigger()
     _events()
     cmds.undo()
     _events()
@@ -3565,7 +3643,9 @@ def test_animation_curve_cut_selected_updates_both_clipboards_and_undoes_once(
         20.0,
         29.0,
     ]
-    _row(editor, "translateX").animation_paste_same_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_paste_same_action.trigger()
     _events()
     assert cmds.keyframe("multiB.translateX", query=True, timeChange=True) == [
         20.0,
@@ -3586,7 +3666,7 @@ def test_animation_curve_cut_all_uses_visible_flags_and_preserves_noop_copy(
     editor.controller.set_attribute_filter("keyable")
     cmds.flushUndo()
 
-    _row(editor, "translateX").animation_cut_all_action.trigger()
+    _row(editor, "translateX").context_menu.animation_cut_all_action.trigger()
     _events()
     for attribute in ("translateX", "translateY"):
         assert not cmds.keyframe(
@@ -3594,14 +3674,16 @@ def test_animation_curve_cut_all_uses_visible_flags_and_preserves_noop_copy(
         )
     assert cmds.keyframe("multiA.translateZ", query=True, keyframeCount=True)
     cmds.flushUndo()
-    _row(editor, "translateX").animation_cut_all_action.trigger()
+    _row(editor, "translateX").context_menu.animation_cut_all_action.trigger()
     _events()
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
     cmds.select("multiB", replace=True)
     cmds.currentTime(20)
     editor.refresh()
-    _row(editor, "translateX").animation_paste_same_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_paste_same_action.trigger()
     _events()
     for attribute in ("translateX", "translateY"):
         assert cmds.keyframe(
@@ -3629,14 +3711,14 @@ def test_animation_curve_cut_selected_includes_other_type_nodes(
     assert len(row.row.target_names) == 1
     cmds.flushUndo()
 
-    row.animation_cut_selected_action.trigger()
+    row.context_menu.animation_cut_selected_action.trigger()
     _events()
     for node in ("multiA", "multiB"):
         assert not cmds.keyframe(
             f"{node}.transfer", query=True, keyframeCount=True
         )
     cmds.currentTime(20)
-    _row(editor, "transfer").animation_paste_same_action.trigger()
+    _row(editor, "transfer").context_menu.animation_paste_same_action.trigger()
     _events()
     for node in ("multiA", "multiB"):
         assert cmds.keyframe(
@@ -3658,7 +3740,9 @@ def test_animation_curve_cut_skips_shared_curve_and_keeps_copy_aligned(
     editor.table_view.select_keys(_keys(editor, "translateX", "translateY"))
     cmds.flushUndo()
 
-    _row(editor, "translateX").animation_cut_selected_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_cut_selected_action.trigger()
     _events()
     for node in ("multiA", "multiB"):
         assert cmds.keyframe(
@@ -3670,7 +3754,9 @@ def test_animation_curve_cut_skips_shared_curve_and_keeps_copy_aligned(
     cmds.select("multiB", replace=True)
     cmds.currentTime(20)
     editor.refresh()
-    _row(editor, "translateY").animation_paste_same_action.trigger()
+    _row(
+        editor, "translateY"
+    ).context_menu.animation_paste_same_action.trigger()
     _events()
     assert cmds.keyframe("multiB.translateY", query=True, timeChange=True) == [
         20.0
@@ -3693,7 +3779,9 @@ def test_animation_curve_delete_selected_includes_hidden_and_undoes_once(
     editor.table_view.select_keys(_keys(editor, "translateX", "translateZ"))
     cmds.flushUndo()
 
-    _row(editor, "translateX").animation_delete_selected_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_delete_selected_action.trigger()
     _events()
     for node in ("multiA", "multiB"):
         for attribute in ("translateX", "translateZ"):
@@ -3739,7 +3827,9 @@ def test_animation_curve_delete_all_uses_visible_flags_not_filter(
     )
     cmds.flushUndo()
 
-    _row(editor, "translateX").animation_delete_all_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_delete_all_action.trigger()
     _events()
     for attribute in ("translateX", "translateY"):
         assert not cmds.keyframe(
@@ -3774,8 +3864,8 @@ def test_animation_curve_delete_selected_keeps_copied_keys(
     cmds.setKeyframe("multiA.translateX", time=1, value=2)
     cmds.setKeyframe("multiA.translateX", time=10, value=5)
     row = _row(editor, "translateX")
-    row.animation_copy_selected_action.trigger()
-    row.animation_delete_selected_action.trigger()
+    row.context_menu.animation_copy_selected_action.trigger()
+    row.context_menu.animation_delete_selected_action.trigger()
     _events()
     assert not cmds.keyframe(
         "multiA.translateX", query=True, keyframeCount=True
@@ -3799,7 +3889,9 @@ def test_animation_curve_delete_selected_keeps_copied_keys(
         29.0,
     ]
 
-    _row(editor, "translateX").animation_paste_same_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_paste_same_action.trigger()
     _events()
     assert cmds.keyframe("multiB.translateX", query=True, timeChange=True) == [
         20.0,
@@ -3820,7 +3912,9 @@ def test_animation_curve_delete_skips_shared_curve_without_undo(
     cmds.connectAttr(f"{curves[0]}.output", "multiB.translateX", force=True)
     cmds.flushUndo()
 
-    _row(editor, "translateX").animation_delete_selected_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_delete_selected_action.trigger()
     _events()
     for node in ("multiA", "multiB"):
         assert (
@@ -3851,7 +3945,9 @@ def test_animation_curve_delete_selected_covers_muted_and_driven_keys(
     editor.table_view.select_keys(_keys(editor, "translateX", "gain"))
     cmds.flushUndo()
 
-    _row(editor, "translateX").animation_delete_selected_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_delete_selected_action.trigger()
     _events()
     assert not cmds.keyframe(
         "multiA.translateX", query=True, keyframeCount=True
@@ -3882,7 +3978,7 @@ def test_animation_curve_delete_selected_includes_other_type_nodes(
     row = _row(editor, "transfer")
     assert len(row.row.target_names) == 1
 
-    row.animation_delete_selected_action.trigger()
+    row.context_menu.animation_delete_selected_action.trigger()
     _events()
     for node in ("multiA", "multiB"):
         assert not cmds.keyframe(
@@ -3901,7 +3997,7 @@ def test_animation_curve_copy_selected_and_paste_same_attributes(
     cmds.flushUndo()
 
     row = _row(editor, "translateX")
-    row.animation_copy_selected_action.trigger()
+    row.context_menu.animation_copy_selected_action.trigger()
     _events()
     assert (
         editor.controller.can_paste_animation_curves()
@@ -3912,7 +4008,9 @@ def test_animation_curve_copy_selected_and_paste_same_attributes(
     editor.refresh()
     cmds.flushUndo()
 
-    _row(editor, "translateY").animation_paste_same_action.trigger()
+    _row(
+        editor, "translateY"
+    ).context_menu.animation_paste_same_action.trigger()
     _events()
     assert cmds.keyframe("multiB.translateX", query=True, timeChange=True) == [
         20.0,
@@ -4254,12 +4352,14 @@ def test_animation_curve_copy_all_uses_visible_flags_not_filter(
         for row in editor.row_widgets
     )
 
-    _row(editor, "translateX").animation_copy_all_action.trigger()
+    _row(editor, "translateX").context_menu.animation_copy_all_action.trigger()
     _events()
     cmds.select("multiB", replace=True)
     cmds.currentTime(20)
     editor.refresh()
-    _row(editor, "translateX").animation_paste_same_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_paste_same_action.trigger()
     _events()
     assert (
         cmds.keyframe("multiB.translateX", query=True, keyframeCount=True) == 1
@@ -4280,14 +4380,18 @@ def test_animation_curve_paste_selected_one_curve_fans_out(
     editor.refresh()
     cmds.setKeyframe("multiA.translateX", time=1, value=1)
     cmds.setKeyframe("multiA.translateX", time=10, value=4)
-    _row(editor, "translateX").animation_copy_selected_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_copy_selected_action.trigger()
     cmds.select("multiB", replace=True)
     cmds.currentTime(20)
     editor.refresh()
     editor.table_view.select_keys(_keys(editor, "translateX", "translateY"))
     cmds.flushUndo()
 
-    _row(editor, "translateY").animation_paste_selected_action.trigger()
+    _row(
+        editor, "translateY"
+    ).context_menu.animation_paste_selected_action.trigger()
     _events()
     for attribute in ("translateX", "translateY"):
         path = f"multiB.{attribute}"
@@ -4318,7 +4422,7 @@ def test_animation_curve_paste_selected_across_scalar_types(
     editor.refresh()
     cmds.setKeyframe("multiA.gain", time=1, value=0.25)
     cmds.setKeyframe("multiA.gain", time=10, value=1.75)
-    _row(editor, "gain").animation_copy_selected_action.trigger()
+    _row(editor, "gain").context_menu.animation_copy_selected_action.trigger()
     cmds.select("multiB", replace=True)
     cmds.currentTime(20)
     editor.refresh()
@@ -4327,7 +4431,7 @@ def test_animation_curve_paste_selected_across_scalar_types(
     )
     cmds.flushUndo()
 
-    _row(editor, "gain").animation_paste_selected_action.trigger()
+    _row(editor, "gain").context_menu.animation_paste_selected_action.trigger()
     _events()
     for attribute in ("gain", "translateX", "rotateX", "enabled", "mode"):
         assert cmds.keyframe(
@@ -4355,13 +4459,15 @@ def test_animation_curve_paste_selected_angle_to_number(
     editor.refresh()
     cmds.setKeyframe("multiA.rotateX", time=1, value=0.25)
     cmds.setKeyframe("multiA.rotateX", time=10, value=1.75)
-    _row(editor, "rotateX").animation_copy_selected_action.trigger()
+    _row(
+        editor, "rotateX"
+    ).context_menu.animation_copy_selected_action.trigger()
     cmds.select("multiB", replace=True)
     cmds.currentTime(20)
     editor.refresh()
     editor.table_view.select_keys(_keys(editor, "gain"))
 
-    _row(editor, "gain").animation_paste_selected_action.trigger()
+    _row(editor, "gain").context_menu.animation_paste_selected_action.trigger()
     _events()
     assert cmds.keyframe("multiB.gain", query=True, timeChange=True) == [
         20.0,
@@ -4387,12 +4493,14 @@ def test_animation_curve_paste_same_path_across_types(
     editor.refresh()
     cmds.setKeyframe("multiA.transfer", time=1, value=0.25)
     cmds.setKeyframe("multiA.transfer", time=10, value=1.75)
-    _row(editor, "transfer").animation_copy_selected_action.trigger()
+    _row(
+        editor, "transfer"
+    ).context_menu.animation_copy_selected_action.trigger()
     cmds.select("multiB", replace=True)
     cmds.currentTime(20)
     editor.refresh()
 
-    _row(editor, "transfer").animation_paste_same_action.trigger()
+    _row(editor, "transfer").context_menu.animation_paste_same_action.trigger()
     _events()
     assert cmds.keyframe("multiB.transfer", query=True, timeChange=True) == [
         20.0,
@@ -4418,7 +4526,9 @@ def test_animation_curve_paste_selected_includes_other_type_nodes(
     editor.refresh()
     cmds.setKeyframe("multiA.transfer", time=1, value=0.25)
     cmds.setKeyframe("multiA.transfer", time=10, value=1.75)
-    _row(editor, "transfer").animation_copy_selected_action.trigger()
+    _row(
+        editor, "transfer"
+    ).context_menu.animation_copy_selected_action.trigger()
     cmds.select("multiA", "multiB", replace=True)
     cmds.currentTime(20)
     editor.refresh()
@@ -4426,7 +4536,7 @@ def test_animation_curve_paste_selected_includes_other_type_nodes(
     assert len(row.row.target_names) == 1
     editor.table_view.select_keys(_keys(editor, "transfer"))
 
-    row.animation_paste_selected_action.trigger()
+    row.context_menu.animation_paste_selected_action.trigger()
     _events()
     assert cmds.keyframe("multiB.transfer", query=True, timeChange=True) == [
         20.0,
@@ -4447,13 +4557,17 @@ def test_animation_curve_paste_selected_multiple_curves_match_paths(
     for attribute in ("translateX", "translateY"):
         cmds.setKeyframe(f"multiA.{attribute}", time=1, value=1)
     editor.table_view.select_keys(_keys(editor, "translateX", "translateY"))
-    _row(editor, "translateX").animation_copy_selected_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_copy_selected_action.trigger()
     cmds.select("multiB", replace=True)
     cmds.currentTime(20)
     editor.refresh()
     editor.table_view.select_keys(_keys(editor, "translateY", "translateZ"))
 
-    _row(editor, "translateY").animation_paste_selected_action.trigger()
+    _row(
+        editor, "translateY"
+    ).context_menu.animation_paste_selected_action.trigger()
     _events()
     assert not cmds.keyframe(
         "multiB.translateX", query=True, keyframeCount=True
@@ -4490,7 +4604,9 @@ def test_animation_curve_copy_multiple_nodes_maps_by_selection_order(
     ):
         cmds.setKeyframe(f"{node}.translateX", time=1, value=values[0])
         cmds.setKeyframe(f"{node}.translateX", time=10, value=values[1])
-    _row(editor, "translateX").animation_copy_selected_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_copy_selected_action.trigger()
     for node in ("targetA", "targetB"):
         cmds.createNode("transform", name=node)
     cmds.select("targetA", "targetB", replace=True)
@@ -4498,7 +4614,9 @@ def test_animation_curve_copy_multiple_nodes_maps_by_selection_order(
     editor.refresh()
     cmds.flushUndo()
 
-    _row(editor, "translateX").animation_paste_same_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_paste_same_action.trigger()
     _events()
     for node, values in zip(
         ("targetA", "targetB"), destination_values, strict=True
@@ -4555,7 +4673,9 @@ def test_animation_curve_paste_inserts_and_connects_to_existing_curve(
     editor.refresh()
     cmds.setKeyframe("multiA.translateX", time=1, value=1)
     cmds.setKeyframe("multiA.translateX", time=10, value=4)
-    _row(editor, "translateX").animation_copy_selected_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_copy_selected_action.trigger()
     cmds.setKeyframe("multiB.translateX", time=15, value=10)
     cmds.setKeyframe("multiB.translateX", time=25, value=20)
     cmds.select("multiB", replace=True)
@@ -4563,7 +4683,9 @@ def test_animation_curve_paste_inserts_and_connects_to_existing_curve(
     editor.refresh()
     cmds.flushUndo()
 
-    _row(editor, "translateX").animation_paste_same_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_paste_same_action.trigger()
     _events()
     times = cmds.keyframe("multiB.translateX", query=True, timeChange=True)
     values = cmds.keyframe("multiB.translateX", query=True, valueChange=True)
@@ -4588,12 +4710,16 @@ def test_animation_curve_copy_selected_includes_hidden_attribute(
     cmds.select("multiA", replace=True)
     editor.refresh()
     editor.controller.set_attribute_filter("all")
-    _row(editor, "translateZ").animation_copy_selected_action.trigger()
+    _row(
+        editor, "translateZ"
+    ).context_menu.animation_copy_selected_action.trigger()
     cmds.select("multiB", replace=True)
     cmds.currentTime(20)
     editor.refresh()
 
-    _row(editor, "translateX").animation_paste_same_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_paste_same_action.trigger()
     _events()
     assert cmds.keyframe("multiB.translateZ", query=True, timeChange=True) == [
         20.0
@@ -4607,13 +4733,17 @@ def test_animation_curve_paste_skips_locked_attribute_without_undo(
     cmds.select("multiA", replace=True)
     editor.refresh()
     cmds.setKeyframe("multiA.translateX", time=1, value=2)
-    _row(editor, "translateX").animation_copy_selected_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_copy_selected_action.trigger()
     cmds.select("multiB", replace=True)
     cmds.setAttr("multiB.translateX", lock=True)
     editor.refresh()
     cmds.flushUndo()
 
-    _row(editor, "translateX").animation_paste_same_action.trigger()
+    _row(
+        editor, "translateX"
+    ).context_menu.animation_paste_same_action.trigger()
     _events()
     assert not cmds.keyframe(
         "multiB.translateX", query=True, keyframeCount=True
@@ -4629,13 +4759,15 @@ def test_animation_curve_paste_selected_ignores_enum_definition(
     cmds.select("multiA", replace=True)
     editor.refresh()
     cmds.setKeyframe("multiA.mode", time=1, value=1)
-    _row(editor, "mode").animation_copy_selected_action.trigger()
+    _row(editor, "mode").context_menu.animation_copy_selected_action.trigger()
     cmds.select("multiB", replace=True)
     cmds.currentTime(20)
     editor.refresh()
     editor.table_view.select_keys(_keys(editor, "quality", "variant"))
 
-    _row(editor, "quality").animation_paste_selected_action.trigger()
+    _row(
+        editor, "quality"
+    ).context_menu.animation_paste_selected_action.trigger()
     _events()
     assert cmds.keyframe("multiB.quality", query=True, keyframeCount=True) == 1
     assert cmds.keyframe("multiB.variant", query=True, keyframeCount=True) == 1
@@ -4771,15 +4903,19 @@ def test_copy_all_values_uses_reference_node_and_does_not_write(
         editor.table_view.select_keys(selected)
         row = _row(editor, "translateX")
         _show_row_menu(row)
-        assert row.copy_menu.title() == "コピー"
-        assert [action.text() for action in row.copy_menu.actions()] == [
+        assert row.context_menu.copy_menu.title() == "コピー"
+        assert [
+            action.text() for action in row.context_menu.copy_menu.actions()
+        ] == [
             "選択属性",
             "全属性",
         ]
-        assert row.copy_all_values_action.isEnabled()
-        assert row.copy_selected_values_action.isEnabled()
-        assert row.paste_menu.title() == "ペースト"
-        assert [action.text() for action in row.paste_menu.actions()] == [
+        assert row.context_menu.copy_all_values_action.isEnabled()
+        assert row.context_menu.copy_selected_values_action.isEnabled()
+        assert row.context_menu.paste_menu.title() == "ペースト"
+        assert [
+            action.text() for action in row.context_menu.paste_menu.actions()
+        ] == [
             "選択属性",
             "コピー元と同じ属性：全て",
             "コピー元と同じ属性：Keyable + ChannelBox",
@@ -4788,7 +4924,8 @@ def test_copy_all_values_uses_reference_node_and_does_not_write(
             "コピー元と同じ属性：Hide",
         ]
         assert all(
-            action.menu() is None for action in row.paste_menu.actions()
+            action.menu() is None
+            for action in row.context_menu.paste_menu.actions()
         )
         assert editor.edit_menu.title() == "編集"
         assert editor.copy_menu.title() == "コピー"
@@ -4798,7 +4935,7 @@ def test_copy_all_values_uses_reference_node_and_does_not_write(
         ]
         assert editor.paste_menu.title() == "ペースト"
         assert [action.text() for action in editor.paste_menu.actions()] == [
-            action.text() for action in row.paste_menu.actions()
+            action.text() for action in row.context_menu.paste_menu.actions()
         ]
         assert all(
             action.menu() is None for action in editor.paste_menu.actions()
@@ -4821,8 +4958,8 @@ def test_copy_all_values_uses_reference_node_and_does_not_write(
         assert len(values) > len(selected)
         assert len(transfer.nodes) == 1
         _show_row_menu(row)
-        assert row.paste_copied_values_action.isEnabled()
-        assert row.paste_selected_values_action.isEnabled()
+        assert row.context_menu.paste_copied_values_action.isEnabled()
+        assert row.context_menu.paste_selected_values_action.isEnabled()
         assert cmds.getAttr("multiB.translateX") == 9.0
         assert cmds.undoInfo(query=True, undoQueueEmpty=True)
         assert f"全{len(values)}属性" in editor.message_label.text()
@@ -4841,8 +4978,8 @@ def test_single_copied_value_pastes_to_selected_paths_and_nodes(
         editor.table_view.select_keys(_keys(editor, "translateX"))
         source_row = _row(editor, "translateX")
         _show_row_menu(source_row)
-        assert source_row.copy_selected_values_action.isEnabled()
-        source_row.copy_selected_values_action.trigger()
+        assert source_row.context_menu.copy_selected_values_action.isEnabled()
+        source_row.context_menu.copy_selected_values_action.trigger()
         assert editor.controller.can_paste_single_value()
 
         editor.table_view.select_keys(
@@ -4850,8 +4987,11 @@ def test_single_copied_value_pastes_to_selected_paths_and_nodes(
         )
         target_row = _row(editor, "translateY")
         _show_row_menu(target_row)
-        assert target_row.paste_selected_values_action.isEnabled()
-        assert "一つの値" in target_row.paste_selected_values_action.toolTip()
+        assert target_row.context_menu.paste_selected_values_action.isEnabled()
+        assert (
+            "一つの値"
+            in target_row.context_menu.paste_selected_values_action.toolTip()
+        )
         editor.edit_menu.aboutToShow.emit()
         assert editor.paste_selected_values_action.isEnabled()
         cmds.flushUndo()
@@ -4894,7 +5034,7 @@ def test_selected_values_paste_to_copied_paths_across_nodes(
         )
         source_row = _row(editor, "translateX")
         _show_row_menu(source_row)
-        source_row.copy_selected_values_action.trigger()
+        source_row.context_menu.copy_selected_values_action.trigger()
         transfer = MayaScalarValueClipboard().read()
         assert {snapshot.path for snapshot in transfer.nodes[0].values} == {
             "translate.translateX",
@@ -4909,10 +5049,10 @@ def test_selected_values_paste_to_copied_paths_across_nodes(
         editor.table_view.select_keys(_keys(editor, "rotateX"))
         target_row = _row(editor, "rotateX")
         _show_row_menu(target_row)
-        assert target_row.paste_copied_values_action.isEnabled()
+        assert target_row.context_menu.paste_copied_values_action.isEnabled()
         cmds.flushUndo()
 
-        target_row.paste_copied_values_action.trigger()
+        target_row.context_menu.paste_copied_values_action.trigger()
         _events()
         for node in ("multiA", "multiB"):
             assert cmds.getAttr(node + ".translateX") == 5.25
@@ -4963,7 +5103,7 @@ def test_filtered_paste_uses_last_selected_node_from_row_menu(
 
     row = _row(editor, "translateX")
     _open_row_menu(row)
-    action = row.paste_copied_values_actions["channel_box"]
+    action = row.context_menu.paste_copied_values_actions["channel_box"]
     assert action.isEnabled()
     action.trigger()
     row.context_menu.close()
@@ -5077,7 +5217,7 @@ def test_paste_matches_only_selected_formal_paths_across_nodes(
         _set_value("multiA.enabled", True)
         source_row = _row(editor, "translateX")
         _show_row_menu(source_row)
-        source_row.copy_all_values_action.trigger()
+        source_row.context_menu.copy_all_values_action.trigger()
 
         for node, mode_definition in (
             ("pasteA", "A:B:C"),
@@ -5119,11 +5259,12 @@ def test_paste_matches_only_selected_formal_paths_across_nodes(
             _keys(editor, "translateX", "gain", "mode")
         )
         _show_row_menu(target_row)
-        assert target_row.paste_selected_values_action.isEnabled()
+        assert target_row.context_menu.paste_selected_values_action.isEnabled()
         assert (
-            "同じ正式path" in target_row.paste_selected_values_action.toolTip()
+            "同じ正式path"
+            in target_row.context_menu.paste_selected_values_action.toolTip()
         )
-        target_row.paste_selected_values_action.trigger()
+        target_row.context_menu.paste_selected_values_action.trigger()
         _events()
 
         assert cmds.getAttr("pasteA.translateX") == 5.25
@@ -5160,8 +5301,8 @@ def test_invalid_clipboard_data_reports_error_without_writing(
         clipboard.setMimeData(mime_data)
         row = _row(editor, "translateX")
         _show_row_menu(row)
-        assert row.paste_copied_values_action.isEnabled()
-        assert row.paste_selected_values_action.isEnabled()
+        assert row.context_menu.paste_copied_values_action.isEnabled()
+        assert row.context_menu.paste_selected_values_action.isEnabled()
         editor.message_label.setText("以前の操作通知")
         editor.message_label.show()
         before = tuple(
@@ -5169,7 +5310,7 @@ def test_invalid_clipboard_data_reports_error_without_writing(
         )
         cmds.flushUndo()
 
-        row.paste_selected_values_action.trigger()
+        row.context_menu.paste_selected_values_action.trigger()
         assert (
             tuple(
                 cmds.getAttr(node + ".translateX")
