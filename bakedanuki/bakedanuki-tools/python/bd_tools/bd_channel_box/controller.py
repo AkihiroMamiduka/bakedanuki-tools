@@ -181,6 +181,15 @@ class ChannelStateRow:
 
 
 @dataclass(frozen=True)
+class _ChannelOperationTargets:
+    """値Bindingを必要としない操作用の属性、対応ノードと除外理由。"""
+
+    attribute: ScalarAttributeInfo
+    target_names: tuple[str, ...]
+    excluded: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class _AnimationCurveSource:
     """コピー元ノードの選択順と正式属性パスを保持する。"""
 
@@ -1151,7 +1160,24 @@ class ChannelBoxController(qt.QObject):
             for row in rows
             if (row.attribute.path, row.attribute.kind) not in cache
         )
-        paths = tuple(row.attribute.path for row in missing)
+        for targets in self._resolve_bulk_targets(missing):
+            attribute = targets.attribute
+            key = (attribute.path, attribute.kind)
+            cache[key] = self._create_value_row(
+                attribute,
+                list(targets.target_names),
+                list(targets.excluded),
+                monitor=False,
+            )
+        return tuple(cache[(r.attribute.path, r.attribute.kind)] for r in rows)
+
+    def _resolve_bulk_targets(
+        self, rows: Sequence[ChannelRow | ChannelStateRow]
+    ) -> tuple[_ChannelOperationTargets, ...]:
+        """正式pathと型・単位を照合し、値の読取りや監視なしで対象名を返す。"""
+        if self._bulk_rows is None:
+            raise RuntimeError("多数ノードの操作境界が開始されていません")
+        paths = tuple(row.attribute.path for row in rows)
         ordered_names = self.node_names[-1:] + self.node_names[:-1]
         lookup = (
             tuple(
@@ -1161,10 +1187,11 @@ class ChannelBoxController(qt.QObject):
                 }
                 for name in ordered_names
             )
-            if missing
+            if rows
             else ()
         )
-        for row in missing:
+        result: list[_ChannelOperationTargets] = []
+        for row in rows:
             attribute = row.attribute
             targets: list[str] = []
             excluded: list[str] = []
@@ -1178,11 +1205,31 @@ class ChannelBoxController(qt.QObject):
                     targets.append(name)
             if not targets or targets[0] != ordered_names[0]:
                 raise RuntimeError("基準属性の構成が変わりました")
-            key = (attribute.path, attribute.kind)
-            cache[key] = self._create_value_row(
-                attribute, targets, excluded, monitor=False
+            result.append(
+                _ChannelOperationTargets(
+                    attribute, tuple(targets), tuple(excluded)
+                )
             )
-        return tuple(cache[(r.attribute.path, r.attribute.kind)] for r in rows)
+        return tuple(result)
+
+    def _selected_operation_targets(
+        self,
+        keys: Sequence[tuple[str, str]],
+        *,
+        values_only: bool = False,
+    ) -> tuple[_ChannelOperationTargets, ...]:
+        """表示中のキーを検証し、操作に必要な対象名だけを準備する。"""
+        rows = self._selected_rows(keys, resolve_targets=False)
+        if values_only:
+            rows = tuple(row for row in rows if isinstance(row, ChannelRow))
+        if self._mode == "bulk_values":
+            return self._resolve_bulk_targets(rows)
+        return tuple(
+            _ChannelOperationTargets(
+                row.attribute, row.target_names, row.excluded
+            )
+            for row in rows
+        )
 
     def _selected_rows(
         self, keys: Sequence[tuple[str, str]], *, resolve_targets: bool = True
@@ -1278,9 +1325,7 @@ class ChannelBoxController(qt.QObject):
         self.state_edit_session.finish()
         self._finish_value_edit()
         targets: list[str] = []
-        for row in self._selected_rows(keys):
-            if not isinstance(row, ChannelRow):
-                continue
+        for row in self._selected_operation_targets(keys, values_only=True):
             for node in row.target_names:
                 plug = self._keyframe_plug(f"{node}.{row.attribute.path}")
                 if plug is not None:
@@ -1384,7 +1429,7 @@ class ChannelBoxController(qt.QObject):
         """選択行と同じ正式path・型の各ノード属性を選択レイヤで変更する。"""
         targets = tuple(
             f"{node}.{row.attribute.path}"
-            for row in self._selected_rows(keys)
+            for row in self._selected_operation_targets(keys)
             if row.attribute.kind != "string"
             for node in row.target_names
         )
@@ -1465,9 +1510,7 @@ class ChannelBoxController(qt.QObject):
         self.state_edit_session.finish()
         self._finish_value_edit()
         targets: list[str] = []
-        for row in self._selected_rows(keys):
-            if not isinstance(row, ChannelRow):
-                continue
+        for row in self._selected_operation_targets(keys, values_only=True):
             for node in row.target_names:
                 target = self._mute_target(
                     f"{node}.{row.attribute.path}", muted=muted
@@ -1671,14 +1714,15 @@ class ChannelBoxController(qt.QObject):
         """選択行と同じ正式pathの全選択ノードの曲線をカットする。"""
         selected_paths = {
             row.attribute.path
-            for row in self._selected_rows(keys)
+            for row in self._selected_rows(keys, resolve_targets=False)
             if isinstance(row, ChannelRow)
         }
         sources = tuple(
             _AnimationCurveSource(index, info.path, info.kind)
             for index, node in enumerate(self.node_names)
-            for info in inspect_scalar_attributes(node)
-            if info.path in selected_paths
+            for info in self._inspect_selected_curve_attributes(
+                node, selected_paths
+            )
         )
         return self._cut_animation_curves(sources)
 
@@ -1754,6 +1798,25 @@ class ChannelBoxController(qt.QObject):
         )
         return len(targets)
 
+    @staticmethod
+    def _inspect_selected_curve_attributes(
+        node: str, selected_paths: set[str]
+    ) -> tuple[ScalarAttributeInfo, ...]:
+        """一属性なら限定取得し、複数属性は従来のnode内属性順を維持する。"""
+        if len(selected_paths) == 1:
+            try:
+                attributes = inspect_scalar_attributes(
+                    node, paths=tuple(selected_paths)
+                )
+            except ValueError:
+                # 曖昧なleaf名は従来の全列挙と正式path比較へ戻す
+                attributes = inspect_scalar_attributes(node)
+        else:
+            attributes = inspect_scalar_attributes(node)
+        return tuple(
+            info for info in attributes if info.path in selected_paths
+        )
+
     @_bulk_operation
     def delete_animation_curves_selected(
         self, keys: Sequence[tuple[str, str]]
@@ -1761,14 +1824,15 @@ class ChannelBoxController(qt.QObject):
         """選択行と同じ正式pathの全選択ノードの曲線を削除する。"""
         selected_paths = {
             row.attribute.path
-            for row in self._selected_rows(keys)
+            for row in self._selected_rows(keys, resolve_targets=False)
             if isinstance(row, ChannelRow)
         }
         names = tuple(
             f"{node}.{info.path}"
             for node in self.node_names
-            for info in inspect_scalar_attributes(node)
-            if info.path in selected_paths
+            for info in self._inspect_selected_curve_attributes(
+                node, selected_paths
+            )
         )
         return self._delete_animation_curves(names)
 
@@ -2741,7 +2805,9 @@ class ChannelBoxController(qt.QObject):
         """各行の基準属性の制約を維持して、操作可能な状態編集先を集約する。"""
         plugs: list[MayaChannelStatePlug] = []
         excluded: list[str] = []
-        for row in self._selected_rows(keys):
+        for row in self._selected_operation_targets(keys):
+            if self._mode == "bulk_values":
+                excluded.extend(row.excluded)
             targets = [
                 self._resolve_state_plug(n, row.attribute)
                 for n in row.target_names
@@ -2782,7 +2848,7 @@ class ChannelBoxController(qt.QObject):
         """選択属性自身のロックを一括変更し、compound祖先は変更しない。"""
         plugs, excluded = self._selected_state_plugs(keys, display=False)
         if not plugs:
-            self._report_excluded(excluded)
+            self._report_excluded(excluded, candidates=0)
             return False
         binding = MayaChannelStateBinding(plugs, parent=self)
         self._active_state_binding = binding
@@ -2792,7 +2858,7 @@ class ChannelBoxController(qt.QObject):
             self._active_state_binding = None
             binding.dispose()
             binding.deleteLater()
-        self._report_excluded(excluded)
+        self._report_excluded(excluded, candidates=len(plugs))
         return changed
 
     @_bulk_operation
@@ -2802,7 +2868,7 @@ class ChannelBoxController(qt.QObject):
         """選択属性の表示状態を一括変更し、完了後にフィルターを更新する。"""
         plugs, excluded = self._selected_state_plugs(keys, display=True)
         if not plugs:
-            self._report_excluded(excluded)
+            self._report_excluded(excluded, candidates=0)
             return False
         binding = MayaChannelStateBinding(plugs, parent=self)
         self._active_state_binding = binding
@@ -2812,11 +2878,28 @@ class ChannelBoxController(qt.QObject):
             self._active_state_binding = None
             binding.dispose()
             binding.deleteLater()
-        self._report_excluded(excluded)
+        self._report_excluded(excluded, candidates=len(plugs))
         return changed
 
-    def _report_excluded(self, reasons: Sequence[str]) -> None:
+    def _report_bulk_operation(
+        self, reasons: Sequence[str], candidates: int
+    ) -> None:
+        """一括操作自身の候補件数と、重複を除いた除外理由を表示する。"""
+        unique = tuple(dict.fromkeys(reasons))
+        report = f"適用候補: {candidates}属性 / 対象外: {len(unique)}件"
+        if unique:
+            report += " / " + " / ".join(unique[:20])
+            if len(unique) > 20:
+                report += f" / ほか{len(unique) - 20}件"
+        self.operation_reported.emit(report)
+
+    def _report_excluded(
+        self, reasons: Sequence[str], *, candidates: int | None = None
+    ) -> None:
         """一括操作で除外した属性の理由を、成功対象と区別して表示する。"""
+        if self._mode == "bulk_values" and candidates is not None:
+            self._report_bulk_operation(reasons, candidates)
+            return
         if self._bulk_rows:
             details = list(reasons)
             candidates = 0
@@ -2826,13 +2909,7 @@ class ChannelBoxController(qt.QObject):
                     candidates += int(target.is_writable)
                     if target.reason:
                         details.append(f"{target.name}: {target.reason}")
-            unique = tuple(dict.fromkeys(details))
-            report = f"適用候補: {candidates}属性 / 対象外: {len(unique)}件"
-            if unique:
-                report += " / " + " / ".join(unique[:20])
-                if len(unique) > 20:
-                    report += f" / ほか{len(unique) - 20}件"
-            self.operation_reported.emit(report)
+            self._report_bulk_operation(details, candidates)
             return
         self.operation_reported.emit(
             "対象外: " + " / ".join(reasons) if reasons else ""

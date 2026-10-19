@@ -9,6 +9,7 @@ from typing import Literal, cast
 
 import pytest
 from maya import cmds
+from maya.api import OpenMaya as om
 
 from bd_util.maya.node.inspection import ScalarAttributeInfo
 from bd_util.maya.ui import (
@@ -801,7 +802,7 @@ def test_align_lock_and_keyframe_menus_keep_all_targets(
 
 @pytest.mark.parametrize("operation", ["lock", "display"])
 def test_thousand_node_state_operations_keep_flags_and_one_undo(
-    editor: ChannelBoxWidget, operation: str
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch, operation: str
 ) -> None:
     """千対象のlock・表示変更が値を変えず、一回のUndo/Redoで復元する。"""
     nodes = tuple(
@@ -811,12 +812,14 @@ def test_thousand_node_state_operations_keep_flags_and_one_undo(
     cmds.select(*nodes, replace=True)
     _events()
     keys = _keys(editor, "translateX")
+    created = _record_bulk_drag_rows(editor, monkeypatch)
     cmds.flushUndo()
 
     if operation == "lock":
         assert editor.controller.set_selected_locked(keys, True)
     else:
         assert editor.controller.set_selected_display(keys, "channel_box")
+    assert not created
 
     def flags() -> tuple[tuple[bool, bool, bool], ...]:
         """全対象の自身のlock・keyable・channelBox状態を取得する。"""
@@ -840,6 +843,159 @@ def test_thousand_node_state_operations_keep_flags_and_one_undo(
     cmds.redo()
     assert flags() == (applied,) * len(nodes)
     _events()
+
+
+@pytest.mark.parametrize(
+    "operation", ["lock", "display", "key", "layer", "mute"]
+)
+def test_bulk_menu_operations_keep_different_enum_definitions_without_value_bindings(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    """定義が別のenumも従来どおり操作し、値Bindingを作らず一回でUndoする。"""
+    cmds.addAttr("bulkOther.mode", edit=True, enumName="Other:Second:Third")
+    names = ("bulkOther.mode", "bulkReference.mode")
+    layer = ""
+    if operation == "mute":
+        cmds.setKeyframe(*names, time=1)
+    elif operation == "layer":
+        layer = cast(str, cmds.animLayer("bulkMenuLayer"))
+        root = cast(str, cmds.animLayer(query=True, root=True))
+        cmds.animLayer(root, edit=True, selected=False)
+        cmds.animLayer(layer, edit=True, selected=True)
+    _events()
+    keys = _keys(editor, "mode")
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    reports: list[str] = []
+    editor.controller.operation_reported.connect(reports.append)
+    cmds.flushUndo()
+    controller = editor.controller
+    if operation == "lock":
+        assert controller.set_selected_locked(keys, True)
+        assert all(cmds.getAttr(name, lock=True) for name in names)
+        assert reports[-1] == "適用候補: 2属性 / 対象外: 0件"
+    elif operation == "display":
+        assert controller.set_selected_display(keys, "channel_box")
+        assert all(cmds.getAttr(name, channelBox=True) for name in names)
+        assert reports[-1] == "適用候補: 2属性 / 対象外: 0件"
+    elif operation == "key":
+        assert controller.set_keyframes_selected(keys) == 2
+        assert all(
+            cmds.keyframe(name, query=True, keyframeCount=True) == 1
+            for name in names
+        )
+    elif operation == "layer":
+        assert controller.edit_animation_layers_selected(keys, add=True) == 2
+        assert (
+            len(
+                cast(
+                    list[str],
+                    cmds.animLayer(layer, query=True, attribute=True),
+                )
+            )
+            == 2
+        )
+    else:
+        assert controller.set_muted_selected(keys, muted=True) == 2
+        assert all(cmds.mute(name, query=True) for name in names)
+    assert not created
+    assert _values("mode") == [0, 1]
+    cmds.undo()
+    _events()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    if operation == "lock":
+        assert not any(cmds.getAttr(name, lock=True) for name in names)
+    elif operation == "display":
+        assert all(cmds.getAttr(name, keyable=True) for name in names)
+    elif operation == "key":
+        assert not any(
+            cmds.keyframe(name, query=True, keyframeCount=True)
+            for name in names
+        )
+    elif operation == "layer":
+        assert not cmds.animLayer(layer, query=True, attribute=True)
+    else:
+        assert not any(cmds.mute(name, query=True) for name in names)
+
+
+@pytest.mark.parametrize("operation", ["lock", "display"])
+@pytest.mark.parametrize("missing", [False, True])
+def test_bulk_state_targets_report_missing_and_wrong_types(
+    editor: ChannelBoxWidget, operation: str, missing: bool
+) -> None:
+    """対応先の欠損と型違いを除外し、状態操作の候補件数を通知する。"""
+    cmds.deleteAttr("bulkOther.free")
+    if not missing:
+        cmds.addAttr(
+            "bulkOther", longName="free", attributeType="long", keyable=True
+        )
+    keys = _keys(editor, "free")
+    reports: list[str] = []
+    editor.controller.operation_reported.connect(reports.append)
+    cmds.flushUndo()
+    if operation == "lock":
+        assert editor.controller.set_selected_locked(keys, True)
+        assert cmds.getAttr("bulkReference.free", lock=True)
+        if not missing:
+            assert not cmds.getAttr("bulkOther.free", lock=True)
+    else:
+        assert editor.controller.set_selected_display(keys, "hidden")
+        assert not cmds.getAttr("bulkReference.free", keyable=True)
+        if not missing:
+            assert cmds.getAttr("bulkOther.free", keyable=True)
+    assert reports[-1].startswith("適用候補: 1属性 / 対象外: 1件")
+    assert ("対応する属性なし" if missing else "型・単位が異なる") in reports[
+        -1
+    ]
+    cmds.undo()
+    _events()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize("operation", ["lock", "display"])
+def test_bulk_state_targets_keep_each_rows_reference_constraint(
+    editor: ChannelBoxWidget, operation: str
+) -> None:
+    """基準で状態変更不可の行全体を除外し、他の行だけを一括変更する。"""
+    keys = _keys(editor, "translateX", "free")
+    if operation == "lock":
+        cmds.setAttr("bulkReference.translate", lock=True)
+    else:
+        # 定義由来の両Trueは、setAttrでは作れない表示編集不可の状態になる
+        cmds.deleteAttr("bulkReference.free")
+        definition = om.MFnNumericAttribute()
+        attribute = definition.create(
+            "free", "free", om.MFnNumericData.kDouble
+        )
+        definition.keyable = True
+        definition.channelBox = True
+        selection = om.MSelectionList()
+        selection.add("bulkReference")
+        om.MFnDependencyNode(selection.getDependNode(0)).addAttribute(
+            attribute
+        )
+    _events()
+    reports: list[str] = []
+    editor.controller.operation_reported.connect(reports.append)
+    cmds.flushUndo()
+    if operation == "lock":
+        assert editor.controller.set_selected_locked(keys, True)
+        assert not cmds.getAttr("bulkOther.tx", lock=True)
+        assert all(
+            cmds.getAttr(node + ".free", lock=True)
+            for node in ("bulkOther", "bulkReference")
+        )
+    else:
+        assert editor.controller.set_selected_display(keys, "hidden")
+        assert cmds.getAttr("bulkOther.free", keyable=True)
+        assert not any(
+            cmds.getAttr(node + ".tx", keyable=True)
+            for node in ("bulkOther", "bulkReference")
+        )
+    assert reports[-1].startswith("適用候補: 2属性 / 対象外: 1件")
+    assert "状態を変更できません" in reports[-1]
+    cmds.undo()
+    _events()
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_thousand_node_nine_attribute_paste_avoids_temporary_view_models(

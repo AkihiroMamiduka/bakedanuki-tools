@@ -4009,6 +4009,159 @@ def test_bulk_curve_paste_inspects_candidate_paths_without_value_bindings(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
+@pytest.mark.parametrize("mode", ["values", "bulk_values"])
+@pytest.mark.parametrize("operation", ["cut", "delete"])
+@pytest.mark.parametrize("multiple", [False, True])
+def test_selected_curve_removal_keeps_node_attribute_order_and_undo(
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: Literal["values", "bulk_values"],
+    operation: str,
+    multiple: bool,
+) -> None:
+    """型の異なる対応先も扱い、複数属性の元の順序と一回Undoを保つ。"""
+    nodes = ("multiA", "multiB")
+    attributes = ("curveValue", "curveOther")
+    for index, node in enumerate(nodes):
+        # 各nodeの追加順を逆にして、選択行順への並べ替えを検出する
+        for name in (attributes if index == 0 else attributes[::-1]):
+            cmds.addAttr(
+                node,
+                longName=name,
+                keyable=True,
+                attributeType="double" if index == 0 else "long",
+            )
+            cmds.setKeyframe(node + "." + name, time=1, value=2 + index)
+            cmds.setKeyframe(node + "." + name, time=10, value=4 + index)
+        cmds.setKeyframe(node + ".tx", time=1, value=11)
+    cmds.select(*nodes, replace=True)
+    editor.controller.set_mode(mode)
+    editor.refresh()
+    selected = attributes if multiple else attributes[:1]
+    keys = _keys(editor, *selected)
+    expected_paths = tuple(key[0] for key in keys)
+    original = controller_module.inspect_scalar_attributes
+    expected_order = tuple(
+        (index, info.path)
+        for index, node in enumerate(nodes)
+        for info in original(node)
+        if info.path in expected_paths
+    )
+    inspected: list[str] = []
+
+    def inspect(
+        node: str, *, paths: Sequence[str] | None = None
+    ) -> tuple[ScalarAttributeInfo, ...]:
+        """一属性では限定取得し、複数属性では元の列挙順を使うことを確認する。"""
+        assert paths == (None if multiple else expected_paths)
+        inspected.append(node)
+        return original(node, paths=paths)
+
+    def unexpected_binding(*_args: object, **_kwargs: object) -> NoReturn:
+        """正式pathの選別だけで値Bindingを組み立てる回帰を検出する。"""
+        raise AssertionError("カーブ削除で値Bindingを生成しています")
+
+    cmds.flushUndo()
+    with monkeypatch.context() as patch:
+        patch.setattr(controller_module, "inspect_scalar_attributes", inspect)
+        patch.setattr(
+            editor.controller, "_create_value_row", unexpected_binding
+        )
+        count = (
+            editor.controller.cut_animation_curves_selected(keys)
+            if operation == "cut"
+            else editor.controller.delete_animation_curves_selected(keys)
+        )
+    assert count == len(nodes) * len(selected)
+    assert inspected == list(editor.controller.node_names)
+    if operation == "cut":
+        copied = (
+            editor.controller._animation_curve_copy  # pyright: ignore[reportPrivateUsage]
+        )
+        assert copied is not None
+        assert (
+            tuple((curve.node_index, curve.path) for curve in copied.curves)
+            == expected_order
+        )
+    for node in nodes:
+        assert cmds.keyframe(node + ".tx", query=True, valueChange=True) == [
+            11
+        ]
+        for path in expected_paths:
+            assert not cmds.keyframe(
+                node + "." + path, query=True, keyframeCount=True
+            )
+    cmds.undo()
+    _events()
+    for index, node in enumerate(nodes):
+        for name in attributes:
+            assert cmds.keyframe(
+                node + "." + name, query=True, valueChange=True
+            ) == [2 + index, 4 + index]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    cmds.redo()
+    _events()
+    for node in nodes:
+        for path in expected_paths:
+            assert not cmds.keyframe(
+                node + "." + path, query=True, keyframeCount=True
+            )
+
+
+@pytest.mark.parametrize("operation", ["cut", "delete"])
+def test_selected_curve_removal_ambiguous_leaf_preserves_other_compounds(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    """後続の曖昧なleaf名は全列挙で照合し、別compoundの曲線を削除しない。"""
+    node = cmds.createNode("hierarchyTestNode4")
+    original = controller_module.inspect_scalar_attributes
+    other_paths = tuple(
+        info.path
+        for info in original(node)
+        if info.name == "envelope" and not info.path.startswith(".")
+    )
+    assert len(other_paths) == 2
+    for path in other_paths:
+        cmds.setKeyframe(f"{node}.{path}", time=1, value=2)
+    cmds.addAttr(
+        "multiA", longName="envelope", attributeType="double", keyable=True
+    )
+    cmds.setKeyframe("multiA.envelope", time=1, value=3)
+    cmds.select(node, "multiA", replace=True)
+    editor.controller.set_mode("bulk_values")
+    editor.refresh()
+    keys = _keys(editor, "envelope")
+    inspected: list[Sequence[str] | None] = []
+
+    def inspect(
+        name: str, *, paths: Sequence[str] | None = None
+    ) -> tuple[ScalarAttributeInfo, ...]:
+        """曖昧なnodeだけ、属性調査を全列挙へ戻したことを記録する。"""
+        inspected.append(paths)
+        return original(name, paths=paths)
+
+    cmds.flushUndo()
+    with monkeypatch.context() as patch:
+        patch.setattr(controller_module, "inspect_scalar_attributes", inspect)
+        count = (
+            editor.controller.cut_animation_curves_selected(keys)
+            if operation == "cut"
+            else editor.controller.delete_animation_curves_selected(keys)
+        )
+    assert count == 1
+    assert inspected == [("envelope",), None, ("envelope",)]
+    for path in other_paths:
+        assert cmds.keyframe(
+            f"{node}.{path}", query=True, valueChange=True
+        ) == [2]
+    cmds.undo()
+    _events()
+    assert cmds.keyframe("multiA.envelope", query=True, valueChange=True) == [
+        3
+    ]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
 def test_curve_paste_ambiguous_leaf_falls_back_to_exact_path_comparison(
     editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
 ) -> None:

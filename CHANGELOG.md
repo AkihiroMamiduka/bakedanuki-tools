@@ -56,6 +56,14 @@
 
 ### Changed
 
+- bdChannelBoxの選択カーブのカット・削除で値Bindingの準備を省き、
+  一属性選択時はその正式pathだけを調査する。曖昧名は全列挙へ戻し、
+  複数属性のnode内順序、異種型の対象、共有曲線の除外とUndoを維持する。
+  多数ノードのキー・Layer・mute・lock・表示操作も対象名の照合を値Bindingから分離。
+  enum定義が異なる対応先も従来どおり扱い、lock・表示の候補件数と除外理由は
+  値編集ではなく各状態操作の可否で通知する。Step・Slider・メニュー構成は維持する。
+  utilも更新し、`bd_tools.reload_package(reload_util=True)`で反映する。
+  scene・設定・clipboardの移行は不要。
 - bdChannelBoxの多数ノード数値入力で、入力前は基準の編集可否と表示単位だけを確認し、
   全対象の値・状態同期を適用後へ集約。書込み前の検証・削除監視・失敗復旧は維持する。
   カーブ貼付は候補の正式pathだけを調べ、値Bindingの準備と全曲線の反復探索を省く。
