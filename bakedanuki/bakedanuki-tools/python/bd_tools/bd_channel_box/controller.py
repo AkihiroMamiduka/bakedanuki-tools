@@ -18,6 +18,7 @@ from bd_util.maya.node.inspection import (
     ScalarAttributeDisplayFilter,
     ScalarAttributeInfo,
     ScalarAttributeKind,
+    ScalarAttributeTypeInfo,
     filter_scalar_attribute_paths,
     inspect_scalar_attributes,
     inspect_scalar_attribute_types,
@@ -104,6 +105,16 @@ _DEFAULT_FILTERS: dict[ChannelBoxMode, ChannelAttributeFilter] = {
 }
 _SELECTION_LIMIT = 50
 _BULK_NUMERIC_IDLE_MS = 500
+_FLOAT_KINDS: tuple[ScalarAttributeKind, ...] = (
+    "number",
+    "distance",
+    "angle",
+)
+_NUMERIC_KINDS: tuple[ScalarAttributeKind, ...] = _FLOAT_KINDS + (
+    "byte",
+    "short",
+    "long",
+)
 _Params = ParamSpec("_Params")
 _Result = TypeVar("_Result")
 
@@ -666,14 +677,27 @@ class ChannelBoxController(qt.QObject):
         *,
         display_filter: ChannelAttributeFilter | None = None,
         representative_only: bool = False,
+        target_types: (
+            tuple[tuple[ScalarAttributeTypeInfo, ...], ...] | None
+        ) = None,
     ) -> tuple[ChannelRow | ChannelStateRow, ...]:
-        """表示条件かカスタム定義で基準属性を絞り、同名・同種属性を結ぶ。"""
+        """基準の表示情報と、対応先の属性情報またはpath・型から行を作る。"""
         if not attributes:
             return ()
         effective_filter = (
             self.attribute_filter if display_filter is None else display_filter
         )
-        lookup = tuple({a.path: a for a in items} for items in attributes)
+        matching_attributes: tuple[
+            tuple[ScalarAttributeInfo | ScalarAttributeTypeInfo, ...], ...
+        ] = (
+            attributes
+            if target_types is None
+            else target_types + attributes[-1:]
+        )
+        lookup = tuple(
+            {a.path: a for a in items} for items in matching_attributes
+        )
+        base_lookup = {a.path: a for a in attributes[-1]}
         # 基準を先頭にしてBindingへ渡し、選択リスト自体の順序は維持する
         names = (
             self.node_names[-1:] if representative_only else self.node_names
@@ -721,9 +745,9 @@ class ChannelBoxController(qt.QObject):
                 custom_attributes: list[ScalarAttributeInfo] = []
                 seen_paths: set[str] = set()
                 for path in custom_paths:
-                    attribute = lookup[-1].get(path)
+                    attribute = base_lookup.get(path)
                     if attribute is None and path.startswith("."):
-                        attribute = lookup[-1].get(path[1:])
+                        attribute = base_lookup.get(path[1:])
                     if attribute is None or attribute.path in seen_paths:
                         continue
                     custom_attributes.append(attribute)
@@ -1260,6 +1284,26 @@ class ChannelBoxController(qt.QObject):
             return self._resolve_bulk_rows(rows)
         return rows
 
+    def _selected_value_rows(
+        self,
+        keys: Sequence[tuple[str, str]],
+        kinds: Sequence[ScalarAttributeKind],
+    ) -> tuple[ChannelRow | ChannelStateRow, ...]:
+        """全キーを検証し、操作対象の型だけを多数ノードの値Bindingへ結ぶ。"""
+        rows = self._selected_rows(keys, resolve_targets=False)
+        if self._mode != "bulk_values":
+            return rows
+        selected = tuple(row for row in rows if row.attribute.kind in kinds)
+        resolved = {
+            (row.attribute.path, row.attribute.kind): row
+            for row in self._resolve_bulk_rows(selected)
+        }
+        # 非対応型は代表行のまま返し、既存の行単位の除外理由を報告する
+        return tuple(
+            resolved.get((row.attribute.path, row.attribute.kind), row)
+            for row in rows
+        )
+
     @staticmethod
     def _keyframe_plug(name: str) -> str | None:
         """キー設定可能な単一属性だけを、接続を変更しない対象として返す。"""
@@ -1650,9 +1694,7 @@ class ChannelBoxController(qt.QObject):
         """選択行と対応する各選択ノードの全時間の曲線をコピーする。"""
         # Maya標準clipboardへも、Bindingの代表順ではなく元の選択順で渡す
         sources: list[_AnimationCurveSource] = []
-        for row in self._selected_rows(keys):
-            if not isinstance(row, ChannelRow):
-                continue
+        for row in self._selected_operation_targets(keys, values_only=True):
             target_names = set(row.target_names)
             sources.extend(
                 _AnimationCurveSource(
@@ -1992,7 +2034,7 @@ class ChannelBoxController(qt.QObject):
         self, keys: Sequence[tuple[str, str]], display_value: float | int
     ) -> bool:
         """検証済みの数値行へ、毎回新しい書込み計画で絶対値を適用する。"""
-        rows = self._selected_rows(keys)
+        rows = self._selected_value_rows(keys, _NUMERIC_KINDS)
         edits: list[MayaPlugsValueEdit] = []
         excluded: list[str] = []
         # 行単位の対象選別を保ち、全行の検証と書込みはutilへ委譲する
@@ -2049,7 +2091,7 @@ class ChannelBoxController(qt.QObject):
         """対象だけを再利用し、差分と復旧値は各入力の現在値から作る。"""
         edits: list[MayaPlugsValueEdit] = []
         excluded: list[str] = []
-        for row in self._selected_rows(keys):
+        for row in self._selected_value_rows(keys, _NUMERIC_KINDS):
             if not isinstance(row, ChannelRow) or not isinstance(
                 row.binding, (MayaFloatPlugsBinding, MayaIntPlugsBinding)
             ):
@@ -2109,7 +2151,7 @@ class ChannelBoxController(qt.QObject):
         """選択中のbool属性だけを同じONまたはOFFへ一括適用する。"""
         edits: list[MayaPlugsValueEdit] = []
         excluded: list[str] = []
-        for row in self._selected_rows(keys):
+        for row in self._selected_value_rows(keys, ("bool",)):
             if not isinstance(row, ChannelRow) or not isinstance(
                 row.binding, MayaBoolPlugsBinding
             ):
@@ -2134,7 +2176,7 @@ class ChannelBoxController(qt.QObject):
         value: int,
     ) -> bool:
         """操作元と定義が一致する選択enum属性へ同じ項目を一括適用する。"""
-        rows = self._selected_rows(keys)
+        rows = self._selected_value_rows(keys, ("enum",))
         source = next(
             (
                 row
@@ -2183,7 +2225,7 @@ class ChannelBoxController(qt.QObject):
         """選択中のstring属性へ同じ文字列を一回のUndoで適用する。"""
         edits: list[MayaPlugsValueEdit] = []
         excluded: list[str] = []
-        for row in self._selected_rows(keys):
+        for row in self._selected_value_rows(keys, ("string",)):
             if not isinstance(row, ChannelRow) or not isinstance(
                 row.binding, MayaStringPlugsBinding
             ):
@@ -2239,8 +2281,7 @@ class ChannelBoxController(qt.QObject):
             return False
         self.state_edit_session.finish()
         self._finish_value_edit()
-        attributes = self._operation_attributes(display_filter)
-        rows = self._create_rows(attributes, display_filter=display_filter)
+        rows, _ = self._create_filtered_rows(display_filter)
         try:
             return self._align_rows(
                 tuple(
@@ -2293,7 +2334,7 @@ class ChannelBoxController(qt.QObject):
         """表示中の選択float属性を各ノードの現在値から個別に丸める。"""
         rows = tuple(
             row
-            for row in self._selected_rows(keys)
+            for row in self._selected_value_rows(keys, _FLOAT_KINDS)
             if isinstance(row, ChannelRow)
         )
         return self._round_rows(rows, decimals)
@@ -2323,33 +2364,72 @@ class ChannelBoxController(qt.QObject):
             raise RuntimeError("表示ノードが選択されていません")
         self.state_edit_session.finish()
         self._finish_value_edit()
-        attributes = self._operation_attributes(display_filter)
-        rows = self._create_rows(attributes, display_filter=display_filter)
+        rows, excluded = self._create_filtered_rows(
+            display_filter, kinds=_FLOAT_KINDS
+        )
         try:
             return self._round_rows(
                 tuple(row for row in rows if isinstance(row, ChannelRow)),
                 decimals,
+                excluded=tuple(
+                    f"{attribute.nice_name}: 丸め操作の対象外"
+                    for attribute in excluded
+                ),
             )
         finally:
             for row in rows:
                 self._dispose_row(row)
 
-    def _operation_attributes(
-        self, display_filter: ChannelAttributeFilter
-    ) -> tuple[tuple[ScalarAttributeInfo, ...], ...]:
-        """基準で選んだpathだけを残りのノードから取得する。"""
+    def _create_filtered_rows(
+        self,
+        display_filter: ChannelAttributeFilter,
+        *,
+        kinds: Sequence[ScalarAttributeKind] | None = None,
+    ) -> tuple[
+        tuple[ChannelRow | ChannelStateRow, ...],
+        tuple[ScalarAttributeInfo, ...],
+    ]:
+        """基準の表示条件で選び、対応先はpathと型だけを取得して行を作る。"""
         base = tuple(
             a
             for a in inspect_scalar_attributes(self.node_names[-1])
             if matches_scalar_attribute_display_filter(a, display_filter)
         )
-        paths = tuple(a.path for a in base)
-        return tuple(
-            inspect_scalar_attributes(name, paths=paths)
-            for name in self.node_names[:-1]
-        ) + (base,)
+        excluded = tuple(
+            attribute
+            for attribute in base
+            if kinds is not None and attribute.kind not in kinds
+        )
+        selected = tuple(
+            attribute
+            for attribute in base
+            if kinds is None or attribute.kind in kinds
+        )
+        paths = tuple(a.path for a in selected)
+        target_types = (
+            tuple(
+                inspect_scalar_attribute_types(name, paths=paths)
+                for name in self.node_names[:-1]
+            )
+            if selected
+            else ()
+        )
+        return (
+            self._create_rows(
+                (selected,),
+                display_filter=display_filter,
+                target_types=target_types,
+            ),
+            excluded,
+        )
 
-    def _round_rows(self, rows: Sequence[ChannelRow], decimals: int) -> bool:
+    def _round_rows(
+        self,
+        rows: Sequence[ChannelRow],
+        decimals: int,
+        *,
+        excluded: Sequence[str] = (),
+    ) -> bool:
         """各plugの未丸め実値から一括計画を作り、単一Undoで適用する。"""
         if type(decimals) is not int:
             raise TypeError("decimalsにはintを指定してください")
@@ -2358,20 +2438,21 @@ class ChannelBoxController(qt.QObject):
         self.state_edit_session.finish()
         self._finish_value_edit()
         edits: list[MayaPlugsValueEdit] = []
-        excluded: list[str] = []
+        reasons = list(excluded)
         for row in rows:
             binding = row.binding
             if not isinstance(binding, MayaFloatPlugsBinding):
+                reasons.append(f"{row.attribute.nice_name}: 丸め操作の対象外")
                 continue
             binding.refresh()
             if not binding.view_model.set_value_command.can_execute:
-                excluded.append(
+                reasons.append(
                     f"{row.attribute.nice_name}: 値を編集できません"
                 )
                 continue
             edits.append(MayaFloatRoundEdit(binding, decimals))
         changed = apply_plugs_values(edits)
-        self._report_excluded(excluded)
+        self._report_excluded(reasons)
         return changed
 
     def can_paste_values(self) -> bool:
@@ -2908,7 +2989,7 @@ class ChannelBoxController(qt.QObject):
         if self._mode == "bulk_values" and candidates is not None:
             self._report_bulk_operation(reasons, candidates)
             return
-        if self._bulk_rows:
+        if self._bulk_rows is not None:
             details = list(reasons)
             candidates = 0
             for row in self._bulk_rows.values():

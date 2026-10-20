@@ -141,6 +141,17 @@ def _values(name: str) -> list[object]:
     ]
 
 
+def _assert_values(expected: dict[str, list[object]]) -> None:
+    """指定した全属性を照合し、floatの格納誤差だけ許容する。"""
+    for name, values in expected.items():
+        for actual, wanted in zip(_values(name), values, strict=True):
+            if isinstance(wanted, float):
+                assert isinstance(actual, (float, int))
+                assert isclose(actual, wanted, rel_tol=1e-10, abs_tol=1e-10)
+            else:
+                assert actual == wanted
+
+
 def _key(widget: qt.QWidget, key: qt.Qt.Key, text: str = "") -> None:
     """実際のキーイベントで文字入力と確定を行う。"""
     for kind in (qt.QEvent.Type.KeyPress, qt.QEvent.Type.KeyRelease):
@@ -618,6 +629,231 @@ def test_scalar_types_edit_all_nodes_and_skip_changed_enum_definition(
     keys = _keys(editor, "mode")
     assert editor.controller.apply_enum_values(keys, keys[0], 2)
     assert _values("mode") == [0, 2]
+
+
+@pytest.mark.parametrize(
+    "operation", ["numeric", "offset", "bool", "enum", "string", "round"]
+)
+def test_mixed_selection_prepares_only_edited_types_and_reports_candidates(
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    """混在選択で非対応型の全件Bindingを作らず、対象型だけを一回でUndoする。"""
+    names = ("free", "count", "enabled", "mode", "label")
+    _set("bulkOther.free", 1.26)
+    _set("bulkReference.free", 3.76)
+    _events()
+    keys = _keys(editor, *names)
+    before = {name: _values(name) for name in names}
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    reports: list[str] = []
+    editor.controller.operation_reported.connect(reports.append)
+    cmds.flushUndo()
+    controller = editor.controller
+    expected = dict(before)
+    if operation in ("numeric", "offset"):
+        changed_names = ("free", "count")
+        if operation == "numeric":
+            assert controller.apply_numeric_values(keys, 7)
+            expected.update(free=[7, 7], count=[7, 7])
+        else:
+            assert controller.offset_numeric_values(keys, 1)
+            expected.update(free=[2.26, 4.76], count=[2, 4])
+    elif operation == "bool":
+        changed_names = ("enabled",)
+        assert controller.apply_bool_values(keys, False)
+        expected["enabled"] = [False, False]
+    elif operation == "enum":
+        changed_names = ("mode",)
+        assert controller.apply_enum_values(keys, _keys(editor, "mode")[0], 2)
+        expected["mode"] = [2, 2]
+    elif operation == "string":
+        changed_names = ("label",)
+        assert controller.apply_string_values(keys, "same")
+        expected["label"] = ["same", "same"]
+    else:
+        changed_names = ("free",)
+        assert controller.round_selected_values(keys, 1)
+        expected["free"] = [1.3, 3.8]
+    controller.finish_value_edit()
+    assert tuple(row.attribute.name for row in created) == changed_names
+    assert all(len(row.binding.target_states) == 2 for row in created)
+    assert reports[-1].startswith(
+        f"適用候補: {2 * len(changed_names)}属性 / "
+        f"対象外: {len(names) - len(changed_names)}件"
+    )
+    _assert_values(expected)
+    cmds.undo()
+    _events()
+    assert {name: _values(name) for name in names} == before
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    cmds.redo()
+    _events()
+    _assert_values(expected)
+
+
+def test_numeric_selection_rejects_stale_unsupported_key_before_preparing_rows(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """対象外型でも古いキーは先に拒否し、部分入力や一時行の構築を残さない。"""
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    before = _values("free")
+    with pytest.raises(RuntimeError, match="属性の構成"):
+        editor.controller.apply_numeric_values(
+            _keys(editor, "free") + (("missing", "string"),), 7
+        )
+    assert not created
+    assert _values("free") == before
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_numeric_selection_with_no_matching_types_avoids_all_target_bindings(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """非対応型だけの数値入力は全件の値・enum定義を読まず候補ゼロで終える。"""
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    reports: list[str] = []
+    editor.controller.operation_reported.connect(reports.append)
+    assert not editor.controller.offset_numeric_values(
+        _keys(editor, "enabled", "mode", "label"), 1
+    )
+    editor.controller.finish_value_edit()
+    assert not created
+    assert reports[-1].startswith("適用候補: 0属性 / 対象外: 3件")
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize("operation", ["align", "round"])
+def test_filtered_operations_read_display_details_only_from_reference(
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    """基準だけに表示条件を問い合わせ、対応先は正式pathと型だけで結ぶ。"""
+    _set("bulkOther.free", 1.26)
+    _set("bulkReference.free", 3.76)
+    _events()
+    names = ("free", "count", "enabled", "mode", "label")
+    before = {name: _values(name) for name in names}
+    original = controller_module.inspect_scalar_attributes
+    original_types = controller_module.inspect_scalar_attribute_types
+    details: list[str] = []
+    types: list[tuple[str, tuple[str, ...]]] = []
+
+    def inspect_details(
+        name: str, *, paths: Sequence[str] | None = None
+    ) -> tuple[ScalarAttributeInfo, ...]:
+        """表示用の詳細取得を記録し、実際の列挙を行う。"""
+        details.append(name)
+        return original(name, paths=paths)
+
+    def inspect_types(
+        name: str, *, paths: Sequence[str] | None = None
+    ) -> tuple[ScalarAttributeTypeInfo, ...]:
+        """照合用の正式pathを記録し、軽量な列挙を行う。"""
+        assert paths is not None
+        types.append((name, tuple(paths)))
+        return original_types(name, paths=paths)
+
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    reports: list[str] = []
+    editor.controller.operation_reported.connect(reports.append)
+    cmds.flushUndo()
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            controller_module, "inspect_scalar_attributes", inspect_details
+        )
+        patch.setattr(
+            controller_module, "inspect_scalar_attribute_types", inspect_types
+        )
+        if operation == "align":
+            assert editor.controller.align_filtered_values("keyable")
+            expected = {name: [before[name][-1]] * 2 for name in names}
+        else:
+            assert editor.controller.round_filtered_values("keyable", 1)
+            expected = dict(before, free=[1.3, 3.8])
+    assert details == ["|bulkReference"]
+    assert len(types) == 1 and types[0][0] == "|bulkOther"
+    assert set(types[0][1]) == {row.attribute.path for row in created}
+    if operation == "round":
+        assert all(
+            row.attribute.kind in ("number", "distance", "angle")
+            for row in created
+        )
+        assert reports[-1].startswith(
+            f"適用候補: {2 * len(created)}属性 / 対象外: 5件"
+        )
+    _assert_values(expected)
+    cmds.undo()
+    _events()
+    assert {name: _values(name) for name in names} == before
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    cmds.redo()
+    _events()
+    _assert_values(expected)
+
+
+def test_filtered_align_keeps_uniform_values_outside_changed_limits(
+    editor: ChannelBoxWidget,
+) -> None:
+    """同値行は後から制限が狭まっていても再適用せず、他の混在行だけ揃える。"""
+    for node in ("bulkOther", "bulkReference"):
+        _set(node + ".free", 9)
+    cmds.addAttr("bulkOther.free", edit=True, maxValue=5)
+    _events()
+    cmds.flushUndo()
+    assert editor.controller.align_filtered_values("keyable")
+    assert _values("free") == [9, 9]
+    assert _values("gain") == [3, 3]
+    cmds.undo()
+    assert _values("free") == [9, 9]
+    assert _values("gain") == [1, 3]
+
+
+@pytest.mark.parametrize("locked", [False, True])
+def test_bulk_curve_copy_keeps_enum_targets_without_value_bindings(
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    locked: bool,
+) -> None:
+    """異なる定義のenumをコピーし、Mayaのlock規則・選択順・履歴を保つ。"""
+    nodes = ("bulkOther", "bulkReference")
+    for index, node in enumerate(nodes):
+        cmds.setKeyframe(node, attribute="free", time=1, value=11 + index)
+        cmds.setKeyframe(node, attribute="mode", time=1, value=index + 1)
+    cmds.addAttr("bulkOther.mode", edit=True, enumName="Other:Second:Third")
+    cmds.setAttr("bulkOther.mode", lock=locked)
+    _events()
+    created = _record_bulk_drag_rows(editor, monkeypatch)
+    keys = _keys(editor, "free", "mode")
+    before = {name: _values(name) for name in ("free", "mode")}
+    cmds.flushUndo()
+    assert editor.controller.copy_animation_curves_selected(keys) == (
+        3 if locked else 4
+    )
+    assert not created
+    copied = (
+        editor.controller._animation_curve_copy  # pyright: ignore[reportPrivateUsage]
+    )
+    assert copied is not None
+    items = copied.clipboard.clipboardItems()
+    actual: dict[tuple[int, str], float] = {}
+    for curve in copied.curves:
+        item = items[curve.item_index]
+        assert item.fullAttributeName == curve.path
+        assert item.nodeName.lstrip("|") == nodes[curve.node_index]
+        actual[(curve.node_index, curve.path)] = (
+            controller_module.oma.MFnAnimCurve(item.animCurve).value(0)
+        )
+    assert actual == {
+        (index, name): before[name][index]
+        for name in ("free", "mode")
+        for index in range(2)
+        if not (locked and name == "mode" and index == 0)
+    }
+    assert {name: _values(name) for name in before} == before
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 @pytest.mark.parametrize("kind", ["doubleLinear", "doubleAngle"])

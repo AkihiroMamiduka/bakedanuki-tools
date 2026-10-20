@@ -56,6 +56,13 @@
 
 ### Changed
 
+- bdChannelBoxの多数ノード編集で、選択キー全体の有効性を確認した後、操作する型の
+  行だけを一括編集用Bindingへ結ぶ。数値・bool・enum・string入力と丸めで非対応型の
+  準備を省き、適用候補は操作する型の編集可能件数だけを数え、非対応型は行ごとに報告する。
+  フィルター対象の揃え・丸めでは基準以外を正式path・型だけで照合し、丸めはfloat系に限定する。
+  選択カーブCopyは値Bindingを作らず対象名を取得し、定義差のあるenum・選択順・曲線の対応を維持。
+  Step・Slider・右クリック操作、型・範囲・lock検証、一回Undoと失敗復旧を維持する。
+  utilも更新し、`bd_tools.reload_package(reload_util=True)`で反映する。scene・設定の移行は不要。
 - bdChannelBoxの多数ノード操作で、対象照合は正式path・型だけを取得し、
   同時に生成する値Bindingの削除監視をnodeごとに共有する。
   各Bindingの検証・削除履歴・Undo・失敗復旧と、Step／Sliderは維持する。
