@@ -68,6 +68,7 @@ from bd_util.maya.ui import (
     resolve_int_plug,
     resolve_string_plug,
     shared_plugs_lifetime,
+    shared_scalar_plug_nodes,
 )
 from bd_util.ui import qt
 
@@ -1190,8 +1191,8 @@ class ChannelBoxController(qt.QObject):
             return tuple(
                 cache[(r.attribute.path, r.attribute.kind)] for r in rows
             )
-        # 同時に作る行の削除通知だけを共有し、各Bindingの復旧寿命は保つ
-        with shared_plugs_lifetime():
+        # 構築中のnode解決と削除通知を共有し、各Bindingの検証・復旧寿命は保つ
+        with shared_scalar_plug_nodes(), shared_plugs_lifetime():
             for targets in self._resolve_bulk_targets(missing):
                 attribute = targets.attribute
                 key = (attribute.path, attribute.kind)

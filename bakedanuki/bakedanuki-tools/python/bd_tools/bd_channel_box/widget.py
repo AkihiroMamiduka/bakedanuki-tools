@@ -2915,6 +2915,12 @@ class ChannelBoxWidget(qt.QWidget):
 
     def _prepare_edit_menu(self) -> None:
         """現在のnode・行選択・clipboardに合わせて編集メニューを準備する。"""
+        self._sync_edit_menu_actions()
+        if self.controller.mode != "custom_filter_setup":
+            self._set_paste_selected_tooltip(self.paste_selected_values_action)
+
+    def _sync_edit_menu_actions(self) -> None:
+        """clipboardの全量解析を行わず、非表示時も操作の有効性だけを更新する。"""
         if self.controller.mode == "custom_filter_setup":
             self.copy_all_values_action.setEnabled(False)
             self.copy_selected_values_action.setEnabled(False)
@@ -2937,7 +2943,6 @@ class ChannelBoxWidget(qt.QWidget):
         self.paste_selected_values_action.setEnabled(
             can_paste and has_value_selection
         )
-        self._set_paste_selected_tooltip(self.paste_selected_values_action)
 
     def _set_paste_selected_tooltip(self, action: qt.QAction) -> None:
         """clipboardの項目数で変わる選択属性への貼り付け規則を説明する。"""
@@ -3421,7 +3426,7 @@ class ChannelBoxWidget(qt.QWidget):
             self.filter_fallback_label.hide()
             self.empty_label.setText(_SELECTION_LIMIT_MESSAGE)
             self.empty_label.show()
-            self._prepare_edit_menu()
+            self._sync_edit_menu_actions()
             return
         if self.controller.mode == "custom_filter_setup":
             self.setup_panel.show()
@@ -3441,7 +3446,7 @@ class ChannelBoxWidget(qt.QWidget):
             )
             self.filter_fallback_label.hide()
             self.empty_label.hide()
-            self._prepare_edit_menu()
+            self._sync_edit_menu_actions()
             return
         self.table_view.show()
         self._sync_node_name_editor()
@@ -3535,7 +3540,7 @@ class ChannelBoxWidget(qt.QWidget):
         )
         self._table_node_ids = self.controller.node_ids
         self._sync_filter_fallback_notice()
-        self._prepare_edit_menu()
+        self._sync_edit_menu_actions()
         self._apply_search_filter()
         # 行の配置が確定してから、残っている属性のスクロール位置を復元する
         self._scroll_timer.start(0)

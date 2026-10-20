@@ -19,6 +19,8 @@ from bd_util.maya.ui import (
     MayaEditSession,
     MayaEnumPlugsBinding,
     MayaEnumValueEdit,
+    MayaFloatPlug,
+    MayaIntPlug,
     MayaNodeValueSnapshot,
     MayaPlugsValueEdit,
     MayaScalarPasteResult,
@@ -244,6 +246,149 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     _events()
     cmds.autoKeyframe(state=auto_key)
     cast(Callable[..., str], cmds.file)(new=True, force=True)
+
+
+def test_bulk_numeric_rows_share_nodes_only_during_one_preparation(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """複数float・int行の構築内だけnodeを共有し、次の操作とUndoを独立させる。"""
+    original_float = controller_module.resolve_float_plug
+    original_int = controller_module.resolve_int_plug
+    resolved: dict[str, list[MayaFloatPlug | MayaIntPlug]] = {}
+
+    def resolve_float(node_name: str, path: str) -> MayaFloatPlug:
+        """実resolverを通し、生成した行のnode実体を記録する。"""
+        plug = original_float(node_name, path)
+        resolved.setdefault(node_name, []).append(plug)
+        return plug
+
+    def resolve_int(node_name: str, path: str) -> MayaIntPlug:
+        """整数もfloatと同じ共有範囲へ参加したことを記録する。"""
+        plug = original_int(node_name, path)
+        resolved.setdefault(node_name, []).append(plug)
+        return plug
+
+    monkeypatch.setattr(controller_module, "resolve_float_plug", resolve_float)
+    monkeypatch.setattr(controller_module, "resolve_int_plug", resolve_int)
+    keys = _keys(editor, "free", "gain", "count")
+    assert editor.controller.apply_numeric_values(keys, 7)
+    editor.controller.finish_value_edit()
+    first = dict(resolved)
+    assert len(first) == 2
+    assert all(
+        len(plugs) == 3 and all(plug.node is plugs[0].node for plug in plugs)
+        for plugs in first.values()
+    )
+    resolved.clear()
+    assert editor.controller.apply_numeric_values(keys, 8)
+    editor.controller.finish_value_edit()
+    assert resolved.keys() == first.keys()
+    for name, plugs in resolved.items():
+        assert len(plugs) == 3
+        assert all(plug.node is plugs[0].node for plug in plugs)
+        assert plugs[0].node is not first[name][0].node
+    for operation, expected in (
+        (cmds.undo, [7, 7]),
+        (cmds.undo, [1, 3]),
+        (cmds.redo, [7, 7]),
+        (cmds.redo, [8, 8]),
+    ):
+        operation()
+        _events()
+        for name in ("free", "gain", "count"):
+            assert _values(name) == expected
+
+
+def test_hidden_refresh_defers_clipboard_read_until_menu_display(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """非表示の再構築は全量解析せず、編集・行メニューは最新内容を説明する。"""
+    memory = _MemoryClipboard()
+    single = MayaScalarValueSnapshot("free", "number", 7.5)
+    memory.transfer = MayaScalarValueTransfer(
+        (MayaNodeValueSnapshot((single,)),)
+    )
+    original_read = memory.read
+    reads: list[None] = []
+
+    def read() -> MayaScalarValueTransfer:
+        """メニュー説明文を決めるための全量読取りだけを数える。"""
+        reads.append(None)
+        return original_read()
+
+    monkeypatch.setattr(memory, "read", read)
+    monkeypatch.setattr(editor.controller, "_value_clipboard", memory)
+    editor.refresh()
+    _events()
+    assert reads == []
+    assert all(
+        action.isEnabled()
+        for action in editor.paste_copied_values_actions.values()
+    )
+    editor.table_view.select_keys(_keys(editor, "free"))
+    editor.edit_menu.aboutToShow.emit()
+    assert len(reads) == 1
+    assert "一つの値" in editor.paste_selected_values_action.toolTip()
+    memory.transfer = MayaScalarValueTransfer(
+        (
+            MayaNodeValueSnapshot(
+                (single, MayaScalarValueSnapshot("gain", "number", 8.5))
+            ),
+        )
+    )
+    editor.refresh()
+    _events()
+    assert len(reads) == 1
+    editor.edit_menu.aboutToShow.emit()
+    assert len(reads) == 2
+    assert "同じ正式path" in editor.paste_selected_values_action.toolTip()
+    row = _row(editor, "free")
+    row.context_menu.aboutToShow.emit()
+    assert len(reads) == 3
+    assert (
+        "同じ正式path"
+        in row.context_menu.paste_selected_values_action.toolTip()
+    )
+
+
+def test_paste_reads_fresh_values_and_undo_does_not_prepare_hidden_tooltips(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """メニュー表示後のコピー内容を適用し、Undo再構築は説明文を解析しない。"""
+    memory = _MemoryClipboard()
+    memory.transfer = MayaScalarValueTransfer(
+        (
+            MayaNodeValueSnapshot(
+                (MayaScalarValueSnapshot("free", "number", 7.5),)
+            ),
+        )
+    )
+    monkeypatch.setattr(editor.controller, "_value_clipboard", memory)
+    editor.table_view.select_keys(_keys(editor, "free"))
+    editor.edit_menu.aboutToShow.emit()
+    memory.transfer = MayaScalarValueTransfer(
+        (
+            MayaNodeValueSnapshot(
+                (MayaScalarValueSnapshot("free", "number", 8.5),)
+            ),
+        )
+    )
+    editor.paste_selected_values_action.trigger()
+    _events()
+    assert _values("free") == [8.5, 8.5]
+
+    def reject_hidden_read() -> MayaScalarValueTransfer:
+        """非表示メニューを準備するための全量解析を拒否する。"""
+        raise AssertionError("非表示中のclipboard解析")
+
+    monkeypatch.setattr(memory, "read", reject_hidden_read)
+    cmds.undo()
+    _events()
+    assert _values("free") == [1, 3]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    cmds.redo()
+    _events()
+    assert _values("free") == [8.5, 8.5]
 
 
 def test_thousand_nodes_inspect_and_bind_only_the_reference(

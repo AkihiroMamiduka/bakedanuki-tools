@@ -56,6 +56,13 @@
 
 ### Changed
 
+- bdChannelBoxの多数ノード編集で、同時に構築する複数行のノード操作オブジェクトを
+  構築中だけ共有し、初期準備の繰り返しを削減。名前・実体・DAG経路と各属性の型を
+  再確認し、既存の入力検証・Undo・失敗復旧は維持する。
+  enum値Pasteの重複検証をutilで整理し、非表示メニューではPaste説明文のための
+  clipboard全量解析を省く。説明文はメニュー表示時、実際のPasteは実行時に最新内容を読む。
+  Step・Slider・右クリック操作は維持する。utilも更新し、
+  `bd_tools.reload_package(reload_util=True)`で反映する。scene・設定・clipboardの移行は不要。
 - bdChannelBoxの多数ノード編集で、選択キー全体の有効性を確認した後、操作する型の
   行だけを一括編集用Bindingへ結ぶ。数値・bool・enum・string入力と丸めで非対応型の
   準備を省き、適用候補は操作する型の編集可能件数だけを数え、非対応型は行ごとに報告する。
