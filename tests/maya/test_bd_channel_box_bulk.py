@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterator, Sequence
+from contextlib import contextmanager
 from math import isclose
 from typing import Literal, cast
 
@@ -937,6 +938,95 @@ def test_filtered_operations_read_display_details_only_from_reference(
     cmds.redo()
     _events()
     _assert_values(expected)
+
+
+@pytest.mark.parametrize("mode", ["values", "bulk_values"])
+@pytest.mark.parametrize("operation", ["align", "round"])
+@pytest.mark.parametrize("attribute_count", [1, 2])
+def test_filtered_operations_share_nodes_only_for_bulk_multiple_rows(
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: ChannelBoxMode,
+    operation: str,
+    attribute_count: int,
+) -> None:
+    """多数ノードの複数行構築だけを共有し、適用前に閉じてUndoRedoを維持する。"""
+    names = ("free", "gain")[:attribute_count]
+    for node, initial in (("bulkOther", 1.26), ("bulkReference", 3.76)):
+        for name in names:
+            _set(node + "." + name, initial)
+            cmds.setAttr(node + "." + name, keyable=False, channelBox=True)
+    editor.controller.set_mode(mode)
+    editor.refresh()
+    _events()
+    original_scope = controller_module.shared_scalar_plug_nodes
+    original_resolve = controller_module.resolve_float_plug
+    original_apply = controller_module.apply_plugs_values
+    active = False
+    events: list[str] = []
+    resolved: dict[str, list[MayaFloatPlug]] = {}
+    scope_states: list[bool] = []
+
+    @contextmanager
+    def scope() -> Generator[None, None, None]:
+        """実際の共有範囲を維持し、構築と書込みの境界を記録する。"""
+        nonlocal active
+        with original_scope():
+            active = True
+            events.append("enter")
+            try:
+                yield
+            finally:
+                active = False
+                events.append("leave")
+
+    def resolve(node_name: str, path: str) -> MayaFloatPlug:
+        """属性照合を実行し、同じnodeの各行が参照するwrapperを保持する。"""
+        plug = original_resolve(node_name, path)
+        resolved.setdefault(node_name, []).append(plug)
+        scope_states.append(active)
+        return plug
+
+    def apply(
+        edits: Sequence[MayaPlugsValueEdit],
+        *,
+        edit_session: MayaEditSession | None = None,
+        enum_validation: Literal["per_write", "operation"] = "per_write",
+    ) -> bool:
+        """既存の検証・Undoへ入る前に共有が終了したことを要求する。"""
+        assert not active
+        events.append("apply")
+        return original_apply(
+            edits, edit_session=edit_session, enum_validation=enum_validation
+        )
+
+    monkeypatch.setattr(controller_module, "shared_scalar_plug_nodes", scope)
+    monkeypatch.setattr(controller_module, "resolve_float_plug", resolve)
+    monkeypatch.setattr(controller_module, "apply_plugs_values", apply)
+    cmds.flushUndo()
+    if operation == "align":
+        assert editor.controller.align_filtered_values("channel_box")
+    else:
+        assert editor.controller.round_filtered_values("channel_box", 1)
+    shared = mode == "bulk_values" and attribute_count > 1
+    assert events == (["enter", "leave", "apply"] if shared else ["apply"])
+    assert len(resolved) == 2
+    assert all(state == shared for state in scope_states)
+    for plugs in resolved.values():
+        assert len(plugs) == attribute_count
+        if attribute_count > 1:
+            assert (plugs[0].node is plugs[1].node) == shared
+    wanted: list[object] = [3.76, 3.76] if operation == "align" else [1.3, 3.8]
+    _assert_values({name: wanted for name in names})
+    cmds.undo()
+    _events()
+    for name in names:
+        assert _values(name) == [1.26, 3.76]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    cmds.redo()
+    _events()
+    _assert_values({name: wanted for name in names})
+    assert cmds.undoInfo(query=True, redoQueueEmpty=True)
 
 
 def test_filtered_align_keeps_uniform_values_outside_changed_limits(

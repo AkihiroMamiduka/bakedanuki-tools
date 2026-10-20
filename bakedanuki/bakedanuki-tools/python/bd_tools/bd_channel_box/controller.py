@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Callable, Generator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from functools import partial, wraps
 from typing import Concatenate, Literal, ParamSpec, TypeAlias, TypeVar, cast
 
@@ -2415,14 +2415,18 @@ class ChannelBoxController(qt.QObject):
             if selected
             else ()
         )
-        return (
-            self._create_rows(
+        # 多数ノードの複数行を構築する間だけ共有し、値の適用前に解放する
+        with (
+            shared_scalar_plug_nodes()
+            if self._mode == "bulk_values" and len(selected) > 1
+            else nullcontext()
+        ):
+            rows = self._create_rows(
                 (selected,),
                 display_filter=display_filter,
                 target_types=target_types,
-            ),
-            excluded,
-        )
+            )
+        return rows, excluded
 
     def _round_rows(
         self,
