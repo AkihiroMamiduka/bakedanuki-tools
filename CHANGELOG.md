@@ -56,6 +56,10 @@
 
 ### Changed
 
+- bdChannelBoxの角度（doubleAngle）のSlider付き行で、値欄の上下・ホイールの刻み幅を1へ変更。
+  utilの`FloatSliderSpinBox`がstep未指定時に単位種別から選び、通常数値・距離は0.1を維持する。
+  Slider分割数・小数精度・Step付き角度行の既定15・保存済みStepは変更しない。
+  utilも更新し、`bd_tools.reload_package(reload_util=True)`で反映する。scene・設定の移行は不要。
 - bdChannelBoxの多数ノードモードで、フィルター対象の複数行を構築する間にもnode情報を共有。
   「値を揃える」「丸める」の準備を軽量化し、通常モードと単一行は従来の構築経路を使う。
   utilでは複数属性の値Pasteにも構築中だけ同じ共有を適用し、書込み前に索引を解放する。

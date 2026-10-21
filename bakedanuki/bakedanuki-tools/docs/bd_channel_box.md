@@ -922,6 +922,12 @@ byteの生成時のmin/max指定はMayaが上書きするため、独自の制�
 `cmds.addAttr(path, edit=True, minValue=..., maxValue=...)`で設定します。
 属性定義を変更した後に画面を更新するとSlider／Stepを再選択します。
 
+float系のSlider付き行は、utilの`FloatSliderSpinBox`の型別既定stepを使います。
+角度（doubleAngle）は値欄の上下・ホイールを1刻み、通常数値・距離は0.1刻みにします。
+現在の表示単位を使うため、角度の1は度表示では1度、radian表示では1radです。
+Sliderの分割数・ドラッグの分解能と、小数の表示・手入力精度はこのstepから独立しています。
+Sliderがない角度行のStep既定15と、保存済みStepの扱いは維持します。
+
 transform標準属性での代表例は`objectColor`（short、0～7）と
 `overrideColor`（byte、0～31）です。Attribute Filterを「全て」にして属性名で検索すると
 確認できます。`layerOverrideColor`も0～31ですが、Mayaの旧式属性です。

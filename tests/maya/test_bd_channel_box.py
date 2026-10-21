@@ -25,7 +25,10 @@ from bd_tools.bd_channel_box.widget import (
     AttributeRowWidget,
     ChannelBoxWidget,
 )
-from bd_tools.bd_channel_box.controller import ChannelAttributeFilter
+from bd_tools.bd_channel_box.controller import (
+    ChannelAttributeFilter,
+    ChannelBoxMode,
+)
 
 
 @pytest.mark.parametrize("selected", ["keyable", "all"])
@@ -961,6 +964,86 @@ def test_step_defaults_by_attribute_kind(
     view.step_spin_box.stepUp()
     assert view.singleStep() == (step * 10 if mode == "multiplicative" else 30)
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize("mode", ["values", "bulk_values"])
+@pytest.mark.parametrize("kind", ["double", "doubleLinear", "doubleAngle"])
+@pytest.mark.parametrize("operation", ["up", "wheel"])
+def test_slider_value_step_defaults_and_undo(
+    editor: ChannelBoxWidget,
+    mode: ChannelBoxMode,
+    kind: str,
+    operation: str,
+) -> None:
+    """両モードの角度Slider値欄を1刻みにし、他型と一回UndoRedoを維持する。"""
+    original_unit = str(cmds.currentUnit(query=True, angle=True))
+    try:
+        cmds.currentUnit(angle="deg")
+        initial = {"channelA": 2.125, "channelB": 4.375}
+        for node, value in initial.items():
+            cmds.addAttr(
+                node,
+                longName="sliderStepTest",
+                attributeType=kind,
+                minValue=-100,
+                maxValue=100,
+                keyable=True,
+            )
+            _set_value(node + ".sliderStepTest", value)
+        editor.controller.set_mode(mode)
+        editor.refresh()
+        _events()
+        view = _row(editor, "sliderStepTest").editor
+        assert isinstance(view, FloatSliderSpinBox)
+        step = 1.0 if kind == "doubleAngle" else 0.1
+        assert view.spin_box.singleStep() == step
+        assert _value_step(editor, "rotateY").singleStep() == 15
+        view.spin_box.setFocus()
+        _events()
+        assert view.spin_box.hasFocus()
+        cmds.flushUndo()
+
+        # 値欄の上下と実際のwheel通知を、一回の相対入力として確認する
+        if operation == "up":
+            view.spin_box.stepUp()
+        else:
+            qt.QApplication.sendEvent(
+                view.spin_box,
+                qt.QtGui.QWheelEvent(
+                    qt.QPointF(5, 5),
+                    qt.QPointF(5, 5),
+                    qt.QPoint(),
+                    qt.QPoint(0, 120),
+                    qt.Qt.MouseButton.NoButton,
+                    qt.Qt.KeyboardModifier.NoModifier,
+                    qt.Qt.ScrollPhase.NoScrollPhase,
+                    False,
+                ),
+            )
+        _events()
+        for node, value in initial.items():
+            assert isclose(
+                cast(float, cmds.getAttr(node + ".sliderStepTest")),
+                value + step,
+            )
+        cmds.undo()
+        _events()
+        for node, value in initial.items():
+            assert isclose(
+                cast(float, cmds.getAttr(node + ".sliderStepTest")), value
+            )
+        assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+        cmds.redo()
+        _events()
+        for node, value in initial.items():
+            assert isclose(
+                cast(float, cmds.getAttr(node + ".sliderStepTest")),
+                value + step,
+            )
+        assert cmds.undoInfo(query=True, redoQueueEmpty=True)
+    finally:
+        cmds.currentUnit(angle=original_unit)
+        _events()
 
 
 @pytest.mark.parametrize("kind", ["double", "doubleLinear", "doubleAngle"])
