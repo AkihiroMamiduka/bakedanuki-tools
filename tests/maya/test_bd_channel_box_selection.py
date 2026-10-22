@@ -11,7 +11,6 @@ from maya import cmds
 
 from bd_util.maya.node.inspection import ScalarAttributeInfo
 from bd_util.maya.ui import (
-    MayaCallbackRegistry,
     MayaScalarValueClipboard,
     MayaScalarValueTransfer,
     capture_scalar_node_values,
@@ -845,70 +844,39 @@ def test_selection_reordering_discards_pending_numeric_input(
     assert cmds.getAttr("multiB.translateY") == 3.0
 
 
-def test_selection_limit_skips_inspection_in_state_mode(
+def test_state_selection_crosses_former_limit_and_inspects_only_reference(
     editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """状態モードで50ノード上限を維持し、案内と復帰を確認する。"""
+    """旧上限を跨ぐ選択でも全対象を保持し、属性取得は基準だけにする。"""
     editor.controller.set_mode("states")
     nodes = tuple(
-        cmds.createNode("network", name=f"selectionLimit{index}")
+        cmds.createNode("transform", name=f"selectionLimit{index}")
         for index in range(51)
     )
-    expected_message = (
-        "対象ノードが50個以上あります。\n"
-        "多数のノードを対象にすると、処理が重くレスポンスが悪い為、"
-        "bdChannelBoxの表示・編集を休止しています。\n"
-        "49個以下に減らすと再開します。"
-    )
-    cmds.select(*nodes[:49], replace=True)
-    _events()
-    assert not editor.controller.selection_limit_exceeded
-    assert len(editor.controller.node_names) == 49
-    callbacks = cast(
-        MayaCallbackRegistry, getattr(editor.controller, "_nodes")
-    )
-    assert not callbacks.is_disposed
-
     original_inspect = controller_module.inspect_scalar_attributes
+    inspected: list[str] = []
 
-    def reject_inspection(_name: str) -> NoReturn:
-        """上限時の属性取得を検出する。"""
-        raise AssertionError("上限時に属性を取得しました")
-
-    monkeypatch.setattr(
-        controller_module, "inspect_scalar_attributes", reject_inspection
-    )
-    cmds.select(*nodes[:50], replace=True)
-    _events()
-    assert editor.controller.selection_limit_exceeded
-    assert editor.controller.node_names == ()
-    assert editor.controller.node_ids == ()
-    assert editor.controller.rows == ()
-    assert callbacks.is_disposed
-    assert editor.row_widgets == ()
-    assert editor.node_name_edit is None
-    assert editor.empty_label.text() == expected_message
-    assert editor.empty_label.isVisible()
-    assert not editor.table_view.isVisible()
-    assert not editor.copy_all_values_action.isEnabled()
-
-    assert not editor.setup_panel.isVisible()
-    editor.refresh()
-    cmds.select(*nodes, replace=True)
-    _events()
-    assert editor.controller.selection_limit_exceeded
-    assert editor.empty_label.text() == expected_message
+    def record_inspection(name: str) -> tuple[ScalarAttributeInfo, ...]:
+        """表示用属性情報を取得するノードを記録する。"""
+        inspected.append(name)
+        return original_inspect(name)
 
     monkeypatch.setattr(
-        controller_module, "inspect_scalar_attributes", original_inspect
+        controller_module, "inspect_scalar_attributes", record_inspection
     )
-    editor.controller.set_mode("states")
-    cmds.select(*nodes[:49], replace=True)
-    _events()
-    assert not editor.controller.selection_limit_exceeded
-    assert len(editor.controller.node_names) == 49
-    assert editor.table_view.isVisible()
-    assert editor.empty_label.text() != expected_message
+    for count in (49, 50, 51, 49):
+        inspected.clear()
+        cmds.select(*nodes[:count], replace=True)
+        _events()
+        assert not editor.controller.selection_limit_exceeded
+        assert len(editor.controller.node_names) == count
+        assert len(editor.controller.node_ids) == count
+        assert set(inspected) == {f"|{nodes[count - 1]}"}
+        assert editor.table_view.isVisible()
+        assert not editor.empty_label.isVisible()
+        assert editor.row_widgets
+        assert editor.node_name_edit is not None
+        assert not editor.setup_panel.isVisible()
 
     cmds.select("multiA", "multiB", replace=True)
     _events()
@@ -4754,11 +4722,16 @@ def test_animation_curve_paste_selected_ignores_enum_definition(
     assert cmds.keyframe("multiB.variant", query=True, keyframeCount=True) == 1
 
 
+@pytest.mark.parametrize("mode", ["values", "states"])
 def test_state_batch_stops_and_restores_when_controller_closes(
-    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: Literal["values", "states"],
 ) -> None:
     """状態書込み中の終了要求で残りの旧対象を変更せず、先行変更も復旧する。"""
     selected = _keys(editor, "translateX", "translateY")
+    editor.controller.set_mode(mode)
+    _events()
     original = cast(Callable[..., None], cmds.setAttr)
     interrupted = False
 

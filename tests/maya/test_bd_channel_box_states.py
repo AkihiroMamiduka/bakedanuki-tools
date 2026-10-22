@@ -123,7 +123,7 @@ def _choose_display(
 def _checked_display(
     editor: ChannelBoxWidget, name: str = "weight"
 ) -> tuple[_Display, ...]:
-    """画面で選択中の表示状態を返し、混在時は空のtupleにする。"""
+    """画面で選択中の基準ノードの表示状態を返す。"""
     return tuple(
         value
         for value, button in _state_row(editor, name).display_buttons.items()
@@ -436,8 +436,9 @@ def test_filtered_display_edit_completes_all_targets_before_row_removal(
     editor = state_editor
     _states(editor)
     _filter(editor, "keyable")
-    binding = _state_row(editor).row.state_binding
-    binding.set_display_state("hidden")
+    row = _state_row(editor)
+    binding = row.row.state_binding
+    row.display_buttons["hidden"].click()
     assert not binding.is_disposed
     assert [_flags(name + ".weight") for name in _NODES] == [
         (False, False, False),
@@ -688,7 +689,7 @@ def test_selected_display_control_aligns_rows_and_groups_undo(
 
 @pytest.mark.parametrize(
     ("initial", "expected"),
-    (("unlocked", True), ("locked", False), ("mixed", True)),
+    (("unlocked", True), ("locked", False), ("mixed", False)),
 )
 def test_selected_lock_control_uses_resulting_state_and_groups_undo(
     state_editor: ChannelBoxWidget,
@@ -755,17 +756,68 @@ def test_unselected_state_control_changes_only_its_row(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
-def test_mixed_display_is_explicit_and_undo_restores_each_node(
+@pytest.mark.parametrize("operation", ["display", "lock"])
+def test_selected_state_click_rolls_back_all_rows_after_later_failure(
+    state_editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    """単クリックの後続行で失敗すると、選択属性全体の先行変更も復旧する。"""
+    editor = state_editor
+    _states(editor)
+    editor.table_view.select_keys(
+        _state_keys(editor, "translateX", "translateY")
+    )
+    before = {
+        f"{node}.{name}": _flags(f"{node}.{name}")
+        for node in _NODES
+        for name in ("translateX", "translateY")
+    }
+    original = cast(Callable[..., None], cmds.setAttr)
+    failed = False
+
+    def fail_once(name: str, **flags: object) -> None:
+        """後続行の非基準ノードだけを一度拒否し、復旧時は書込みを許可する。"""
+        nonlocal failed
+        if (
+            not failed
+            and name.split(".", 1)[0].rsplit("|", 1)[-1] == "stateB"
+            and name.rsplit(".", 1)[-1] == "translateY"
+        ):
+            failed = True
+            raise RuntimeError("状態一括入力の検証用エラー")
+        original(name, **flags)
+
+    monkeypatch.setattr(cmds, "setAttr", fail_once)
+    cmds.flushUndo()
+    source = _state_row(editor, "translateX")
+    if operation == "display":
+        source.display_buttons["hidden"].click()
+    else:
+        source.lock_check_box.click()
+    _events()
+    assert failed
+    assert {path: _flags(path) for path in before} == before
+    assert "検証用エラー" in editor.message_label.text()
+    assert not editor.controller.state_edit_session.is_editing
+    assert not editor.state_sweep.is_active
+    assert not editor.lock_sweep.is_active
+
+
+def test_reference_display_reclick_aligns_others_and_undo_restores_each_node(
     state_editor: ChannelBoxWidget,
 ) -> None:
-    """表示状態の混在を示し、同じ代表状態の選択でも全対象へ揃えられる。"""
+    """基準だけを表示し、選択済みradioの再クリックでも全対象へ揃える。"""
     cmds.setAttr("stateB.weight", keyable=False, channelBox=True)
     _events()
     _states(state_editor)
     row = _state_row(state_editor)
-    assert _checked_display(state_editor) == ()
-    assert all("混在" in b.toolTip() for b in row.display_buttons.values())
-    assert row.name_label.text().startswith("• ")
+    assert _checked_display(state_editor) == ("keyable",)
+    assert all(
+        "基準ノードの状態" in b.toolTip() for b in row.display_buttons.values()
+    )
+    assert not row.name_label.text().startswith("• ")
+    assert len(row.row.state_binding.state.targets) == 1
     before = [_flags(name + ".weight") for name in _NODES]
     cmds.flushUndo()
     _choose_display(state_editor, "keyable")
@@ -773,8 +825,49 @@ def test_mixed_display_is_explicit_and_undo_restores_each_node(
     cmds.undo()
     _events()
     assert [_flags(name + ".weight") for name in _NODES] == before
-    assert _checked_display(state_editor) == ()
+    assert _checked_display(state_editor) == ("keyable",)
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize("operation", ["display", "lock"])
+def test_state_click_rejects_secondary_attribute_recreated_during_write(
+    state_editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    """書込み中に同名再作成された非基準属性へ適用せず、先行値も復旧する。"""
+    editor = state_editor
+    _states(editor)
+    before = _flags("stateA.weight")
+    original = cast(Callable[..., None], cmds.setAttr)
+    replaced = False
+
+    def write_and_replace(name: str, **flags: object) -> None:
+        """基準への最初の書込み直後に、未適用属性を同名同型へ置き換える。"""
+        nonlocal replaced
+        original(name, **flags)
+        if not replaced:
+            replaced = True
+            cmds.deleteAttr("stateB.weight")
+            cmds.addAttr(
+                "stateB",
+                longName="weight",
+                attributeType="double",
+                keyable=True,
+            )
+
+    monkeypatch.setattr(cmds, "setAttr", write_and_replace)
+    source = _state_row(editor)
+    if operation == "display":
+        source.display_buttons["hidden"].click()
+    else:
+        source.lock_check_box.click()
+    _events()
+    assert replaced
+    assert _flags("stateA.weight") == before
+    assert _flags("stateB.weight") == (True, False, False)
+    assert cmds.getAttr("stateB.weight") == 0.0
+    assert not editor.controller.state_edit_session.is_editing
 
 
 def test_value_mixed_marker_does_not_leak_into_state_mode(
@@ -812,26 +905,32 @@ def test_lock_and_unlock_representative_do_not_depend_on_value_writability(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
-def test_mixed_lock_user_clicks_only_choose_locked_or_unlocked(
-    state_editor: ChannelBoxWidget,
+@pytest.mark.parametrize("reference_locked", [False, True])
+def test_lock_click_inverts_reference_and_aligns_all_targets(
+    state_editor: ChannelBoxWidget, reference_locked: bool
 ) -> None:
-    """混在lockは三状態で表示し、ユーザー操作ではTrueとFalseだけへ揃える。"""
-    cmds.setAttr("stateB.weight", lock=True)
+    """二状態のlock表示を基準の逆へ切り替え、他対象も同じ状態へ揃える。"""
+    cmds.setAttr("stateA.weight", lock=reference_locked)
+    cmds.setAttr("stateB.weight", lock=not reference_locked)
     _events()
     _states(state_editor)
     check = _state_row(state_editor).lock_check_box
-    assert check.checkState() == qt.Qt.CheckState.PartiallyChecked
+    assert not check.isTristate()
+    assert check.isChecked() is reference_locked
     cmds.flushUndo()
     check.click()
     _events()
     first = [_flags(name + ".weight")[2] for name in _NODES]
-    assert first[0] == first[1]
-    assert _state_row(state_editor).lock_check_box.checkState() != (
-        qt.Qt.CheckState.PartiallyChecked
+    assert first == [not reference_locked] * 2
+    assert _state_row(state_editor).lock_check_box.isChecked() is (
+        not reference_locked
     )
     cmds.undo()
     _events()
-    assert [_flags(name + ".weight")[2] for name in _NODES] == [False, True]
+    assert [_flags(name + ".weight")[2] for name in _NODES] == [
+        reference_locked,
+        not reference_locked,
+    ]
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
@@ -856,15 +955,19 @@ def test_enum_definition_difference_does_not_exclude_state_editing(
 def test_external_state_change_does_not_propagate(
     state_editor: ChannelBoxWidget,
 ) -> None:
-    """外部で変更した状態は混在表示へ同期し、別ノードへ転送しない。"""
+    """基準の外部変更だけを表示へ同期し、他ノードへ転送しない。"""
     _states(state_editor)
     cmds.setAttr("stateA.weight", keyable=False, channelBox=True)
     cmds.setAttr("stateA.weight", lock=True)
     _events()
     row = _state_row(state_editor)
-    assert _checked_display(state_editor) == ()
-    assert row.lock_check_box.checkState() == qt.Qt.CheckState.PartiallyChecked
+    assert _checked_display(state_editor) == ("channel_box",)
+    assert row.lock_check_box.checkState() == qt.Qt.CheckState.Checked
     assert _flags("stateB.weight") == (True, False, False)
+    cmds.setAttr("stateB.weight", keyable=False)
+    _events()
+    assert _checked_display(state_editor) == ("channel_box",)
+    assert row.lock_check_box.isChecked()
 
 
 def test_mode_switch_finishes_drag_before_lock_undo(

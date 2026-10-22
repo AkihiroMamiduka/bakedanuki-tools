@@ -101,7 +101,6 @@ _DEFAULT_FILTERS: dict[ChannelBoxMode, ChannelAttributeFilter] = {
     "states": "all",
     "custom_filter_setup": "all",
 }
-_SELECTION_LIMIT = 50
 _BULK_NUMERIC_IDLE_MS = 500
 _FLOAT_KINDS: tuple[ScalarAttributeKind, ...] = (
     "number",
@@ -549,14 +548,11 @@ class ChannelBoxController(qt.QObject):
                 self._timer.start(0)
 
     def _watch_nodes(self) -> None:
-        """表示・ロックは全対象、値編集と設定は基準だけを監視する。"""
+        """どのモードでも基準の名前・属性構成だけを常時監視する。"""
         self._nodes.dispose()
         self._nodes.deleteLater()
         self._nodes = MayaCallbackRegistry(self)
-        watched_names = (
-            self.node_names if self._mode == "states" else self.node_names[-1:]
-        )
-        for name in watched_names:
+        for name in self.node_names[-1:]:
             selection = om.MSelectionList()
             selection.add(name)
             node = selection.getDependNode(0)
@@ -585,83 +581,28 @@ class ChannelBoxController(qt.QObject):
             return
         self._filter_refresh_pending = False
         try:
-            states = self._mode == "states"
-            names = selected_node_names(
-                limit=_SELECTION_LIMIT if states else None
-            )
+            names = selected_node_names()
             if self._mode == "custom_filter_setup":
                 # 型別定義の見本だけを保持し、他ノードの属性・識別情報は取得しない
                 names = names[-1:]
-            if states and len(names) >= _SELECTION_LIMIT:
-                # 表示・ロックの多数選択では属性取得と行生成を行わない
-                self._dispose_rows()
-                self._nodes.dispose()
-                self.node_names = ()
-                self.node_ids = ()
-                self._node_handles = ()
-                self._node_paths = ()
-                self.selection_limit_exceeded = True
-            else:
-                self.selection_limit_exceeded = False
-                if not states:
-                    attributes = tuple(
-                        inspect_scalar_attributes(n) for n in names[-1:]
-                    )
-                else:
-                    base = (
-                        inspect_scalar_attributes(names[-1]) if names else ()
-                    )
-                    selected_filter = self.attribute_filter
-                    if (
-                        isinstance(selected_filter, CustomFilterSelection)
-                        and names
-                    ):
-                        node_type = cast(str, cmds.nodeType(names[-1]))
-                        custom_paths = (
-                            selected_filter.definition.node_types.get(
-                                node_type
-                            )
-                        )
-                        paths = (
-                            tuple(
-                                path.removeprefix(".") for path in custom_paths
-                            )
-                            if custom_paths is not None
-                            else filter_scalar_attribute_paths(base, "visible")
-                        )
-                    else:
-                        paths = filter_scalar_attribute_paths(
-                            base,
-                            (
-                                selected_filter
-                                if not isinstance(
-                                    selected_filter, CustomFilterSelection
-                                )
-                                else "visible"
-                            ),
-                        )
-                    attributes = tuple(
-                        inspect_scalar_attributes(n, paths=paths)
-                        for n in names[:-1]
-                    ) + ((base,) if names else ())
-                self._dispose_rows()
-                self.node_names = names
-                self.node_ids = tuple(
-                    om.MFnDependencyNode(self._node_object(name))
-                    .uuid()
-                    .asString()
-                    for name in names
-                )
-                self._node_handles = tuple(
-                    om.MObjectHandle(self._node_object(name)) for name in names
-                )
-                self._node_paths = tuple(
-                    self._selected_dag_path(name) for name in names
-                )
-                self._watch_nodes()
-                self.rows = self._create_rows(
-                    attributes, representative_only=not states
-                )
+            self.selection_limit_exceeded = False
+            attributes = tuple(
+                inspect_scalar_attributes(n) for n in names[-1:]
+            )
+            self._dispose_rows()
+            self.node_names = names
+            self.node_ids = tuple(
+                om.MFnDependencyNode(self._node_object(name)).uuid().asString()
+                for name in names
+            )
+            self._node_handles = tuple(
+                om.MObjectHandle(self._node_object(name)) for name in names
+            )
+            self._node_paths = tuple(
+                self._selected_dag_path(name) for name in names
+            )
+            self._watch_nodes()
+            self.rows = self._create_rows(attributes, representative_only=True)
         except Exception as error:
             self._dispose_rows()
             self.selection_limit_exceeded = False
@@ -1073,7 +1014,7 @@ class ChannelBoxController(qt.QObject):
         numeric_keys: Sequence[tuple[str, str]] | None = None,
     ) -> Generator[None, None, None]:
         """実体を確認し、連続する数値入力だけ対象準備を引き継ぐ。"""
-        if self._mode != "values":
+        if self._mode not in ("values", "states"):
             yield
             return
         if self._disposed or self._timer.isActive():
@@ -1250,7 +1191,7 @@ class ChannelBoxController(qt.QObject):
         rows = self._selected_rows(keys, resolve_targets=False)
         if values_only:
             rows = tuple(row for row in rows if isinstance(row, ChannelRow))
-        if self._mode == "values":
+        if self._mode in ("values", "states"):
             return self._resolve_bulk_targets(rows)
         return tuple(
             _ChannelOperationTargets(
@@ -2885,8 +2826,7 @@ class ChannelBoxController(qt.QObject):
         plugs: list[MayaChannelStatePlug] = []
         excluded: list[str] = []
         for row in self._selected_operation_targets(keys):
-            if self._mode == "values":
-                excluded.extend(row.excluded)
+            excluded.extend(row.excluded)
             targets = [
                 self._resolve_state_plug(n, row.attribute)
                 for n in row.target_names
@@ -2922,7 +2862,11 @@ class ChannelBoxController(qt.QObject):
 
     @_bulk_operation
     def set_selected_locked(
-        self, keys: Sequence[tuple[str, str]], locked: bool
+        self,
+        keys: Sequence[tuple[str, str]],
+        locked: bool,
+        *,
+        edit_session: MayaEditSession | None = None,
     ) -> bool:
         """選択属性自身のロックを一括変更し、compound祖先は変更しない。"""
         plugs, excluded = self._selected_state_plugs(keys, display=False)
@@ -2932,7 +2876,7 @@ class ChannelBoxController(qt.QObject):
         binding = MayaChannelStateBinding(plugs, parent=self)
         self._active_state_binding = binding
         try:
-            changed = binding.set_locked(locked)
+            changed = binding.set_locked(locked, edit_session=edit_session)
         finally:
             self._active_state_binding = None
             binding.dispose()
@@ -2942,7 +2886,11 @@ class ChannelBoxController(qt.QObject):
 
     @_bulk_operation
     def set_selected_display(
-        self, keys: Sequence[tuple[str, str]], state: ChannelDisplayState
+        self,
+        keys: Sequence[tuple[str, str]],
+        state: ChannelDisplayState,
+        *,
+        edit_session: MayaEditSession | None = None,
     ) -> bool:
         """選択属性の表示状態を一括変更し、完了後にフィルターを更新する。"""
         plugs, excluded = self._selected_state_plugs(keys, display=True)
@@ -2952,7 +2900,9 @@ class ChannelBoxController(qt.QObject):
         binding = MayaChannelStateBinding(plugs, parent=self)
         self._active_state_binding = binding
         try:
-            changed = binding.set_display_state(state)
+            changed = binding.set_display_state(
+                state, edit_session=edit_session
+            )
         finally:
             self._active_state_binding = None
             binding.dispose()
@@ -2976,7 +2926,7 @@ class ChannelBoxController(qt.QObject):
         self, reasons: Sequence[str], *, candidates: int | None = None
     ) -> None:
         """一括操作で除外した属性の理由を、成功対象と区別して表示する。"""
-        if self._mode == "values" and candidates is not None:
+        if self._mode in ("values", "states") and candidates is not None:
             self._report_bulk_operation(reasons, candidates)
             return
         if self._bulk_rows is not None:

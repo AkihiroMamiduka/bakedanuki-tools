@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import cast
 
@@ -164,6 +164,71 @@ def _mouse_order_item(
         )
         qt.QApplication.sendEvent(viewport, event)
     _events()
+
+
+def _radio_position(button: qt.QRadioButton) -> qt.QPoint:
+    """余白を避け、ラジオの丸印中央に対応する画面座標を返す。"""
+    return button.mapToGlobal(qt.QPoint(8, button.height() // 2))
+
+
+def _send_radio_mouse(
+    origin: qt.QRadioButton, kind: qt.QEvent.Type, position: qt.QPoint
+) -> None:
+    """押下元へ実Qtマウス入力を送り、なぞり途中の状態も検査可能にする。"""
+    event = qt.QtGui.QMouseEvent(
+        kind,
+        qt.QPointF(origin.mapFromGlobal(position)),
+        qt.QPointF(position),
+        (
+            qt.Qt.MouseButton.NoButton
+            if kind == qt.QEvent.Type.MouseMove
+            else qt.Qt.MouseButton.LeftButton
+        ),
+        (
+            qt.Qt.MouseButton.NoButton
+            if kind == qt.QEvent.Type.MouseButtonRelease
+            else qt.Qt.MouseButton.LeftButton
+        ),
+        qt.Qt.KeyboardModifier.NoModifier,
+    )
+    qt.QApplication.sendEvent(origin, event)
+
+
+def _setup_radio_sweep(
+    editor: ChannelBoxWidget, tmp_path: Path
+) -> tuple[CustomFilterSetupPanel, str, Path]:
+    """既存・欠落・他型の定義を持つ、なぞり検証用の候補画面を作る。"""
+    node = cmds.createNode("transform", name="sweepSetupBase")
+    for name in ("sweepA", "sweepB", "sweepC", "sweepD"):
+        cmds.addAttr(node, longName=name, attributeType="double")
+    cmds.select(node, replace=True)
+    _events()
+    path = tmp_path / "sweep-rig.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "Sweep Rig",
+                "node_types": {
+                    "transform": ["legacyMissing"],
+                    "joint": ["jointOnly"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    editor.custom_filter_registry.add_paths((str(path),))
+    editor.resize(640, 800)
+    editor.mode_combo.setCurrentIndex(2)
+    _events()
+    panel = editor.setup_panel
+    panel.set_target(str(path))
+    editor.filter_combo.setCurrentIndex(editor.filter_combo.findData("hidden"))
+    panel.search_edit.setText("sweep")
+    _set_splitter_sizes(panel.list_splitter, [80, 500])
+    _events()
+    cmds.flushUndo()
+    return panel, node, path
 
 
 def _selected_order_paths(panel: CustomFilterSetupPanel) -> tuple[str, ...]:
@@ -826,6 +891,179 @@ def test_setup_selected_radio_applies_once_to_selected_attributes(
     assert panel.selected_candidate_paths() == ("selectA",)
     _mouse_candidate(panel.candidate_container)
     assert panel.selected_candidate_paths() == ()
+
+
+def test_setup_radio_sweep_preserves_selection_and_batches_display(
+    editor: ChannelBoxWidget,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """通過順・同列・一回適用を守り、終了時だけ表示順を同期する。"""
+    panel, node, path = _setup_radio_sweep(editor, tmp_path)
+    source = path.read_bytes()
+    draft = panel.draft
+    assert draft is not None
+    _mouse_candidate(_candidate_label(panel, "sweepA"))
+    _mouse_candidate(
+        _candidate_label(panel, "sweepD"),
+        qt.Qt.KeyboardModifier.ControlModifier,
+    )
+    applied: list[tuple[tuple[str, ...], bool]] = []
+    refreshes = {"order": 0, "status": 0}
+    original_apply = draft.set_many_included
+    original_order = cast(Callable[[], None], getattr(panel, "_refresh_order"))
+    original_status = cast(
+        Callable[[], None], getattr(panel, "_refresh_status")
+    )
+
+    def record_apply(
+        node_type: str, paths: Iterable[str], included: bool
+    ) -> None:
+        """実際にdraftへ渡された行と順序を記録する。"""
+        items = tuple(paths)
+        applied.append((items, included))
+        original_apply(node_type, items, included)
+
+    def refresh_order() -> None:
+        """表示順の再構築回数を数える。"""
+        refreshes["order"] += 1
+        original_order()
+
+    def refresh_status() -> None:
+        """未保存状態の表示更新回数を数える。"""
+        refreshes["status"] += 1
+        original_status()
+
+    monkeypatch.setattr(draft, "set_many_included", record_apply)
+    monkeypatch.setattr(panel, "_refresh_order", refresh_order)
+    monkeypatch.setattr(panel, "_refresh_status", refresh_status)
+    include_a = _candidate_radio(panel, "sweepA", True)
+    include_c = _candidate_radio(panel, "sweepC", True)
+    exclude_a = _candidate_radio(panel, "sweepA", False)
+    exclude_d = _candidate_radio(panel, "sweepD", False)
+    start = _radio_position(include_c)
+    _send_radio_mouse(include_c, qt.QEvent.Type.MouseButtonPress, start)
+    for button in (include_a, exclude_a, exclude_d, exclude_a, include_c):
+        _send_radio_mouse(
+            include_c, qt.QEvent.Type.MouseMove, _radio_position(button)
+        )
+    assert panel.radio_sweep.is_active
+    assert draft.paths("transform") == (
+        "legacyMissing",
+        "sweepC",
+        "sweepB",
+        "sweepA",
+    )
+    assert applied == [
+        (("sweepC",), True),
+        (("sweepB",), True),
+        (("sweepA",), True),
+    ]
+    assert refreshes == {"order": 0, "status": 0}
+    assert panel.order_list.count() == 1
+    assert include_a.isChecked() and include_c.isChecked()
+    assert not _candidate_radio(panel, "sweepD", True).isChecked()
+    assert panel.selected_candidate_paths() == ("sweepA", "sweepD")
+    _send_radio_mouse(include_c, qt.QEvent.Type.MouseButtonRelease, start)
+    assert not panel.radio_sweep.is_active
+    assert refreshes == {"order": 1, "status": 1}
+    assert panel.order_list.count() == 4
+    assert panel.save_button.isEnabled() and draft.is_dirty
+    assert _candidate_radio(panel, "sweepC", True) is include_c
+    assert draft.paths("joint") == ("jointOnly",)
+    assert path.read_bytes() == source
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    # 含めない側も通過行だけを外し、欠落定義と候補選択を保持する
+    exclude_c = _candidate_radio(panel, "sweepC", False)
+    _send_radio_mouse(
+        exclude_c, qt.QEvent.Type.MouseButtonPress, _radio_position(exclude_c)
+    )
+    _send_radio_mouse(
+        exclude_c, qt.QEvent.Type.MouseMove, _radio_position(exclude_a)
+    )
+    _send_radio_mouse(
+        exclude_c,
+        qt.QEvent.Type.MouseButtonRelease,
+        _radio_position(exclude_a),
+    )
+    assert draft.paths("transform") == ("legacyMissing",)
+    assert panel.selected_candidate_paths() == ("sweepA", "sweepD")
+    assert not draft.is_dirty
+    for name in ("sweepA", "sweepB", "sweepC", "sweepD"):
+        plug = f"{node}.{name}"
+        assert cmds.getAttr(plug) == 0.0
+        assert cmds.getAttr(plug, keyable=True) is False
+        assert cmds.getAttr(plug, channelBox=True) is False
+        assert cmds.getAttr(plug, lock=True) is False
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize(
+    "interruption", ("search", "reference", "json", "hide", "save")
+)
+def test_setup_radio_sweep_finishes_before_context_changes(
+    editor: ChannelBoxWidget, tmp_path: Path, interruption: str
+) -> None:
+    """設定対象や表示の変更でなぞりを閉じ、古い入力を次の候補へ持ち越さない。"""
+    panel, node, path = _setup_radio_sweep(editor, tmp_path)
+    draft = panel.draft
+    assert draft is not None
+    source = path.read_bytes()
+    origin = _candidate_radio(panel, "sweepB", True)
+    end = _candidate_radio(panel, "sweepA", True)
+    end_position = _radio_position(end)
+    _send_radio_mouse(
+        origin, qt.QEvent.Type.MouseButtonPress, _radio_position(origin)
+    )
+    _send_radio_mouse(origin, qt.QEvent.Type.MouseMove, end_position)
+    assert panel.radio_sweep.is_active
+    assert draft.paths("transform") == ("legacyMissing", "sweepB", "sweepA")
+    assert panel.order_list.count() == 1
+    if interruption == "search":
+        panel.search_edit.setText("sweepA")
+    elif interruption == "reference":
+        panel.set_node(None, None, ())
+    elif interruption == "json":
+        panel.discard()
+    elif interruption == "hide":
+        panel.hide()
+    else:
+        assert panel.save()
+    assert not panel.radio_sweep.is_active
+    if qt.isValid(origin):
+        _send_radio_mouse(
+            origin, qt.QEvent.Type.MouseButtonRelease, end_position
+        )
+    _events()
+    if interruption == "json":
+        assert panel.draft is not draft
+        assert panel.draft is not None and not panel.draft.is_dirty
+        assert panel.draft.paths("transform") == ("legacyMissing",)
+    elif interruption == "save":
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        assert saved["node_types"] == {
+            "transform": ["legacyMissing", "sweepB", "sweepA"],
+            "joint": ["jointOnly"],
+        }
+        assert not draft.is_dirty
+    else:
+        assert draft.is_dirty
+        assert path.read_bytes() == source
+    if interruption == "search":
+        # 検索で隠れた行の位置を通過しても、見える候補だけを除外する
+        visible = _candidate_radio(panel, "sweepA", False)
+        hidden = _candidate_radio(panel, "sweepB", False)
+        assert not hidden.isVisible()
+        finish = _radio_position(hidden)
+        _send_radio_mouse(
+            visible, qt.QEvent.Type.MouseButtonPress, _radio_position(visible)
+        )
+        _send_radio_mouse(visible, qt.QEvent.Type.MouseMove, finish)
+        _send_radio_mouse(visible, qt.QEvent.Type.MouseButtonRelease, finish)
+        assert draft.paths("transform") == ("legacyMissing", "sweepB")
+    assert cmds.getAttr(f"{node}.sweepA") == 0.0
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_setup_name_range_drag_and_offscreen_selection(

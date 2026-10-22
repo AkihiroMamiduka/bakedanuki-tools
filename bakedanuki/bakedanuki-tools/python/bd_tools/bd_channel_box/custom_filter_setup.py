@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import cast
 
 from bd_util.maya.node.inspection import ScalarAttributeInfo
-from bd_util.ui import qt
+from bd_util.ui import RadioButtonSweep, qt
 
 from .custom_filter_editor import CustomFilterDraft
 from .custom_filter_registry import CustomFilterRegistry
@@ -61,6 +61,7 @@ class CustomFilterSetupPanel(qt.QWidget):
         self._selection_drag_paths: tuple[str, ...] = ()
         self._selection_drag_bottoms: tuple[int, ...] = ()
         self._search_tokens: tuple[str, ...] = ()
+        self._radio_sweep_pending = False
 
         self.target_label = qt.QLabel("編集するフィルター:", self)
         self.target_combo = qt.QComboBox(self)
@@ -126,6 +127,8 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.candidate_layout.setSpacing(2)
         self.candidate_layout.addStretch(1)
         self.candidate_scroll.setWidget(self.candidate_container)
+        self.radio_sweep = RadioButtonSweep(self.candidate_scroll)
+        self.radio_sweep.finished.connect(self._flush_radio_sweep)
         self.candidate_container.installEventFilter(self)
         self.candidate_scroll.viewport().installEventFilter(self)
 
@@ -212,6 +215,7 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def refresh_entries(self) -> None:
         """ON/OFFを問わず正常な登録を編集候補へ反映する。"""
+        self._finish_radio_sweep()
         current = self.draft.path if self.draft is not None else None
         blocked = self.target_combo.blockSignals(True)
         try:
@@ -261,6 +265,7 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def _load_target(self, path: str | None) -> None:
         """保存済みJSONから新しい作業中データを取得する。"""
+        self._finish_radio_sweep()
         self._clear_candidate_selection()
         self.order_list.clearSelection()
         self.order_list.setCurrentRow(-1)
@@ -297,6 +302,7 @@ class CustomFilterSetupPanel(qt.QWidget):
         attributes: tuple[ScalarAttributeInfo, ...],
     ) -> None:
         """選択末尾のノード型と現在の標準表示条件の候補を示す。"""
+        self._finish_radio_sweep()
         if node_name != self._node_name or node_type != self._node_type:
             self._clear_candidate_selection()
             self.order_list.clearSelection()
@@ -308,6 +314,7 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def set_search_tokens(self, tokens: tuple[str, ...]) -> None:
         """現在の属性候補へ検索語を適用し、所属は変更しない。"""
+        self._finish_radio_sweep()
         self._search_tokens = tokens
         for candidate in self._candidate_rows:
             candidate.widget.setVisible(
@@ -531,6 +538,7 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def hideEvent(self, event: qt.QtGui.QHideEvent) -> None:
         """設定モードを隠す際にドラッグの一時監視を解除する。"""
+        self._finish_radio_sweep()
         self._finish_candidate_drag()
         super().hideEvent(event)
 
@@ -634,6 +642,8 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def _refresh_candidates(self) -> None:
         """属性行を作り直し、Maya値・表示状態への操作を接続しない。"""
+        self._finish_radio_sweep()
+        self.radio_sweep.clear()
         self._finish_candidate_drag()
         for candidate in self._candidate_rows:
             candidate.widget.removeEventFilter(self)
@@ -676,6 +686,14 @@ class CustomFilterSetupPanel(qt.QWidget):
             exclude.clicked.connect(
                 partial(self._apply_radio_included, attribute.path, False)
             )
+            for button, included in ((include, True), (exclude, False)):
+                self.radio_sweep.add_button(
+                    button,
+                    on_change=partial(
+                        self._sweep_radio_included, attribute.path, included
+                    ),
+                    group=included,
+                )
             layout.addWidget(label, 1)
             layout.addWidget(include)
             layout.addWidget(exclude)
@@ -701,6 +719,29 @@ class CustomFilterSetupPanel(qt.QWidget):
             {candidate.attribute.path for candidate in self._candidate_rows}
         )
 
+    def _finish_radio_sweep(self) -> None:
+        """旧対象の所属変更を保ち、なぞりと保留した表示更新を終了する。"""
+        self.radio_sweep.finish()
+        self._flush_radio_sweep()
+
+    def _flush_radio_sweep(self) -> None:
+        """なぞりで保留した表示順と状態表示を、一回だけ同期する。"""
+        if not self._radio_sweep_pending:
+            return
+        self._radio_sweep_pending = False
+        self._refresh_order()
+        self._refresh_status()
+
+    def _sweep_radio_included(self, path: str, included: bool) -> None:
+        """選択集合を展開せず、通過した候補一行の所属だけを変更する。"""
+        draft = self.draft
+        node_type = self._node_type
+        if draft is None or node_type is None:
+            return
+        current = {item.lstrip(".") for item in draft.paths(node_type)}
+        if (path in current) != included:
+            self._set_paths_included((path,), included, defer_view=True)
+
     def _apply_radio_included(
         self, path: str, included: bool, _checked: bool = False
     ) -> None:
@@ -720,9 +761,13 @@ class CustomFilterSetupPanel(qt.QWidget):
         self._set_paths_included(paths, included)
 
     def _set_paths_included(
-        self, paths: tuple[str, ...], included: bool
+        self,
+        paths: tuple[str, ...],
+        included: bool,
+        *,
+        defer_view: bool = False,
     ) -> None:
-        """指定候補だけを一度で変更し、radioと表示順を一度ずつ同期する。"""
+        """指定候補のradioを同期し、なぞり中だけ表示順などの更新を保留する。"""
         draft = self.draft
         node_type = self._node_type
         if draft is None or node_type is None or not paths:
@@ -739,6 +784,9 @@ class CustomFilterSetupPanel(qt.QWidget):
                 ).setChecked(True)
         finally:
             self.candidate_container.setUpdatesEnabled(True)
+        if defer_view:
+            self._radio_sweep_pending = True
+            return
         self._refresh_order()
         self._refresh_status()
         self._sync_buttons()
@@ -834,6 +882,7 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def save(self) -> bool:
         """共有JSONへ保存し、通常モードの登録定義を再読込する。"""
+        self._finish_radio_sweep()
         draft = self.draft
         if draft is None:
             return False
@@ -858,6 +907,7 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def confirm_leave(self) -> bool:
         """未保存のまま編集対象やモードを離れる操作を確認する。"""
+        self._finish_radio_sweep()
         if self.draft is None or not self.draft.is_dirty:
             return True
         choice = qt.QMessageBox.warning(

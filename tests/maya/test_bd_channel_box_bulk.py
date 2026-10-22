@@ -39,7 +39,11 @@ from bd_util.ui import (
     qt,
 )
 import bd_tools.bd_channel_box.controller as controller_module
-from bd_tools.bd_channel_box.widget import AttributeRowWidget, ChannelBoxWidget
+from bd_tools.bd_channel_box.widget import (
+    AttributeRowWidget,
+    AttributeStateRowWidget,
+    ChannelBoxWidget,
+)
 
 
 def _events() -> None:
@@ -409,14 +413,19 @@ def test_value_mode_is_default_and_has_only_one_value_entry(
         cast(Callable[[str], None], editor.controller.set_mode)("bulk_values")
 
 
+@pytest.mark.parametrize("mode", ["values", "states"])
 def test_thousand_nodes_inspect_and_bind_only_the_reference(
-    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: Literal["values", "states"],
 ) -> None:
     """千ノード選択でも、表示用の属性取得とBindingは基準一個に限定する。"""
     nodes = tuple(
         cmds.createNode("network", name=f"bulkThousand{index}")
         for index in range(999)
     ) + ("bulkReference",)
+    editor.controller.set_mode(mode)
+    _events()
     original = controller_module.inspect_scalar_attributes
     inspected: list[str] = []
 
@@ -434,17 +443,27 @@ def test_thousand_nodes_inspect_and_bind_only_the_reference(
     assert editor.selection_count_label.text() == "1000 ノード"
     assert editor.row_widgets
     for widget in editor.row_widgets:
-        assert isinstance(widget, AttributeRowWidget)
-        assert len(widget.row.binding.target_states) == 1
-        assert not widget.row.binding.is_mixed
-    assert isinstance(_row(editor, "free").editor, FloatValueStepSpinBox)
-    assert isinstance(_row(editor, "count").editor, IntSliderSpinBox)
+        assert len(widget.row.target_names) == 1
+        if mode == "states":
+            assert isinstance(widget, AttributeStateRowWidget)
+            snapshot = widget.row.state_binding.state
+            assert len(snapshot.targets) == 1
+            assert not snapshot.lock_mixed
+            assert not snapshot.display_mixed
+            assert not widget.lock_check_box.isTristate()
+        else:
+            assert isinstance(widget, AttributeRowWidget)
+            assert len(widget.row.binding.target_states) == 1
+            assert not widget.row.binding.is_mixed
+    if mode == "values":
+        assert isinstance(_row(editor, "free").editor, FloatValueStepSpinBox)
+        assert isinstance(_row(editor, "count").editor, IntSliderSpinBox)
 
 
-def test_state_mode_keeps_the_selection_limit(
+def test_state_and_value_mode_round_trip_keeps_all_selected_nodes(
     editor: ChannelBoxWidget,
 ) -> None:
-    """状態モードの上限を維持し、値編集へ戻れば全選択を表示する。"""
+    """旧上限を超えてモードを往復しても、選択対象と基準表示を維持する。"""
     nodes = tuple(
         cmds.createNode("network", name=f"bulkLimit{index}")
         for index in range(50)
@@ -454,8 +473,14 @@ def test_state_mode_keeps_the_selection_limit(
     assert len(editor.controller.node_names) == 51
     editor.controller.set_mode("states")
     _events()
-    assert editor.controller.selection_limit_exceeded
-    assert not editor.row_widgets
+    assert not editor.controller.selection_limit_exceeded
+    assert len(editor.controller.node_names) == 51
+    assert editor.row_widgets
+    assert all(
+        isinstance(row, AttributeStateRowWidget)
+        and len(row.row.state_binding.state.targets) == 1
+        for row in editor.row_widgets
+    )
     editor.controller.set_mode("values")
     _events()
     assert not editor.controller.selection_limit_exceeded
@@ -1342,8 +1367,12 @@ def test_align_lock_and_keyframe_menus_keep_all_targets(
 
 
 @pytest.mark.parametrize("operation", ["lock", "display"])
+@pytest.mark.parametrize("mode", ["values", "states"])
 def test_thousand_node_state_operations_keep_flags_and_one_undo(
-    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch, operation: str
+    editor: ChannelBoxWidget,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    mode: Literal["values", "states"],
 ) -> None:
     """千対象のlock・表示変更が値を変えず、一回のUndo/Redoで復元する。"""
     nodes = tuple(
@@ -1353,10 +1382,27 @@ def test_thousand_node_state_operations_keep_flags_and_one_undo(
     cmds.select(*nodes, replace=True)
     _events()
     keys = _keys(editor, "translateX")
+    editor.controller.set_mode(mode)
+    if mode == "states":
+        editor.controller.set_attribute_filter("visible")
+    _events()
     created = _record_bulk_drag_rows(editor, monkeypatch)
     cmds.flushUndo()
 
-    if operation == "lock":
+    if mode == "states":
+        row = next(
+            row
+            for row in editor.row_widgets
+            if row.row.attribute.name == "translateX"
+        )
+        assert isinstance(row, AttributeStateRowWidget)
+        button = (
+            row.lock_check_box
+            if operation == "lock"
+            else row.display_buttons["channel_box"]
+        )
+        button.click()
+    elif operation == "lock":
         assert editor.controller.set_selected_locked(keys, True)
     else:
         assert editor.controller.set_selected_display(keys, "channel_box")
@@ -1460,16 +1506,22 @@ def test_bulk_menu_operations_keep_different_enum_definitions_without_value_bind
 
 @pytest.mark.parametrize("operation", ["lock", "display"])
 @pytest.mark.parametrize("missing", [False, True])
+@pytest.mark.parametrize("mode", ["values", "states"])
 def test_bulk_state_targets_report_missing_and_wrong_types(
-    editor: ChannelBoxWidget, operation: str, missing: bool
+    editor: ChannelBoxWidget,
+    operation: str,
+    missing: bool,
+    mode: Literal["values", "states"],
 ) -> None:
     """対応先の欠損と型違いを除外し、状態操作の候補件数を通知する。"""
+    keys = _keys(editor, "free")
+    editor.controller.set_mode(mode)
+    _events()
     cmds.deleteAttr("bulkOther.free")
     if not missing:
         cmds.addAttr(
             "bulkOther", longName="free", attributeType="long", keyable=True
         )
-    keys = _keys(editor, "free")
     reports: list[str] = []
     editor.controller.operation_reported.connect(reports.append)
     cmds.flushUndo()
@@ -1493,11 +1545,16 @@ def test_bulk_state_targets_report_missing_and_wrong_types(
 
 
 @pytest.mark.parametrize("operation", ["lock", "display"])
+@pytest.mark.parametrize("mode", ["values", "states"])
 def test_bulk_state_targets_keep_each_rows_reference_constraint(
-    editor: ChannelBoxWidget, operation: str
+    editor: ChannelBoxWidget,
+    operation: str,
+    mode: Literal["values", "states"],
 ) -> None:
     """基準で状態変更不可の行全体を除外し、他の行だけを一括変更する。"""
     keys = _keys(editor, "translateX", "free")
+    editor.controller.set_mode(mode)
+    _events()
     if operation == "lock":
         cmds.setAttr("bulkReference.translate", lock=True)
     else:

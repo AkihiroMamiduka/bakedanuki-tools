@@ -128,6 +128,7 @@ else:
     )
     assert_type(row.lock_check_box, qt.QCheckBox)
     assert_type(row.set_locked(True), None)
+    assert_type(row.set_display_state("hidden"), None)
 assert_type(bd_channel_box.dispose(), None)
 assert_type(bd_channel_box.close(), None)
 assert_type(bd_channel_box.restore(), bd_channel_box.ChannelBoxWindow)
@@ -257,6 +258,12 @@ assert_type(controller.consolidate_rotation("rotate"), int)
 assert_type(controller.can_set_rotation_preserving_pose(), bool)
 assert_type(controller.can_set_child_compensated_value(), bool)
 assert_type(controller.set_selected_locked(keys, True), bool)
+assert_type(
+    controller.set_selected_locked(
+        keys, True, edit_session=controller.state_edit_session
+    ),
+    bool,
+)
 assert_type(controller.can_paste_values(), bool)
 assert_type(controller.can_paste_single_value(), bool)
 assert_type(controller.copy_all_values(), int)
@@ -268,6 +275,12 @@ assert_type(controller.has_transform_context(), bool)
 assert_type(controller.can_freeze_translation(), bool)
 assert_type(controller.freeze_transforms("all"), int)
 assert_type(controller.set_selected_display(keys, "hidden"), bool)
+assert_type(
+    controller.set_selected_display(
+        keys, "hidden", edit_session=controller.state_edit_session
+    ),
+    bool,
+)
 assert_type(controller.set_muted_selected(keys, muted=True), int)
 assert_type(controller.set_muted_all_visible(muted=False), int)
 assert_type(controller.can_paste_animation_curves(), bool)

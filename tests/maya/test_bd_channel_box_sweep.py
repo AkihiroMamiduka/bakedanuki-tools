@@ -191,7 +191,7 @@ def test_lock_sweep_normalizes_mixed_rows_and_groups_undo(
     rows = editor.row_widgets
     first, _last = _start_lock(editor)
     _events()
-    target = initial != "locked"
+    target = initial == "unlocked"
     _assert_locked(target)
     for node in ("sweepA", "sweepB"):
         assert not cmds.getAttr(f"{node}.rotateZ", lock=True)
@@ -221,7 +221,16 @@ def test_lock_sweep_normalizes_mixed_rows_and_groups_undo(
 
 @pytest.mark.parametrize(
     "action",
-    ["escape", "hide", "mode", "filter", "refresh", "selection", "dispose"],
+    [
+        "escape",
+        "hide",
+        "close",
+        "mode",
+        "filter",
+        "refresh",
+        "selection",
+        "dispose",
+    ],
 )
 def test_lock_sweep_interruption_closes_undo(
     editor: ChannelBoxWidget, action: str
@@ -239,6 +248,8 @@ def test_lock_sweep_interruption_closes_undo(
         )
     elif action == "hide":
         editor.hide()
+    elif action == "close":
+        editor.close()
     elif action == "mode":
         editor.controller.set_mode("values")
     elif action == "filter":
@@ -263,7 +274,16 @@ def test_lock_sweep_interruption_closes_undo(
 
 @pytest.mark.parametrize(
     "action",
-    ["escape", "hide", "mode", "filter", "refresh", "selection", "dispose"],
+    [
+        "escape",
+        "hide",
+        "close",
+        "mode",
+        "filter",
+        "refresh",
+        "selection",
+        "dispose",
+    ],
 )
 def test_interruption_commits_and_closes_undo(
     editor: ChannelBoxWidget, action: str
@@ -281,6 +301,8 @@ def test_interruption_commits_and_closes_undo(
         )
     elif action == "hide":
         editor.hide()
+    elif action == "close":
+        editor.close()
     elif action == "mode":
         editor.controller.set_mode("values")
     elif action == "filter":
@@ -369,3 +391,113 @@ def test_lock_sweep_skips_disabled_rows(editor: ChannelBoxWidget) -> None:
         assert cmds.getAttr(node + ".rotateZ", lock=True)
     assert cmds.getAttr("sweepA.translate", lock=True)
     assert not cmds.getAttr("sweepB.translateX", lock=True)
+
+
+@pytest.mark.parametrize("operation", ["display", "lock"])
+def test_thousand_node_sweep_applies_visually_unchanged_rows_and_one_undo(
+    editor: ChannelBoxWidget, operation: str
+) -> None:
+    """基準が既に要求状態の行も千対象へ適用し、通過行だけを一回で戻す。"""
+    nodes = tuple(
+        cmds.createNode("transform", name=f"sweepMany{index}")
+        for index in range(998)
+    ) + ("sweepB", "sweepA")
+    if operation == "display":
+        for axis in "XYZ":
+            cmds.setAttr(
+                f"sweepA.translate{axis}", keyable=False, channelBox=True
+            )
+    else:
+        for axis in "YZ":
+            cmds.setAttr(f"sweepA.translate{axis}", lock=True)
+    editor.controller.set_attribute_filter("visible")
+    cmds.select(*nodes, replace=True)
+    _events()
+    assert len(editor.controller.node_names) == 1000
+    assert editor.row_widgets
+    editor.table_view.select_keys(
+        (_key_for(editor, "translateX"), _key_for(editor, "rotateZ"))
+    )
+
+    def flags() -> tuple[tuple[bool, bool, bool], ...]:
+        """全対象の通過三行から実際の表示とlock状態を取得する。"""
+        return tuple(
+            (
+                bool(cmds.getAttr(path, keyable=True)),
+                bool(cmds.getAttr(path, channelBox=True)),
+                bool(cmds.getAttr(path, lock=True)),
+            )
+            for node in nodes
+            for axis in "XYZ"
+            for path in (f"{node}.translate{axis}",)
+        )
+
+    before = flags()
+    if operation == "display":
+        rows = tuple(
+            next(
+                row
+                for row in editor.row_widgets
+                if row.row.attribute.name == name
+            )
+            for name in ("translateX", "translateZ")
+        )
+        assert all(isinstance(row, AttributeStateRowWidget) for row in rows)
+        first, last = tuple(
+            cast(AttributeStateRowWidget, row).display_buttons["channel_box"]
+            for row in rows
+        )
+        assert first.isChecked() and last.isChecked()
+        expected = (False, True, False)
+    else:
+        first, last = _lock(editor, "translateX"), _lock(editor, "translateZ")
+        assert not first.isChecked() and last.isChecked()
+        expected = (True, False, True)
+    cmds.flushUndo()
+    _mouse(first, qt.QEvent.Type.MouseButtonPress, first)
+    _mouse(first, qt.QEvent.Type.MouseMove, last)
+    assert editor.controller.state_edit_session.is_editing
+    _mouse(first, qt.QEvent.Type.MouseButtonRelease, last)
+    _events()
+    assert flags() == (expected,) * (len(nodes) * 3)
+    assert not editor.controller.state_edit_session.is_editing
+    assert not editor.state_sweep.is_active
+    assert not editor.lock_sweep.is_active
+    for node in nodes:
+        assert cmds.getAttr(f"{node}.rotateZ", keyable=True)
+        assert not cmds.getAttr(f"{node}.rotateZ", lock=True)
+        assert cmds.getAttr(f"{node}.translateX") == 0.0
+    cmds.undo()
+    _events()
+    assert flags() == before
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    cmds.redo()
+    _events()
+    assert flags() == (expected,) * (len(nodes) * 3)
+
+
+def test_display_sweep_keeps_the_start_column_during_horizontal_movement(
+    editor: ChannelBoxWidget,
+) -> None:
+    """開始列のなぞり後に別列へ移動しても、異なる表示状態で上書きしない。"""
+    first = _button(editor, "translateX")
+    row = next(
+        row
+        for row in editor.row_widgets
+        if row.row.attribute.name == "translateZ"
+    )
+    assert isinstance(row, AttributeStateRowWidget)
+    last = row.display_buttons["hidden"]
+    _mouse(first, qt.QEvent.Type.MouseButtonPress, first)
+    _mouse(first, qt.QEvent.Type.MouseMove, last)
+    _assert_keyable(False)
+    last = row.display_buttons["keyable"]
+    _mouse(first, qt.QEvent.Type.MouseMove, last)
+    _assert_keyable(False)
+    _mouse(first, qt.QEvent.Type.MouseButtonRelease, last)
+    _events()
+    _assert_keyable(False)
+    cmds.undo()
+    _events()
+    _assert_keyable(True)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)

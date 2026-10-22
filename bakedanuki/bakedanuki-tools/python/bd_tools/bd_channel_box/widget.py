@@ -81,12 +81,6 @@ _NAME_CONFLICT_MESSAGE = (
     "ノード名が外部で変更されました。"
     "Enterで入力名を適用するか、Escapeで取り消してください。"
 )
-_SELECTION_LIMIT_MESSAGE = (
-    "対象ノードが50個以上あります。\n"
-    "多数のノードを対象にすると、処理が重くレスポンスが悪い為、"
-    "bdChannelBoxの表示・編集を休止しています。\n"
-    "49個以下に減らすと再開します。"
-)
 _NAME_IDLE_STYLE = (
     "background-color: palette(window); "
     "color: palette(window-text); "
@@ -323,10 +317,10 @@ class _InputStateIndicator(qt.QWidget):
 
 
 class _LockCheckBox(qt.QCheckBox):
-    """混在を表示しつつ、明示入力ではロックか解除だけを選ぶ。"""
+    """基準のlockを二状態で表示し、明示入力で反対の状態を要求する。"""
 
     def nextCheckState(self) -> None:
-        """混在からはロックへ進み、その後は二状態で切り替える。"""
+        """基準がロック中なら解除、それ以外ならロックへ進む。"""
         self.setCheckState(
             qt.Qt.CheckState.Unchecked
             if self.checkState() == qt.Qt.CheckState.Checked
@@ -1098,9 +1092,9 @@ class AttributeStateRowWidget(qt.QWidget):
             self._display_group.addButton(button)
             self.display_buttons[value] = button
             controls.addWidget(button)
-            button.clicked.connect(partial(self._set_display_state, value))
+            button.clicked.connect(partial(self.set_display_state, value))
         self.lock_check_box: qt.QCheckBox = _LockCheckBox("lock", self.editor)
-        self.lock_check_box.setTristate(True)
+        self.lock_check_box.setTristate(False)
         self.lock_check_box.setAccessibleName(
             f"{row.attribute.nice_name} ロック"
         )
@@ -1124,7 +1118,7 @@ class AttributeStateRowWidget(qt.QWidget):
         event.accept()
 
     def _update_state(self) -> None:
-        """表示とロックの混在を独立して表示し、操作可否を同期する。"""
+        """基準の表示状態と自身のlockだけを示し、操作別の可否を同期する。"""
         state = self.row.state_binding.state
         available = not self.row.state_binding.is_disposed
         old_display = tuple(
@@ -1132,23 +1126,13 @@ class AttributeStateRowWidget(qt.QWidget):
             for button in self.display_buttons.values()
         )
         old_lock = self.lock_check_box.blockSignals(True)
-        # 混在時には排他制御を一時解除し、3つとも未選択へ同期する
+        # 表示同期はMayaへ書き戻さず、基準の状態だけを示す
         self._display_group.setExclusive(False)
         try:
             for value, button in self.display_buttons.items():
-                button.setChecked(
-                    not state.display_mixed and value == state.display_state
-                )
+                button.setChecked(value == state.display_state)
                 button.setEnabled(available and state.can_set_display)
-            self.lock_check_box.setCheckState(
-                qt.Qt.CheckState.PartiallyChecked
-                if state.lock_mixed
-                else (
-                    qt.Qt.CheckState.Checked
-                    if state.locked
-                    else qt.Qt.CheckState.Unchecked
-                )
-            )
+            self.lock_check_box.setChecked(state.locked is True)
             self.lock_check_box.setEnabled(available and state.can_set_locked)
         finally:
             self._display_group.setExclusive(True)
@@ -1158,25 +1142,14 @@ class AttributeStateRowWidget(qt.QWidget):
                 button.blockSignals(blocked)
             self.lock_check_box.blockSignals(old_lock)
 
-        mixed = state.display_mixed or state.lock_mixed
-        self.name_label.setText(
-            ("• " if mixed else "") + self.row.attribute.nice_name
-        )
+        self.name_label.setText(self.row.attribute.nice_name)
         details = [self.row.attribute.nice_name, self.row.attribute.path]
-        display_count = (
-            state.display_writable_count if state.can_set_display else 0
+        details.append("表示・ロックは末尾の基準ノードの状態です")
+        details.append(
+            "対応する全選択ノードへ適用し、操作時に対象と変更可否を確認します"
         )
-        lock_count = state.lock_writable_count if state.can_set_locked else 0
-        details.append(f"表示変更: {display_count}/{self.selection_count} 件")
-        details.append(f"ロック変更: {lock_count}/{self.selection_count} 件")
-        if state.display_mixed:
-            details.append("表示状態が混在しています。項目の選択で揃えます")
-        if state.lock_mixed:
-            details.append(
-                "ロック状態が混在しています。クリックでロックへ揃えます"
-            )
-        details.extend(self.row.excluded)
-        for target in state.targets:
+        details.append("全対象の混在や変更可能件数は常時計算しません")
+        for target in state.targets[:1]:
             reasons = tuple(
                 dict.fromkeys(
                     reason
@@ -1196,20 +1169,19 @@ class AttributeStateRowWidget(qt.QWidget):
             )
         self.lock_check_box.setToolTip(
             "Lock: 属性自身のロック／解除\n"
+            "基準がOFFなら全対象をロック、ONなら全対象を解除\n"
             "操作行が選択中なら、選択属性へ一括適用\n"
             "左ドラッグで開始時の操作を通過行だけへ適用\n"
             f"{tooltip}"
         )
 
-    def _set_display_state(
+    def set_display_state(
         self, value: ChannelDisplayState, _checked: bool = False
     ) -> None:
         """通常入力は選択属性へ、なぞり中はこの行だけへ適用する。"""
         try:
             session = self._edit_session
-            if self._display_state_request_handler is not None and not (
-                session is not None and session.is_editing
-            ):
+            if self._display_state_request_handler is not None:
                 self._display_state_request_handler(value)
             else:
                 self.row.state_binding.set_display_state(
@@ -1230,9 +1202,7 @@ class AttributeStateRowWidget(qt.QWidget):
         """通常入力は選択属性へ、なぞり中はこの行だけのlockを変える。"""
         try:
             session = self._edit_session
-            if self._lock_request_handler is not None and not (
-                session is not None and session.is_editing
-            ):
+            if self._lock_request_handler is not None:
                 self._lock_request_handler(locked)
             else:
                 self.row.state_binding.set_locked(
@@ -1675,9 +1645,9 @@ class ChannelBoxWidget(qt.QWidget):
         )
         self.mode_combo.setAccessibleName("表示モード")
         self.mode_combo.setToolTip(
-            "値編集は選択数に制限がありません。表示は末尾の基準ノードのみです。\n"
-            "値の編集は、対応する選択ノードの属性へ適用します。\n"
-            "カスタムフィルター設定も選択数に制限はなく、基準ノードの型を編集します。"
+            "どのモードも選択数に制限はなく、表示は末尾の基準ノードのみです。\n"
+            "値編集・表示とロックは、対応する全選択ノードの属性へ適用します。\n"
+            "カスタムフィルター設定は、基準ノードの型を編集します。"
         )
         self.filter_combo = qt.QComboBox(self)
         self._populate_filter_combo()
@@ -2062,7 +2032,6 @@ class ChannelBoxWidget(qt.QWidget):
     def _sync_mode(self) -> None:
         """controllerからのモード変更を属性へ入力せず表示へ反映する。"""
         setup = self.controller.mode == "custom_filter_setup"
-        limited = self.controller.selection_limit_exceeded
         self._setup_mode_active = setup
         blocked = self.mode_combo.blockSignals(True)
         try:
@@ -2071,12 +2040,12 @@ class ChannelBoxWidget(qt.QWidget):
             )
         finally:
             self.mode_combo.blockSignals(blocked)
-        self.header_label.setVisible(not setup and not limited)
+        self.header_label.setVisible(not setup)
         if setup:
             self.selection_count_label.hide()
-        self.table_view.setVisible(not setup and not limited)
-        self.empty_label.setVisible(not setup or limited)
-        self.setup_panel.setVisible(setup and not limited)
+        self.table_view.setVisible(not setup)
+        self.empty_label.setVisible(not setup)
+        self.setup_panel.setVisible(setup)
         blocked = self.filter_combo.blockSignals(True)
         try:
             self._populate_filter_combo()
@@ -2463,17 +2432,31 @@ class ChannelBoxWidget(qt.QWidget):
     def _request_display_state(
         self, key: tuple[str, str], state: ChannelDisplayState
     ) -> None:
-        """選択中の属性を、操作した行と同じ表示状態へ揃える。"""
+        """単発は選択属性、なぞりは通過行だけを全対象へ適用する。"""
         try:
-            self.controller.set_selected_display(self._action_keys(key), state)
+            session = self.controller.state_edit_session
+            sweeping = session.is_editing
+            self.controller.set_selected_display(
+                (key,) if sweeping else self._action_keys(key),
+                state,
+                edit_session=session if sweeping else None,
+            )
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self.controller.state_edit_session.finish()
             self._show_error(str(error))
 
     def _request_locked(self, key: tuple[str, str], locked: bool) -> None:
-        """選択中の属性自身を、操作後のロック状態へ揃える。"""
+        """単発は選択属性、なぞりは通過行だけを要求したlockへ揃える。"""
         try:
-            self.controller.set_selected_locked(self._action_keys(key), locked)
+            session = self.controller.state_edit_session
+            sweeping = session.is_editing
+            self.controller.set_selected_locked(
+                (key,) if sweeping else self._action_keys(key),
+                locked,
+                edit_session=session if sweeping else None,
+            )
         except (ValueError, TypeError, RuntimeError, ExceptionGroup) as error:
+            self.controller.state_edit_session.finish()
             self._show_error(str(error))
 
     def _begin_slider_edit(
@@ -3396,21 +3379,6 @@ class ChannelBoxWidget(qt.QWidget):
             widget.hide()
         self.row_widgets = ()
         names = self.controller.node_names
-        if self.controller.selection_limit_exceeded:
-            # 表示・ロックの旧Viewを消し、選択上限の理由を表示する
-            self._dispose_node_name_editor()
-            self.header_label.hide()
-            self.table_view.set_rows([], preserve_selection=False)
-            self._table_node_ids = ()
-            self._scroll_anchor = None
-            self.setup_panel.set_node(None, None, ())
-            self.table_view.hide()
-            self.setup_panel.hide()
-            self.filter_fallback_label.hide()
-            self.empty_label.setText(_SELECTION_LIMIT_MESSAGE)
-            self.empty_label.show()
-            self._sync_edit_menu_actions()
-            return
         if self.controller.mode == "custom_filter_setup":
             self.setup_panel.show()
             self._dispose_node_name_editor()
@@ -3451,10 +3419,17 @@ class ChannelBoxWidget(qt.QWidget):
                             self._request_locked, key
                         ),
                     )
-                    for button in widget.display_buttons.values():
-                        self.state_sweep.add_button(button)
+                    for value, button in widget.display_buttons.items():
+                        self.state_sweep.add_button(
+                            button,
+                            on_change=partial(widget.set_display_state, value),
+                            apply_unchanged=True,
+                            group=value,
+                        )
                     self.lock_sweep.add_button(
-                        widget.lock_check_box, on_change=widget.set_locked
+                        widget.lock_check_box,
+                        on_change=widget.set_locked,
+                        apply_unchanged=True,
                     )
                 else:
                     widget = AttributeRowWidget(
@@ -3530,9 +3505,7 @@ class ChannelBoxWidget(qt.QWidget):
         self, visible_count: int, *, searching: bool
     ) -> None:
         """ノード・表示条件・検索結果の空状態を区別して表示する。"""
-        if self.controller.selection_limit_exceeded:
-            message = _SELECTION_LIMIT_MESSAGE
-        elif not self.controller.node_names:
+        if not self.controller.node_names:
             message = (
                 "Maya ノードを選択すると、入力可能な種類の属性を表示します。"
             )
@@ -3544,11 +3517,7 @@ class ChannelBoxWidget(qt.QWidget):
             message = ""
         self.empty_label.setText(message)
         self.empty_label.setVisible(
-            bool(message)
-            and (
-                self.controller.selection_limit_exceeded
-                or not self._setup_mode_active
-            )
+            bool(message) and not self._setup_mode_active
         )
 
     def _apply_step_value(

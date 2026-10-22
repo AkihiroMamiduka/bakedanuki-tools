@@ -145,6 +145,7 @@ class _MayaSmokeSession:
             self._inspect_input_colors,
             self._inspect_connected_values,
             self._inspect_connected_drag,
+            self._inspect_thousand_node_states,
             self._finish,
         )
         if os.environ.get(_CHILD_SET_ONLY_VARIABLE) == "1":
@@ -196,7 +197,9 @@ class _MayaSmokeSession:
                 self._setup_scene,
                 self._show,
                 self._inspect_custom_filters,
+                self._inspect_custom_filter_sweep,
                 self._inspect_reference_only_custom_filter_setup,
+                self._inspect_thousand_node_states,
                 self._finish,
             )
 
@@ -1530,7 +1533,7 @@ class _MayaSmokeSession:
         self.steps.append("lock_unlock_preserves_visibility_and_values")
 
     def _inspect_mixed_states(self) -> None:
-        """外部から作った混在を表示し、明示操作だけで各状態を揃える。"""
+        """外部変更を基準表示へ混ぜず、明示操作だけで全対象の状態を揃える。"""
         from maya import cmds
 
         from bd_util.ui import qt
@@ -1541,17 +1544,17 @@ class _MayaSmokeSession:
         cmds.setAttr(f"{self.nodes[1]}.enabled", lock=True)
         self._flush_gui()
         row = self._state_row("enabled")
+        if row.lock_check_box.isTristate() or row.lock_check_box.isChecked():
+            raise AssertionError("基準ノードのlockが二状態で表示されません")
+        if not row.display_buttons["keyable"].isChecked():
+            raise AssertionError("基準ノードの表示状態が選択されていません")
         if (
-            row.lock_check_box.checkState()
-            != qt.Qt.CheckState.PartiallyChecked
+            row.name_label.text().startswith("• ")
+            or len(row.row.state_binding.state.targets) != 1
         ):
-            raise AssertionError("ロックの混在が三状態で表示されません")
-        if any(button.isChecked() for button in row.display_buttons.values()):
-            raise AssertionError("混在時に表示状態が未選択になっていません")
-        if "混在" not in row.display_buttons["keyable"].toolTip():
-            raise AssertionError("表示状態の混在が説明されません")
+            raise AssertionError("基準以外の状態を表示用に集計しています")
         initial = self._attribute_states("enabled")
-        self._capture("13-state-mode-mixed.png")
+        self._capture("13-state-mode-reference.png")
         cmds.flushUndo()
         self._key(row.display_buttons["keyable"], qt.Qt.Key.Key_Space)
         self._flush_gui()
@@ -1581,7 +1584,7 @@ class _MayaSmokeSession:
             f"{self.nodes[1]}.enabled", keyable=True, channelBox=False
         )
         self._flush_gui()
-        self.steps.append("mixed_visibility_and_lock_edit_independently")
+        self.steps.append("reference_visibility_and_binary_lock_align_all")
 
     def _return_to_values(self) -> None:
         """値モードへ戻し、列位置・値・刻み幅の維持を確認する。"""
@@ -2021,6 +2024,93 @@ class _MayaSmokeSession:
             raise AssertionError("保存したjoint型の属性が表示されません")
         self.steps.append("author_custom_filter_for_joint")
 
+    def _inspect_custom_filter_sweep(self) -> None:
+        """設定候補の同列をなぞり、所属だけを変更してsceneとUndoを維持する。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+
+        widget = self._require_window().widget
+        saved_mode = widget.controller.mode
+        self._select_combo_item(widget.mode_combo, 2)
+        panel = widget.setup_panel
+        saved_search = panel.search_edit.text()
+        panel.search_edit.setText("multiHidden")
+        panel.list_splitter.setSizes([80, 300])
+        self._flush_gui()
+        draft = panel.draft
+        if draft is None:
+            raise AssertionError(
+                "なぞり用のカスタムフィルター下書きがありません"
+            )
+        node = widget.controller.node_names[-1]
+        node_type = cast(str, cmds.nodeType(node))
+        paths = ("multiHiddenA", "multiHiddenB")
+        before = draft.paths(node_type)
+        scene_before = tuple(
+            (
+                cmds.getAttr(f"{node}.{path}"),
+                cmds.getAttr(f"{node}.{path}", keyable=True),
+                cmds.getAttr(f"{node}.{path}", channelBox=True),
+                cmds.getAttr(f"{node}.{path}", lock=True),
+            )
+            for path in paths
+        )
+        if any(path in before for path in paths):
+            raise AssertionError(
+                "なぞり検証の候補は未登録である必要があります"
+            )
+
+        def button(path: str, label: str) -> qt.QRadioButton:
+            """正式pathと表示ラベルから現在の候補ラジオを取得する。"""
+            find_buttons = cast(
+                Callable[[type[qt.QRadioButton]], list[qt.QRadioButton]],
+                getattr(panel, "findChildren"),
+            )
+            for candidate in find_buttons(qt.QRadioButton):
+                if (
+                    candidate.toolTip().splitlines()[0] == path
+                    and candidate.text() == label
+                ):
+                    return candidate
+            raise AssertionError(f"候補ラジオがありません: {path}/{label}")
+
+        cmds.flushUndo()
+        for included, label in ((True, "含める"), (False, "含めない")):
+            first, last = (button(path, label) for path in paths)
+            panel.candidate_scroll.ensureWidgetVisible(first)
+            self._flush_gui()
+            start = qt.QPoint(8, first.height() // 2)
+            end = first.mapFromGlobal(
+                last.mapToGlobal(qt.QPoint(8, last.height() // 2))
+            )
+            self._mouse(first, qt.QEvent.Type.MouseButtonPress, start)
+            self._mouse(first, qt.QEvent.Type.MouseMove, end)
+            self._flush_gui()
+            expected = (*before, *paths) if included else before
+            if draft.paths(node_type) != expected:
+                raise AssertionError(
+                    f"候補なぞりが所属へ反映されません: {label}"
+                )
+            self._capture(f"55-custom-filter-sweep-{included}.png")
+            self._mouse(first, qt.QEvent.Type.MouseButtonRelease, end)
+            self._flush_gui()
+        if scene_before != tuple(
+            (
+                cmds.getAttr(f"{node}.{path}"),
+                cmds.getAttr(f"{node}.{path}", keyable=True),
+                cmds.getAttr(f"{node}.{path}", channelBox=True),
+                cmds.getAttr(f"{node}.{path}", lock=True),
+            )
+            for path in paths
+        ) or not cmds.undoInfo(query=True, undoQueueEmpty=True):
+            raise AssertionError("候補のなぞりがsceneまたはUndoを変更しました")
+        panel.search_edit.setText(saved_search)
+        self._select_combo_item(
+            widget.mode_combo, widget.mode_combo.findData(saved_mode)
+        )
+        self.steps.append("custom_filter_same_column_sweep_preserves_scene")
+
     def _inspect_reference_only_custom_filter_setup(self) -> None:
         """千ノードの混在選択でも基準型だけの設定画面を操作できるか確認する。"""
         from maya import cmds
@@ -2073,15 +2163,212 @@ class _MayaSmokeSession:
                 "値編集へ戻っても全選択を操作対象にできません"
             )
         self._select_combo_item(widget.mode_combo, 1)
-        if not widget.controller.selection_limit_exceeded:
-            raise AssertionError("表示・ロックの50ノード上限が失われました")
+        if (
+            widget.controller.selection_limit_exceeded
+            or len(widget.controller.node_names) != 1000
+        ):
+            raise AssertionError(
+                "表示・ロックで千ノードの選択を保持できません"
+            )
         self._select_combo_item(widget.mode_combo, 2)
         if (
             widget.controller.selection_limit_exceeded
             or not widget.setup_panel.isVisible()
         ):
-            raise AssertionError("上限案内から基準だけの設定へ戻れません")
+            raise AssertionError("基準だけの設定画面へ戻れません")
         self.steps.append("custom_filter_setup_1000_reference_type_and_modes")
+
+    def _inspect_thousand_node_states(self) -> None:
+        """千ノードの基準表示・実クリック・同列なぞりとUndo/Redoを確認する。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+        from bd_tools.bd_channel_box.widget import AttributeStateRowWidget
+
+        widget = self._require_window().widget
+        saved_selection = tuple(cmds.ls(selection=True, long=True) or ())
+        saved_mode = widget.controller.mode
+        saved_filter = widget.controller.attribute_filter
+        saved_search = widget.search_edit.text()
+        nodes = tuple(
+            cmds.createNode(
+                "transform", name=f"bdStateThousand{index}", skipSelect=True
+            )
+            for index in range(1000)
+        )
+        attributes = ("translateX", "translateY", "translateZ")
+
+        def states(*names: str) -> tuple[tuple[bool, bool, bool], ...]:
+            """UIの情報を使わず全対象の表示フラグとlockを取得する。"""
+            return tuple(
+                (
+                    bool(cmds.getAttr(path, keyable=True)),
+                    bool(cmds.getAttr(path, channelBox=True)),
+                    bool(cmds.getAttr(path, lock=True)),
+                )
+                for node in nodes
+                for name in names
+                for path in (f"{node}.{name}",)
+            )
+
+        try:
+            # 基準は既に要求状態にし、同値入力でも他の999ノードを変更する
+            for name in attributes:
+                cmds.setAttr(
+                    f"{nodes[-1]}.{name}", keyable=False, channelBox=True
+                )
+            widget.search_edit.clear()
+            started = time.perf_counter()
+            cmds.select(*nodes, replace=True)
+            self._select_combo_item(widget.mode_combo, 1)
+            self._select_combo_item(
+                widget.filter_combo, widget.filter_combo.findData("visible")
+            )
+            self._flush_gui()
+            self.measurements["states_1000_reference_display_ms"] = round(
+                (time.perf_counter() - started) * 1000, 3
+            )
+            if (
+                len(widget.controller.node_names) != 1000
+                or widget.controller.selection_limit_exceeded
+                or not widget.row_widgets
+            ):
+                raise AssertionError("千ノードの表示・ロック画面を開けません")
+            for row in widget.row_widgets:
+                if (
+                    not isinstance(row, AttributeStateRowWidget)
+                    or len(row.row.state_binding.state.targets) != 1
+                ):
+                    raise AssertionError("状態表示が基準一件に限定されません")
+            self._capture("52-state-1000-reference.png")
+
+            # 二状態lockの実クリックを全対象へ適用し、Undo/Redoを独立に確かめる
+            check = self._state_row("visibility").lock_check_box
+            if check.isTristate() or check.isChecked():
+                raise AssertionError("千ノード表示のlock初期状態が不正です")
+            cmds.flushUndo()
+            for event_type in (
+                qt.QEvent.Type.MouseButtonPress,
+                qt.QEvent.Type.MouseButtonRelease,
+            ):
+                self._mouse(
+                    check, event_type, qt.QPoint(8, check.height() // 2)
+                )
+            self._flush_gui()
+            if states("visibility") != ((True, False, True),) * len(nodes):
+                raise AssertionError("実クリックで千ノードをロックできません")
+            cmds.undo()
+            self._flush_gui()
+            if states("visibility") != ((True, False, False),) * len(nodes):
+                raise AssertionError("千ノードのlockをUndoで復元できません")
+            if not cmds.undoInfo(query=True, undoQueueEmpty=True):
+                raise AssertionError("千ノードのlockが複数Undoに分かれました")
+            cmds.redo()
+            self._flush_gui()
+            if states("visibility") != ((True, False, True),) * len(nodes):
+                raise AssertionError("千ノードのlockをRedoで再適用できません")
+            cmds.undo()
+            self._flush_gui()
+
+            # 選択済みのradio再クリックでも基準以外へ明示入力する
+            before_x = states("translateX")
+            source = self._state_row("translate.translateX")
+            if not source.display_buttons["channel_box"].isChecked():
+                raise AssertionError("基準ノードのChannelBox状態が未選択です")
+            cmds.flushUndo()
+            self._select_radio_button(source.display_buttons["channel_box"])
+            applied_x = ((False, True, False),) * len(nodes)
+            if states("translateX") != applied_x:
+                raise AssertionError("同値radio入力が全対象へ反映されません")
+            cmds.undo()
+            self._flush_gui()
+            if states("translateX") != before_x or not cmds.undoInfo(
+                query=True, undoQueueEmpty=True
+            ):
+                raise AssertionError("同値radio入力を一回でUndoできません")
+            cmds.redo()
+            self._flush_gui()
+            if states("translateX") != applied_x:
+                raise AssertionError("同値radio入力をRedoできません")
+            cmds.undo()
+            self._flush_gui()
+
+            # 選択には未通過行を混ぜ、なぞりは同じ列の通過三行だけへ適用する
+            first_row = self._state_row("translate.translateX")
+            last_row = self._state_row("translate.translateZ")
+            unvisited = self._state_row("rotate.rotateZ")
+            widget.table_view.select_keys(
+                tuple(
+                    (row.row.attribute.path, row.row.attribute.kind)
+                    for row in (first_row, unvisited)
+                )
+            )
+            widget.scroll_area.verticalScrollBar().setValue(0)
+            self._flush_gui()
+            first = first_row.display_buttons["channel_box"]
+            last = last_row.display_buttons["channel_box"]
+            start = qt.QPoint(8, first.height() // 2)
+            end = first.mapFromGlobal(
+                last.mapToGlobal(qt.QPoint(8, last.height() // 2))
+            )
+            before = states(*attributes)
+            rows = widget.row_widgets
+            cmds.flushUndo()
+            self._mouse(first, qt.QEvent.Type.MouseButtonPress, start)
+            self._mouse(first, qt.QEvent.Type.MouseMove, end)
+            self._flush_gui()
+            applied = ((False, True, False),) * (len(nodes) * 3)
+            if (
+                states(*attributes) != applied
+                or not widget.state_sweep.is_active
+            ):
+                raise AssertionError("千ノードの同値行なぞりに失敗しました")
+            if widget.row_widgets != rows or states("rotateZ") != (
+                (True, False, False),
+            ) * len(nodes):
+                raise AssertionError(
+                    "なぞり中の行構築または未通過行が変わりました"
+                )
+            self._capture("53-state-1000-sweep-during-drag.png")
+            self._mouse(first, qt.QEvent.Type.MouseButtonRelease, end)
+            self._flush_gui()
+            if widget.controller.state_edit_session.is_editing:
+                raise AssertionError("千ノードのなぞりUndoが終了していません")
+            cmds.undo()
+            self._flush_gui()
+            if states(*attributes) != before or not cmds.undoInfo(
+                query=True, undoQueueEmpty=True
+            ):
+                raise AssertionError("千ノードのなぞりを一回でUndoできません")
+            cmds.redo()
+            self._flush_gui()
+            if states(*attributes) != applied:
+                raise AssertionError("千ノードのなぞりを一回でRedoできません")
+            if any(
+                cmds.getAttr(f"{node}.translate{axis}") != 0.0
+                for node in nodes
+                for axis in "XYZ"
+            ):
+                raise AssertionError("表示操作で数値が変更されました")
+            self._capture("54-state-1000-sweep-redo.png")
+            self.steps.append("states_1000_reference_click_sweep_undo_redo")
+        finally:
+            # 再起動検証へ渡すsceneと設定に検証専用ノードを残さない
+            if saved_selection:
+                cmds.select(*saved_selection, replace=True)
+            else:
+                cmds.select(clear=True)
+            self._flush_gui()
+            self._select_combo_item(
+                widget.mode_combo, widget.mode_combo.findData(saved_mode)
+            )
+            self._select_combo_item(
+                widget.filter_combo, widget.filter_combo.findData(saved_filter)
+            )
+            widget.search_edit.setText(saved_search)
+            cmds.delete(*nodes)
+            self._flush_gui()
+            cmds.flushUndo()
 
     def _inspect_filters(self) -> None:
         """両モードの絞り込み、選択保持と状態操作後の行の出入りを実UIで確認する。"""
