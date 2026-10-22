@@ -11,11 +11,13 @@ from typing import cast
 import pytest
 from maya import cmds
 
+from bd_util.maya.node.inspection import ScalarAttributeInfo
 from bd_util.maya.ui import MayaFloatPlugsBinding
 from bd_util.maya.ui import settings as maya_settings
 from bd_util.ui import qt
 
 from bd_tools.bd_channel_box.controller import ChannelBoxMode, ChannelRow
+from bd_tools.bd_channel_box import controller as controller_module
 from bd_tools.bd_channel_box.custom_filter_editor import create_custom_filter
 from bd_tools.bd_channel_box.custom_filter_setup import CustomFilterSetupPanel
 from bd_tools.bd_channel_box.custom_filters import (
@@ -254,6 +256,178 @@ def test_custom_filter_uses_json_order_and_edits_hidden_scalar(
     cmds.undo()
     _events()
     assert cmds.getAttr(f"{node}.hiddenB") == 0.0
+
+
+@pytest.mark.parametrize("count", (1, 49, 50, 1000))
+def test_setup_inspects_only_reference_and_restores_full_value_selection(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch, count: int
+) -> None:
+    """選択数によらず設定は基準だけを調べ、値編集では元の全選択へ戻る。"""
+    editor.controller.set_mode("custom_filter_setup")
+    others = tuple(
+        cmds.createNode("network", name=f"setupOther{index}", skipSelect=True)
+        for index in range(count - 1)
+    )
+    reference = cmds.createNode(
+        "transform", name="setupReference", skipSelect=True
+    )
+    cmds.addAttr(reference, longName="referenceOnly", attributeType="double")
+    if others:
+        cmds.addAttr(others[0], longName="otherOnly", attributeType="double")
+    inspected: list[str] = []
+    original = controller_module.inspect_scalar_attributes
+
+    def inspect(name: str) -> tuple[ScalarAttributeInfo, ...]:
+        """設定用の属性取得が基準ノードだけに限定されているか記録する。"""
+        inspected.append(name)
+        return original(name)
+
+    monkeypatch.setattr(
+        controller_module, "inspect_scalar_attributes", inspect
+    )
+    cmds.select(*others, reference, replace=True)
+    _events()
+    expected_selection = [*others, f"|{reference}"]
+    assert cmds.ls(selection=True, long=True) == expected_selection
+    assert inspected == [f"|{reference}"]
+    assert editor.controller.node_names == (f"|{reference}",)
+    assert len(editor.controller.node_ids) == 1
+    assert not editor.controller.selection_limit_exceeded
+    assert editor.controller.rows == ()
+    assert editor.setup_panel.isVisible()
+    assert not editor.empty_label.isVisible()
+    assert editor.setup_panel.node_label.text() == (
+        f"基準: |{reference}（transform 型）"
+    )
+    paths = tuple(a.path for a in editor.controller.setup_attributes)
+    assert "referenceOnly" in paths
+    assert "otherOnly" not in paths
+
+    editor.controller.set_mode("values")
+    _events()
+    assert len(editor.controller.node_names) == count
+    assert inspected == [f"|{reference}", f"|{reference}"]
+    assert cmds.ls(selection=True, long=True) == expected_selection
+
+
+def test_setup_watches_reference_structure_name_and_removal_only(
+    editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """非基準の変更で再構築せず、基準の属性・名前・削除へ追従する。"""
+    other = cmds.createNode("network", name="unwatchedSetup", skipSelect=True)
+    reference = cmds.createNode(
+        "network", name="watchedSetup", skipSelect=True
+    )
+    cmds.select(other, reference, replace=True)
+    editor.controller.set_mode("custom_filter_setup")
+    _events()
+    inspected: list[str] = []
+    original = controller_module.inspect_scalar_attributes
+
+    def inspect(name: str) -> tuple[ScalarAttributeInfo, ...]:
+        """構成変更後に属性情報を再取得した対象を記録する。"""
+        inspected.append(name)
+        return original(name)
+
+    monkeypatch.setattr(
+        controller_module, "inspect_scalar_attributes", inspect
+    )
+    cmds.addAttr(other, longName="ignoredAttribute", attributeType="double")
+    other = cmds.rename(other, "renamedUnwatchedSetup")
+    _events()
+    assert inspected == []
+    cmds.addAttr(
+        reference, longName="watchedAttribute", attributeType="double"
+    )
+    _events()
+    assert inspected == [reference]
+    assert "watchedAttribute" in (
+        a.path for a in editor.controller.setup_attributes
+    )
+    reference = cmds.rename(reference, "renamedWatchedSetup")
+    _events()
+    assert inspected[-1] == reference
+    assert editor.controller.node_names == (reference,)
+    assert reference in editor.setup_panel.node_label.text()
+    cmds.deleteAttr(f"{reference}.watchedAttribute")
+    _events()
+    assert "watchedAttribute" not in (
+        a.path for a in editor.controller.setup_attributes
+    )
+    cmds.delete(reference)
+    _events()
+    assert editor.controller.node_names == (other,)
+    cmds.select(clear=True)
+    _events()
+    assert editor.controller.node_names == ()
+    assert editor.controller.setup_attributes == ()
+    assert (
+        editor.setup_panel.node_label.text() == "Maya ノードを選択してください"
+    )
+
+
+def test_setup_reference_type_switch_preserves_unsaved_definitions(
+    editor: ChannelBoxWidget, tmp_path: Path
+) -> None:
+    """混在選択の基準を切り替えても型別の未保存定義と既存pathを保持する。"""
+    joint = cmds.createNode("joint", name="setupJoint", skipSelect=True)
+    network = cmds.createNode("network", name="setupNetwork", skipSelect=True)
+    cmds.addAttr(joint, longName="jointOnly", attributeType="double")
+    cmds.addAttr(network, longName="networkOnly", attributeType="double")
+    path = tmp_path / "reference-types.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "Reference Types",
+                "node_types": {
+                    "joint": ["missingJoint"],
+                    "transform": ["unchangedTransform"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    original_json = path.read_bytes()
+    editor.custom_filter_registry.add_paths((str(path),))
+    cmds.select(network, joint, replace=True)
+    editor.mode_combo.setCurrentIndex(2)
+    _events()
+    panel = editor.setup_panel
+    panel.set_target(str(path))
+    _events()
+    draft = panel.draft
+    assert draft is not None
+    assert editor.controller.node_names == (f"|{joint}",)
+    assert "networkOnly" not in (
+        a.path for a in editor.controller.setup_attributes
+    )
+    _candidate_radio(panel, "jointOnly", True).click()
+    _events()
+    assert draft.paths("joint") == ("missingJoint", "jointOnly")
+    cmds.select(joint, network, replace=True)
+    _events()
+    assert panel.draft is draft and draft.is_dirty
+    assert editor.controller.node_names == (network,)
+    assert "network 型" in panel.node_label.text()
+    assert "jointOnly" not in (
+        a.path for a in editor.controller.setup_attributes
+    )
+    cmds.flushUndo()
+    _candidate_radio(panel, "networkOnly", True).click()
+    _events()
+    assert path.read_bytes() == original_json
+    assert draft.paths("joint") == ("missingJoint", "jointOnly")
+    assert draft.paths("transform") == ("unchangedTransform",)
+    panel.save_button.click()
+    _events()
+    assert json.loads(path.read_text(encoding="utf-8"))["node_types"] == {
+        "joint": ["missingJoint", "jointOnly"],
+        "network": ["networkOnly"],
+        "transform": ["unchangedTransform"],
+    }
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+    assert cmds.ls(selection=True, long=True) == [f"|{joint}", network]
 
 
 def test_setup_mode_saves_hidden_attribute_without_scene_edit(

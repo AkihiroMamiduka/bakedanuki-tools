@@ -39,7 +39,6 @@ from bd_util.ui import (
     qt,
 )
 import bd_tools.bd_channel_box.controller as controller_module
-from bd_tools.bd_channel_box.controller import ChannelBoxMode
 from bd_tools.bd_channel_box.widget import AttributeRowWidget, ChannelBoxWidget
 
 
@@ -442,11 +441,10 @@ def test_thousand_nodes_inspect_and_bind_only_the_reference(
     assert isinstance(_row(editor, "count").editor, IntSliderSpinBox)
 
 
-@pytest.mark.parametrize("mode", ["states", "custom_filter_setup"])
-def test_existing_modes_keep_the_selection_limit(
-    editor: ChannelBoxWidget, mode: ChannelBoxMode
+def test_state_mode_keeps_the_selection_limit(
+    editor: ChannelBoxWidget,
 ) -> None:
-    """状態・設定モードの上限を維持し、値編集へ戻れば全選択を表示する。"""
+    """状態モードの上限を維持し、値編集へ戻れば全選択を表示する。"""
     nodes = tuple(
         cmds.createNode("network", name=f"bulkLimit{index}")
         for index in range(50)
@@ -454,7 +452,7 @@ def test_existing_modes_keep_the_selection_limit(
     cmds.select(*nodes, replace=True)
     _events()
     assert len(editor.controller.node_names) == 51
-    editor.controller.set_mode(mode)
+    editor.controller.set_mode("states")
     _events()
     assert editor.controller.selection_limit_exceeded
     assert not editor.row_widgets

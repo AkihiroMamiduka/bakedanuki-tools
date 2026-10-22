@@ -549,12 +549,12 @@ class ChannelBoxController(qt.QObject):
                 self._timer.start(0)
 
     def _watch_nodes(self) -> None:
-        """現在の選択ノードだけに名前・属性構成の監視を登録する。"""
+        """表示・ロックは全対象、値編集と設定は基準だけを監視する。"""
         self._nodes.dispose()
         self._nodes.deleteLater()
         self._nodes = MayaCallbackRegistry(self)
         watched_names = (
-            self.node_names[-1:] if self._mode == "values" else self.node_names
+            self.node_names if self._mode == "states" else self.node_names[-1:]
         )
         for name in watched_names:
             selection = om.MSelectionList()
@@ -585,12 +585,15 @@ class ChannelBoxController(qt.QObject):
             return
         self._filter_refresh_pending = False
         try:
-            values = self._mode == "values"
+            states = self._mode == "states"
             names = selected_node_names(
-                limit=None if values else _SELECTION_LIMIT
+                limit=_SELECTION_LIMIT if states else None
             )
-            if not values and len(names) >= _SELECTION_LIMIT:
-                # 多数選択では旧対象を解放し、属性取得と行生成を行わない
+            if self._mode == "custom_filter_setup":
+                # 型別定義の見本だけを保持し、他ノードの属性・識別情報は取得しない
+                names = names[-1:]
+            if states and len(names) >= _SELECTION_LIMIT:
+                # 表示・ロックの多数選択では属性取得と行生成を行わない
                 self._dispose_rows()
                 self._nodes.dispose()
                 self.node_names = ()
@@ -600,7 +603,7 @@ class ChannelBoxController(qt.QObject):
                 self.selection_limit_exceeded = True
             else:
                 self.selection_limit_exceeded = False
-                if values:
+                if not states:
                     attributes = tuple(
                         inspect_scalar_attributes(n) for n in names[-1:]
                     )
@@ -657,7 +660,7 @@ class ChannelBoxController(qt.QObject):
                 )
                 self._watch_nodes()
                 self.rows = self._create_rows(
-                    attributes, representative_only=values
+                    attributes, representative_only=not states
                 )
         except Exception as error:
             self._dispose_rows()

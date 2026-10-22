@@ -196,6 +196,7 @@ class _MayaSmokeSession:
                 self._setup_scene,
                 self._show,
                 self._inspect_custom_filters,
+                self._inspect_reference_only_custom_filter_setup,
                 self._finish,
             )
 
@@ -2019,6 +2020,68 @@ class _MayaSmokeSession:
         ):
             raise AssertionError("保存したjoint型の属性が表示されません")
         self.steps.append("author_custom_filter_for_joint")
+
+    def _inspect_reference_only_custom_filter_setup(self) -> None:
+        """千ノードの混在選択でも基準型だけの設定画面を操作できるか確認する。"""
+        from maya import cmds
+
+        widget = self._require_window().widget
+        self._select_combo_item(widget.mode_combo, 2)
+        others = tuple(
+            cmds.createNode(
+                "network", name=f"bdSetupReferenceOnly{index}", skipSelect=True
+            )
+            for index in range(999)
+        )
+        reference = self.nodes[-1]
+        selected = (*others, f"|{reference}")
+        started = time.perf_counter()
+        cmds.select(*selected, replace=True)
+        self._flush_gui()
+        self.measurements["setup_reference_only_1000_selection_ms"] = round(
+            (time.perf_counter() - started) * 1000, 3
+        )
+        if widget.controller.node_names != (f"|{reference}",):
+            raise AssertionError(
+                "設定モードが基準以外のノードを保持しています"
+            )
+        if (
+            widget.controller.selection_limit_exceeded
+            or len(widget.controller.node_ids) != 1
+            or not widget.setup_panel.isVisible()
+            or "transform 型" not in widget.setup_panel.node_label.text()
+        ):
+            raise AssertionError("千ノード選択時の基準型設定が表示されません")
+        if tuple(cmds.ls(selection=True, long=True)) != selected:
+            raise AssertionError("設定モードがMayaの選択を変更しました")
+        self._capture("50-custom-filter-1000-reference.png")
+
+        # 基準を異なる型へ替えても設定用の作業中データを保持する
+        draft = widget.setup_panel.draft
+        cmds.select(f"|{reference}", *others, replace=True)
+        self._flush_gui()
+        if (
+            widget.controller.node_names != others[-1:]
+            or "network 型" not in widget.setup_panel.node_label.text()
+            or widget.setup_panel.draft is not draft
+        ):
+            raise AssertionError("混在選択の基準型変更で設定が失われました")
+        self._capture("51-custom-filter-1000-network-reference.png")
+        self._select_combo_item(widget.mode_combo, 0)
+        if len(widget.controller.node_names) != 1000:
+            raise AssertionError(
+                "値編集へ戻っても全選択を操作対象にできません"
+            )
+        self._select_combo_item(widget.mode_combo, 1)
+        if not widget.controller.selection_limit_exceeded:
+            raise AssertionError("表示・ロックの50ノード上限が失われました")
+        self._select_combo_item(widget.mode_combo, 2)
+        if (
+            widget.controller.selection_limit_exceeded
+            or not widget.setup_panel.isVisible()
+        ):
+            raise AssertionError("上限案内から基準だけの設定へ戻れません")
+        self.steps.append("custom_filter_setup_1000_reference_type_and_modes")
 
     def _inspect_filters(self) -> None:
         """両モードの絞り込み、選択保持と状態操作後の行の出入りを実UIで確認する。"""

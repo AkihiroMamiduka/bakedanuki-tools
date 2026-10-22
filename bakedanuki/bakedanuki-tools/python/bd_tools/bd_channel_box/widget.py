@@ -1676,7 +1676,8 @@ class ChannelBoxWidget(qt.QWidget):
         self.mode_combo.setAccessibleName("表示モード")
         self.mode_combo.setToolTip(
             "値編集は選択数に制限がありません。表示は末尾の基準ノードのみです。\n"
-            "値の編集は、対応する選択ノードの属性へ適用します。"
+            "値の編集は、対応する選択ノードの属性へ適用します。\n"
+            "カスタムフィルター設定も選択数に制限はなく、基準ノードの型を編集します。"
         )
         self.filter_combo = qt.QComboBox(self)
         self._populate_filter_combo()
@@ -3396,7 +3397,7 @@ class ChannelBoxWidget(qt.QWidget):
         self.row_widgets = ()
         names = self.controller.node_names
         if self.controller.selection_limit_exceeded:
-            # 旧対象のViewを消し、どのモードでも上限の理由を表示する
+            # 表示・ロックの旧Viewを消し、選択上限の理由を表示する
             self._dispose_node_name_editor()
             self.header_label.hide()
             self.table_view.set_rows([], preserve_selection=False)

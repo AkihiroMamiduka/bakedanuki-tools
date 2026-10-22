@@ -845,10 +845,10 @@ def test_selection_reordering_discards_pending_numeric_input(
     assert cmds.getAttr("multiB.translateY") == 3.0
 
 
-def test_selection_limit_skips_inspection_in_state_and_setup_modes(
+def test_selection_limit_skips_inspection_in_state_mode(
     editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """状態・設定だけで50ノード上限を維持し、案内と復帰を確認する。"""
+    """状態モードで50ノード上限を維持し、案内と復帰を確認する。"""
     editor.controller.set_mode("states")
     nodes = tuple(
         cmds.createNode("network", name=f"selectionLimit{index}")
@@ -892,13 +892,7 @@ def test_selection_limit_skips_inspection_in_state_and_setup_modes(
     assert not editor.table_view.isVisible()
     assert not editor.copy_all_values_action.isEnabled()
 
-    for mode in ("states", "custom_filter_setup"):
-        editor.controller.set_mode(mode)
-        _events()
-        assert editor.empty_label.text() == expected_message
-        assert editor.empty_label.isVisible()
-        assert not editor.table_view.isVisible()
-        assert not editor.setup_panel.isVisible()
+    assert not editor.setup_panel.isVisible()
     editor.refresh()
     cmds.select(*nodes, replace=True)
     _events()
