@@ -235,7 +235,6 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
         cmds.setAttr(node + ".label", node, type="string")
     cmds.select("bulkOther", "bulkReference", replace=True)
     widget = ChannelBoxWidget()
-    widget.controller.set_mode("bulk_values")
     widget.resize(420, 650)
     widget.show()
     _events()
@@ -392,6 +391,25 @@ def test_paste_reads_fresh_values_and_undo_does_not_prepare_hidden_tooltips(
     assert _values("free") == [8.5, 8.5]
 
 
+def test_value_mode_is_default_and_has_only_one_value_entry(
+    editor: ChannelBoxWidget,
+) -> None:
+    """値編集を先頭・初期選択へ統一し、廃止したモードキーを受け付けない。"""
+    assert editor.controller.mode == "values"
+    assert editor.mode_combo.currentIndex() == 0
+    assert [
+        (editor.mode_combo.itemText(index), editor.mode_combo.itemData(index))
+        for index in range(editor.mode_combo.count())
+    ] == [
+        ("値編集", "values"),
+        ("表示・ロック", "states"),
+        ("カスタムフィルター設定", "custom_filter_setup"),
+    ]
+    assert "基準ノード" in editor.mode_combo.toolTip()
+    with pytest.raises(ValueError, match="未対応"):
+        cast(Callable[[str], None], editor.controller.set_mode)("bulk_values")
+
+
 def test_thousand_nodes_inspect_and_bind_only_the_reference(
     editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -424,11 +442,11 @@ def test_thousand_nodes_inspect_and_bind_only_the_reference(
     assert isinstance(_row(editor, "count").editor, IntSliderSpinBox)
 
 
-@pytest.mark.parametrize("mode", ["values", "states", "custom_filter_setup"])
+@pytest.mark.parametrize("mode", ["states", "custom_filter_setup"])
 def test_existing_modes_keep_the_selection_limit(
     editor: ChannelBoxWidget, mode: ChannelBoxMode
 ) -> None:
-    """通常三モードの上限を維持し、多数ノードモードへ戻れば表示する。"""
+    """状態・設定モードの上限を維持し、値編集へ戻れば全選択を表示する。"""
     nodes = tuple(
         cmds.createNode("network", name=f"bulkLimit{index}")
         for index in range(50)
@@ -440,7 +458,7 @@ def test_existing_modes_keep_the_selection_limit(
     _events()
     assert editor.controller.selection_limit_exceeded
     assert not editor.row_widgets
-    editor.controller.set_mode("bulk_values")
+    editor.controller.set_mode("values")
     _events()
     assert not editor.controller.selection_limit_exceeded
     assert len(editor.controller.node_names) == 51
@@ -662,7 +680,6 @@ def test_thousand_joint_enums_apply_once_with_linear_definition_reads(
     assert sum(not monitored for _, monitored, _ in temporary) == 1
 
 
-@pytest.mark.parametrize("mode", ["values", "bulk_values"])
 @pytest.mark.parametrize(
     "operation",
     [
@@ -675,14 +692,12 @@ def test_thousand_joint_enums_apply_once_with_linear_definition_reads(
         "paste_selected_multi",
     ],
 )
-def test_enum_edit_paths_use_operation_validation_only_in_bulk_mode(
+def test_enum_edit_paths_use_operation_validation(
     editor: ChannelBoxWidget,
     monkeypatch: pytest.MonkeyPatch,
-    mode: ChannelBoxMode,
     operation: str,
 ) -> None:
-    """enum入力・混合行揃え・各Paste経路の検証方針を表示モードごとに保つ。"""
-    editor.controller.set_mode(mode)
+    """enum入力・混合行揃え・各Paste経路を操作単位の検証へ統一する。"""
     _events()
     memory = _MemoryClipboard()
     monkeypatch.setattr(editor.controller, "_value_clipboard", memory)
@@ -755,7 +770,7 @@ def test_enum_edit_paths_use_operation_validation_only_in_bulk_mode(
             assert editor.controller.paste_copied_values("keyable")
         else:
             assert editor.controller.paste_copied_values_to_selected(copy_keys)
-    assert policies == ["operation" if mode == "bulk_values" else "per_write"]
+    assert policies == ["operation"]
     assert _values("mode") == ([2, 2] if operation == "enum" else [1, 1])
 
 
@@ -940,13 +955,11 @@ def test_filtered_operations_read_display_details_only_from_reference(
     _assert_values(expected)
 
 
-@pytest.mark.parametrize("mode", ["values", "bulk_values"])
 @pytest.mark.parametrize("operation", ["align", "round"])
 @pytest.mark.parametrize("attribute_count", [1, 2])
-def test_filtered_operations_share_nodes_only_for_bulk_multiple_rows(
+def test_filtered_operations_share_nodes_only_for_multiple_rows(
     editor: ChannelBoxWidget,
     monkeypatch: pytest.MonkeyPatch,
-    mode: ChannelBoxMode,
     operation: str,
     attribute_count: int,
 ) -> None:
@@ -956,7 +969,6 @@ def test_filtered_operations_share_nodes_only_for_bulk_multiple_rows(
         for name in names:
             _set(node + "." + name, initial)
             cmds.setAttr(node + "." + name, keyable=False, channelBox=True)
-    editor.controller.set_mode(mode)
     editor.refresh()
     _events()
     original_scope = controller_module.shared_scalar_plug_nodes
@@ -1008,7 +1020,7 @@ def test_filtered_operations_share_nodes_only_for_bulk_multiple_rows(
         assert editor.controller.align_filtered_values("channel_box")
     else:
         assert editor.controller.round_filtered_values("channel_box", 1)
-    shared = mode == "bulk_values" and attribute_count > 1
+    shared = attribute_count > 1
     assert events == (["enter", "leave", "apply"] if shared else ["apply"])
     assert len(resolved) == 2
     assert all(state == shared for state in scope_states)
@@ -2264,7 +2276,7 @@ def test_bulk_wheel_idle_targets_release_on_interruption(
     elif reason == "nodes":
         cmds.select("bulkOther", replace=True)
     elif reason == "mode":
-        editor.controller.set_mode("values")
+        editor.controller.set_mode("states")
     elif reason == "filter":
         editor.controller.set_attribute_filter("all")
     elif reason == "time":

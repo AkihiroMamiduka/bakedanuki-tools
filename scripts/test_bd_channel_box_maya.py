@@ -1185,9 +1185,9 @@ class _MayaSmokeSession:
         row = self._row("enabled")
         if (
             not isinstance(row.editor, BoolCheckBox)
-            or not row.row.binding.is_mixed
+            or row.row.binding.is_mixed
         ):
-            raise AssertionError("bool行に初期値の混在が表示されていません")
+            raise AssertionError("bool行が基準ノードだけを表示していません")
         cmds.flushUndo()
         self._key(row.editor, qt.Qt.Key.Key_Space)
         self._assert_values("enabled", (True, True))
@@ -1303,9 +1303,16 @@ class _MayaSmokeSession:
             qt.Qt.Key.Key_A,
             modifiers=qt.Qt.KeyboardModifier.ControlModifier,
         )
+        # 直接入力欄へフォーカスが移った後も、実際の入力先へ続けて打鍵する
         for character in "0.6":
-            self._key(editor, ord(character), text=character)
-        self._key(editor, qt.Qt.Key.Key_Return)
+            focused = qt.QApplication.focusWidget()
+            if focused is None:
+                raise AssertionError("数値の入力先がありません")
+            self._key(focused, ord(character), text=character)
+        focused = qt.QApplication.focusWidget()
+        if focused is None:
+            raise AssertionError("数値の確定先がありません")
+        self._key(focused, qt.Qt.Key.Key_Return)
         self._assert_values("weight", (0.6, 0.6))
         self.steps.append("spinbox_keyboard_edit_multiple_nodes")
 
@@ -2595,7 +2602,7 @@ class _MayaSmokeSession:
             )
             cmds.flushUndo()
             self._open_context_menu(source.name_label)
-            copy_selected = source.copy_selected_values_action
+            copy_selected = source.context_menu.copy_selected_values_action
             if not copy_selected.isEnabled():
                 raise AssertionError("選択属性のCopyが有効になりません")
             copy_selected.trigger()
@@ -2615,25 +2622,25 @@ class _MayaSmokeSession:
             )
             target = targets[0]
             self._open_context_menu(target.name_label)
-            selected_paste = target.paste_selected_values_action
+            selected_paste = target.context_menu.paste_selected_values_action
             if not selected_paste.isEnabled():
                 raise AssertionError(
                     "一つのコピー値を選択属性へ貼る操作が有効になりません"
                 )
-            target.paste_menu.popup(
+            target.context_menu.paste_menu.popup(
                 target.name_label.mapToGlobal(
                     qt.QPoint(target.name_label.width(), 0)
                 )
             )
             self._flush_gui()
             menu_path = self.output / "32-clipboard-value-menu.png"
-            if not target.paste_menu.grab().save(str(menu_path)):
+            if not target.context_menu.paste_menu.grab().save(str(menu_path)):
                 raise RuntimeError(
                     "一値を選択属性へ貼るメニュー画像を保存できません"
                 )
             self.screenshots.append(str(menu_path))
             selected_paste.trigger()
-            target.paste_menu.close()
+            target.context_menu.paste_menu.close()
             target.context_menu.close()
             self._flush_gui()
             self._assert_values(

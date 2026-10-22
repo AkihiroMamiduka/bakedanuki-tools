@@ -56,6 +56,14 @@
 
 ### Changed
 
+- bdChannelBoxの値編集を、基準ノードだけを常時表示する方式へ一本化。
+  Mode先頭・初期選択は「値編集」とし、選択数の上限を設けず、操作時に全対象を照合する。
+  混在値の「•」・接続やlockの混在情報・全対象の編集可能件数は常時計算しない。
+  Step・Slider・右クリック・操作時の検証と除外・Undo／復旧を維持する。
+  表示・ロックとカスタムフィルター設定の50ノード上限は維持する。
+  `ChannelBoxMode`から`bulk_values`を削除したため、呼出し側は`set_mode("values")`へ変更する。
+  `AttributeRowWidget`の`representative_only`引数は削除し、呼出し側は指定を外す。
+  モードは保存しないためscene・設定の移行は不要。utilの変更はない。
 - bdChannelBoxの角度（doubleAngle）のSlider付き行で、値欄の上下・ホイールの刻み幅を1へ変更。
   utilの`FloatSliderSpinBox`がstep未指定時に単位種別から選び、通常数値・距離は0.1を維持する。
   Slider分割数・小数精度・Step付き角度行の既定15・保存済みStepは変更しない。

@@ -894,16 +894,13 @@ def test_custom_filter_uses_last_selected_node_type_and_shared_paths(
     assert _paths(editor) == ("jointOnly", "shared")
     joint_only, shared = editor.controller.rows
     assert joint_only.target_names == ("|mixedJoint",)
-    assert shared.target_names == ("|mixedJoint", "|mixedTransform")
+    assert shared.target_names == ("|mixedJoint",)
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
     cmds.select(joint, transform, replace=True)
     _events()
     assert _paths(editor) == ("shared",)
-    assert editor.controller.rows[0].target_names == (
-        "|mixedTransform",
-        "|mixedJoint",
-    )
+    assert editor.controller.rows[0].target_names == ("|mixedTransform",)
 
 
 def test_custom_filter_replace_and_clear_update_both_modes(

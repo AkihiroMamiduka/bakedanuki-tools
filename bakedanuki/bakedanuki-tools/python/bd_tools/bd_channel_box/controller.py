@@ -82,9 +82,7 @@ ChannelBinding: TypeAlias = (
     | MayaEnumPlugsBinding
     | MayaStringPlugsBinding
 )
-ChannelBoxMode: TypeAlias = Literal[
-    "values", "bulk_values", "states", "custom_filter_setup"
-]
+ChannelBoxMode: TypeAlias = Literal["values", "states", "custom_filter_setup"]
 ChannelAttributeFilter: TypeAlias = ScalarAttributeDisplayFilter
 ChannelDisplayFilter: TypeAlias = (
     ChannelAttributeFilter | CustomFilterSelection
@@ -100,7 +98,6 @@ ROTATION_ATTRIBUTE_PATHS = frozenset(
 )
 _DEFAULT_FILTERS: dict[ChannelBoxMode, ChannelAttributeFilter] = {
     "values": "visible",
-    "bulk_values": "visible",
     "states": "all",
     "custom_filter_setup": "all",
 }
@@ -265,7 +262,6 @@ class ChannelBoxController(qt.QObject):
         self._mode: ChannelBoxMode = "values"
         self._filters: dict[ChannelBoxMode, ChannelDisplayFilter] = {
             "values": "visible",
-            "bulk_values": "visible",
             "states": "all",
             "custom_filter_setup": "all",
         }
@@ -348,14 +344,13 @@ class ChannelBoxController(qt.QObject):
 
     @property
     def _enum_validation(self) -> Literal["per_write", "operation"]:
-        """多数ノードの明示入力だけで操作単位のenum検証を使う。"""
-        return "operation" if self._mode == "bulk_values" else "per_write"
+        """値編集では操作単位、ほかのモードでは従来のenum検証を使う。"""
+        return "operation" if self._mode == "values" else "per_write"
 
     def set_mode(self, mode: ChannelBoxMode) -> None:
         """連続編集を終了し、属性を書き換えずに操作する状態を切り替える。"""
         if mode not in (
             "values",
-            "bulk_values",
             "states",
             "custom_filter_setup",
         ):
@@ -421,7 +416,7 @@ class ChannelBoxController(qt.QObject):
         if self._disposed:
             return
         active_changed = False
-        for mode in ("values", "bulk_values", "states"):
+        for mode in ("values", "states"):
             selected = self._filters[mode]
             if isinstance(selected, CustomFilterSelection) and (
                 selected.path == selection.path
@@ -453,7 +448,7 @@ class ChannelBoxController(qt.QObject):
         """SliderのUndoを開始し、wheelだけは単発入力用の対象保持を使う。"""
         if type(reuse_targets) is not bool:
             raise TypeError("reuse_targetsにはboolを指定してください")
-        if self._disposed or self._mode not in ("values", "bulk_values"):
+        if self._disposed or self._mode != "values":
             return
         self.state_edit_session.finish()
         if reuse_targets and not self.value_edit_session.is_editing:
@@ -559,9 +554,7 @@ class ChannelBoxController(qt.QObject):
         self._nodes.deleteLater()
         self._nodes = MayaCallbackRegistry(self)
         watched_names = (
-            self.node_names[-1:]
-            if self._mode == "bulk_values"
-            else self.node_names
+            self.node_names[-1:] if self._mode == "values" else self.node_names
         )
         for name in watched_names:
             selection = om.MSelectionList()
@@ -592,11 +585,11 @@ class ChannelBoxController(qt.QObject):
             return
         self._filter_refresh_pending = False
         try:
-            bulk = self._mode == "bulk_values"
+            values = self._mode == "values"
             names = selected_node_names(
-                limit=None if bulk else _SELECTION_LIMIT
+                limit=None if values else _SELECTION_LIMIT
             )
-            if not bulk and len(names) >= _SELECTION_LIMIT:
+            if not values and len(names) >= _SELECTION_LIMIT:
                 # 多数選択では旧対象を解放し、属性取得と行生成を行わない
                 self._dispose_rows()
                 self._nodes.dispose()
@@ -607,7 +600,7 @@ class ChannelBoxController(qt.QObject):
                 self.selection_limit_exceeded = True
             else:
                 self.selection_limit_exceeded = False
-                if bulk:
+                if values:
                     attributes = tuple(
                         inspect_scalar_attributes(n) for n in names[-1:]
                     )
@@ -664,7 +657,7 @@ class ChannelBoxController(qt.QObject):
                 )
                 self._watch_nodes()
                 self.rows = self._create_rows(
-                    attributes, representative_only=bulk
+                    attributes, representative_only=values
                 )
         except Exception as error:
             self._dispose_rows()
@@ -808,8 +801,7 @@ class ChannelBoxController(qt.QObject):
                         attribute,
                         targets,
                         excluded,
-                        monitor=self._mode != "bulk_values"
-                        or representative_only,
+                        monitor=self._mode != "values" or representative_only,
                     )
                 )
         except Exception:
@@ -1078,7 +1070,7 @@ class ChannelBoxController(qt.QObject):
         numeric_keys: Sequence[tuple[str, str]] | None = None,
     ) -> Generator[None, None, None]:
         """実体を確認し、連続する数値入力だけ対象準備を引き継ぐ。"""
-        if self._mode != "bulk_values":
+        if self._mode != "values":
             yield
             return
         if self._disposed or self._timer.isActive():
@@ -1172,7 +1164,7 @@ class ChannelBoxController(qt.QObject):
         """必要なpathだけを照合し、値の表示同期を省くBindingへ結ぶ。"""
         cache = self._bulk_rows
         if cache is None:
-            raise RuntimeError("多数ノードの操作境界が開始されていません")
+            raise RuntimeError("値編集の操作境界が開始されていません")
         gesture = self._bulk_value_cache
         if gesture is not None and gesture.rows is cache:
             keys = tuple((r.attribute.path, r.attribute.kind) for r in rows)
@@ -1209,7 +1201,7 @@ class ChannelBoxController(qt.QObject):
     ) -> tuple[_ChannelOperationTargets, ...]:
         """正式pathと型・単位を照合し、値の読取りや監視なしで対象名を返す。"""
         if self._bulk_rows is None:
-            raise RuntimeError("多数ノードの操作境界が開始されていません")
+            raise RuntimeError("値編集の操作境界が開始されていません")
         paths = tuple(row.attribute.path for row in rows)
         ordered_names = self.node_names[-1:] + self.node_names[:-1]
         lookup = (
@@ -1255,7 +1247,7 @@ class ChannelBoxController(qt.QObject):
         rows = self._selected_rows(keys, resolve_targets=False)
         if values_only:
             rows = tuple(row for row in rows if isinstance(row, ChannelRow))
-        if self._mode == "bulk_values":
+        if self._mode == "values":
             return self._resolve_bulk_targets(rows)
         return tuple(
             _ChannelOperationTargets(
@@ -1281,7 +1273,7 @@ class ChannelBoxController(qt.QObject):
                 "属性の構成が変わりました。選択し直してください"
             )
         rows = tuple(lookup[key] for key in unique)
-        if self._mode == "bulk_values" and resolve_targets:
+        if self._mode == "values" and resolve_targets:
             return self._resolve_bulk_rows(rows)
         return rows
 
@@ -1292,7 +1284,7 @@ class ChannelBoxController(qt.QObject):
     ) -> tuple[ChannelRow | ChannelStateRow, ...]:
         """全キーを検証し、操作対象の型だけを多数ノードの値Bindingへ結ぶ。"""
         rows = self._selected_rows(keys, resolve_targets=False)
-        if self._mode != "bulk_values":
+        if self._mode != "values":
             return rows
         selected = tuple(row for row in rows if row.attribute.kind in kinds)
         resolved = {
@@ -2061,11 +2053,9 @@ class ChannelBoxController(qt.QObject):
                 edits.append(
                     MayaFloatValueEdit(
                         row.binding,
-                        (
-                            row.binding.store.presentation
-                            if self._mode == "bulk_values"
-                            else row.binding.view_model.presentation
-                        ).from_display(display_value),
+                        row.binding.store.presentation.from_display(
+                            display_value
+                        ),
                     )
                 )
         changed = apply_plugs_values(
@@ -2118,11 +2108,9 @@ class ChannelBoxController(qt.QObject):
                 edits.append(
                     MayaFloatOffsetEdit(
                         row.binding,
-                        (
-                            row.binding.store.presentation
-                            if self._mode == "bulk_values"
-                            else row.binding.view_model.presentation
-                        ).from_display(display_offset),
+                        row.binding.store.presentation.from_display(
+                            display_offset
+                        ),
                     )
                 )
         changed = apply_plugs_values(edits)
@@ -2132,18 +2120,12 @@ class ChannelBoxController(qt.QObject):
     def _prepare_numeric_input(
         self, binding: MayaFloatPlugsBinding | MayaIntPlugsBinding
     ) -> bool:
-        """多数nodeの一時Bindingは代表だけを確認し、全体同期を適用後へ集約する。"""
-        if self._mode == "bulk_values":
-            if (
-                not binding.view_model.is_disposed
-                and binding.store.is_writable
-            ):
-                return True
-            # 全行が対象外でも最新の除外理由を報告できるよう同期する
-            binding.refresh()
-            return False
+        """一時Bindingは代表だけを確認し、全体同期を適用後へ集約する。"""
+        if not binding.view_model.is_disposed and binding.store.is_writable:
+            return True
+        # 全行が対象外でも最新の除外理由を報告できるよう同期する
         binding.refresh()
-        return binding.view_model.set_value_command.can_execute
+        return False
 
     @_bulk_operation
     def apply_bool_values(
@@ -2274,7 +2256,7 @@ class ChannelBoxController(qt.QObject):
             raise RuntimeError(
                 "選択属性の状態変更中には別の操作を開始できません"
             )
-        if self._mode not in ("values", "bulk_values"):
+        if self._mode != "values":
             raise RuntimeError("値編集モードで操作してください")
         if not self.node_names:
             raise RuntimeError("表示ノードが選択されていません")
@@ -2359,7 +2341,7 @@ class ChannelBoxController(qt.QObject):
             raise RuntimeError(
                 "選択属性の状態変更中には別の操作を開始できません"
             )
-        if self._mode not in ("values", "bulk_values"):
+        if self._mode != "values":
             raise RuntimeError("値編集モードで操作してください")
         if not self.node_names:
             raise RuntimeError("表示ノードが選択されていません")
@@ -2418,7 +2400,7 @@ class ChannelBoxController(qt.QObject):
         # 多数ノードの複数行を構築する間だけ共有し、値の適用前に解放する
         with (
             shared_scalar_plug_nodes()
-            if self._mode == "bulk_values" and len(selected) > 1
+            if self._mode == "values" and len(selected) > 1
             else nullcontext()
         ):
             rows = self._create_rows(
@@ -2669,7 +2651,7 @@ class ChannelBoxController(qt.QObject):
         """基準ノードが姿勢維持付き回転設定の対象か返す。"""
         representative = self.representative_node_name
         return (
-            self._mode in ("values", "bulk_values")
+            self._mode == "values"
             and self.has_transform_context()
             and representative is not None
             and cmds.nodeType(representative) in ("transform", "joint")
@@ -2713,7 +2695,7 @@ class ChannelBoxController(qt.QObject):
             raise ValueError("移動の丸めでは子の移動補償は常に有効です")
         if self._disposed:
             raise RuntimeError("終了済みの画面には入力できません")
-        if self._mode not in ("values", "bulk_values"):
+        if self._mode != "values":
             raise RuntimeError("値編集モードで操作してください")
         self.state_edit_session.finish()
         self._finish_value_edit()
@@ -2768,7 +2750,7 @@ class ChannelBoxController(qt.QObject):
             raise ValueError("未対応の回転集約先です")
         if self._disposed:
             raise RuntimeError("終了済みの画面には入力できません")
-        if self._mode not in ("values", "bulk_values"):
+        if self._mode != "values":
             raise RuntimeError("値編集モードで操作してください")
         self.state_edit_session.finish()
         self._finish_value_edit()
@@ -2900,7 +2882,7 @@ class ChannelBoxController(qt.QObject):
         plugs: list[MayaChannelStatePlug] = []
         excluded: list[str] = []
         for row in self._selected_operation_targets(keys):
-            if self._mode == "bulk_values":
+            if self._mode == "values":
                 excluded.extend(row.excluded)
             targets = [
                 self._resolve_state_plug(n, row.attribute)
@@ -2991,7 +2973,7 @@ class ChannelBoxController(qt.QObject):
         self, reasons: Sequence[str], *, candidates: int | None = None
     ) -> None:
         """一括操作で除外した属性の理由を、成功対象と区別して表示する。"""
-        if self._mode == "bulk_values" and candidates is not None:
+        if self._mode == "values" and candidates is not None:
             self._report_bulk_operation(reasons, candidates)
             return
         if self._bulk_rows is not None:

@@ -87,7 +87,7 @@ def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
     _new_scene()
 
 
-def test_string_rows_show_mixed_and_edit_selected_paths_once(
+def test_string_rows_show_reference_and_edit_selected_paths_once(
     editor: ChannelBoxWidget,
 ) -> None:
     """表示は無変更で、選択した複数string行を一回で編集・Undoする。"""
@@ -95,7 +95,7 @@ def test_string_rows_show_mixed_and_edit_selected_paths_once(
     second = _row(editor, "alternate")
     assert isinstance(first.editor, StringLineEdit)
     assert isinstance(second.editor, StringLineEdit)
-    assert first.row.binding.is_mixed
+    assert not first.row.binding.is_mixed
     assert first.editor.text() == "先頭"
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
@@ -148,10 +148,7 @@ def test_string_copy_follows_last_selected_node(
     row = _row(editor, "caption")
     assert isinstance(row.editor, StringLineEdit)
     assert row.editor.text() == "後続"
-    assert row.row.target_names == (
-        "|channelStringB",
-        "|channelStringA",
-    )
+    assert row.row.target_names == ("|channelStringB",)
     assert (
         editor.controller.copy_selected_values((("caption", "string"),)) == 1
     )
@@ -238,7 +235,7 @@ def test_same_representative_text_aligns_mixed_followers(
 def test_string_edit_follows_external_values_without_recommitting_draft(
     editor: ChannelBoxWidget,
 ) -> None:
-    """後続・代表の値変更で未確定入力を破棄し、状態通知だけでは保つ。"""
+    """後続の外部変更は入力を保ち、基準の値変更だけで下書きを破棄する。"""
     row = _row(editor, "caption")
     assert isinstance(row.editor, StringLineEdit)
     row.editor.setText("入力中")
@@ -252,9 +249,8 @@ def test_string_edit_follows_external_values_without_recommitting_draft(
 
     cmds.setAttr("channelStringB.caption", "外部値", type="string")
     _events()
-    assert row.editor.text() == "先頭"
+    assert row.editor.text() == "入力中"
     assert not row.editor.hasConflict()
-    row.editor.editingFinished.emit()
     assert cmds.getAttr("channelStringB.caption") == "外部値"
 
     row.editor.setText("もう一度入力中")

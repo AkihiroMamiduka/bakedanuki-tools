@@ -97,8 +97,8 @@ def test_enum_initial_refresh_and_same_index_only_read(
     assert combo.width() == 222
     item = combo.currentData()
     assert isinstance(item, EnumItem) and item.value == 5
-    assert _row(enum_editor).name_label.text().startswith("• ")
-    assert "3/3" in combo.toolTip()
+    assert not _row(enum_editor).name_label.text().startswith("• ")
+    assert "基準ノードのみ" in combo.toolTip()
     combo.setCurrentIndex(combo.currentIndex())
     enum_editor.refresh()
     _events()
@@ -126,11 +126,7 @@ def test_three_node_selection_uses_last_enum_as_reference(
     assert enum_editor.controller.representative_node_name == "|enumC"
     assert enum_editor.node_name_edit is not None
     assert enum_editor.node_name_edit.text() == "enumC"
-    assert _row(enum_editor).row.target_names == (
-        "|enumC",
-        "|enumA",
-        "|enumB",
-    )
+    assert _row(enum_editor).row.target_names == ("|enumC",)
     assert _combo(enum_editor).currentText() == "Negative"
     cmds.flushUndo()
     _row(enum_editor).context_menu.align_action.trigger()
@@ -164,8 +160,10 @@ def test_enum_explicit_alignment_and_noop_do_not_duplicate_undo(
     """代表と同じ値への明示入力だけを適用し、同値入力は履歴を増やさない。"""
     _row(enum_editor).context_menu.align_action.trigger()
     assert _values() == [5, 5, 5]
-    assert not _row(enum_editor).context_menu.align_action.isEnabled()
-    assert not _row(enum_editor).row.binding.apply_representative_value()
+    assert _row(enum_editor).context_menu.align_action.isEnabled()
+    assert not enum_editor.controller.align_selected_values(
+        (("mode", "enum"),)
+    )
     cmds.undo()
     _events()
     assert _values() == [5, 0, -2]
@@ -194,7 +192,7 @@ def test_enum_external_value_changes_do_not_rebuild_or_propagate(
         "Negative=-2:Off=0:Preview=6:Final=10",
     ],
 )
-def test_enum_mismatched_definitions_are_excluded_before_binding(
+def test_enum_mismatched_definitions_are_excluded_on_input(
     enum_editor: ChannelBoxWidget, definition: str
 ) -> None:
     """名前や整数対応が異なる対象を除外し、他の入力行も維持する。"""
@@ -204,35 +202,40 @@ def test_enum_mismatched_definitions_are_excluded_before_binding(
     _events()
     assert _row(enum_editor, "translate.translateX")
     assert not enum_editor.message_label.isVisible()
-    assert "enumB: enum定義" in _combo(enum_editor).toolTip()
-    assert "2/3" in _combo(enum_editor).toolTip()
+    assert "基準ノードのみ" in _combo(enum_editor).toolTip()
     _combo(enum_editor).setCurrentIndex(3)
     assert _values() == [10, 0, 10]
+    assert "enumB: enum定義" in enum_editor.message_label.text()
 
 
-def test_enum_definition_changes_block_until_regrouped_without_writing(
+def test_enum_definition_changes_are_rechecked_on_explicit_input(
     enum_editor: ChannelBoxWidget,
 ) -> None:
-    """使用中の不一致で入力を止め、更新時に対象を再判定する。"""
+    """後続の定義変更は明示入力時に再照合し、復元した対象も再び編集する。"""
     combo = _combo(enum_editor)
     cmds.addAttr("enumB.mode", edit=True, enumName="Off=0:Other=5:Final=10")
     _events()
     assert _combo(enum_editor) is combo
-    assert not combo.isEnabled()
-    assert "0/3" in combo.toolTip()
-    assert "enum定義" in combo.toolTip()
-    assert not _row(enum_editor).context_menu.align_action.isEnabled()
+    assert combo.isEnabled()
+    assert _values() == [5, 0, -2]
     cmds.flushUndo()
-    enum_editor.refresh()
+    combo.setCurrentIndex(3)
+    assert _values() == [10, 0, 10]
+    assert "enum定義" in enum_editor.message_label.text()
+    cmds.undo()
     _events()
-    assert _combo(enum_editor).isEnabled()
-    assert _row(enum_editor).row.binding.target_count == 2
+    assert _row(enum_editor).row.binding.target_count == 1
     assert _values() == [5, 0, -2]
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
     cmds.addAttr("enumB.mode", edit=True, enumName=_DEFINITION)
-    enum_editor.refresh()
     _events()
-    assert _row(enum_editor).row.binding.target_count == 3
+    cmds.flushUndo()
+    _combo(enum_editor).setCurrentIndex(3)
+    assert _values() == [10, 10, 10]
+    cmds.undo()
+    _events()
+    assert _values() == [5, 0, -2]
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
 def test_enum_undefined_representative_can_be_replaced_but_not_aligned(
@@ -263,14 +266,14 @@ def test_enum_lock_and_animation_respect_representative_policy(
     """後続lockを除外し、キー付き基準と未接続の後続へ同じ項目を適用する。"""
     cmds.setAttr("enumB.mode", lock=True)
     _events()
-    assert "2/3" in _combo(enum_editor).toolTip()
+    assert "基準ノードのみ" in _combo(enum_editor).toolTip()
     _combo(enum_editor).setCurrentIndex(3)
     assert _values() == [10, 0, 10]
     cmds.setKeyframe("enumA.mode")
     cmds.autoKeyframe(state=auto_key)
     _events()
     assert _combo(enum_editor).isEnabled()
-    assert "2/3" in _combo(enum_editor).toolTip()
+    assert "基準ノードのみ" in _combo(enum_editor).toolTip()
     cmds.flushUndo()
     _combo(enum_editor).setCurrentIndex(2)
     assert _values() == [5, 0, 5]

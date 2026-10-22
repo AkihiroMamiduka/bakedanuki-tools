@@ -27,7 +27,6 @@ from bd_tools.bd_channel_box.widget import (
 )
 from bd_tools.bd_channel_box.controller import (
     ChannelAttributeFilter,
-    ChannelBoxMode,
 )
 
 
@@ -228,7 +227,7 @@ def test_selection_and_refresh_only_read_values(
     """選択直後・再描画・未編集確定が値とUndo履歴を変更しない。"""
     row = _row(editor, "weight")
     assert isinstance(row.editor, FloatSliderSpinBox)
-    assert row.row.binding.is_mixed
+    assert not row.row.binding.is_mixed
     assert row.editor.spin_box.value() == 0.25
     row.editor.spin_box.setFocus()
     row.editor.spin_box.editingFinished.emit()
@@ -263,7 +262,7 @@ def test_last_selected_node_drives_rows_and_alignment(
         row.row.attribute.name for row in editor.row_widgets
     }
     row = _row(editor, "weight")
-    assert row.row.target_names == ("|channelB", "|channelA")
+    assert row.row.target_names == ("|channelB",)
     assert isinstance(row.editor, FloatSliderSpinBox)
     assert row.editor.spin_box.value() == 0.75
     visibility = _row(editor, "visibility").editor
@@ -667,11 +666,11 @@ def test_bool_input_and_explicit_alignment(
     assert isinstance(row.editor, BoolCheckBox)
     assert isinstance(row.row.binding, MayaBoolPlugsBinding)
     assert row.editor.isChecked()
-    assert row.row.binding.is_mixed
+    assert not row.row.binding.is_mixed
     assert cmds.getAttr("channelB.visibility") is False
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
-    # 混在表示からのクリックで一括変更し、Undoで元の混在値へ戻す
+    # 基準のチェックから一括変更し、Undoで各ノードの元値へ戻す
     row.editor.click()
     assert cmds.getAttr("channelA.visibility") is False
     assert cmds.getAttr("channelB.visibility") is False
@@ -742,13 +741,14 @@ def test_context_alignment_preserves_unrounded_value_and_one_undo(
     _events()
     assert cmds.getAttr("channelA.weight") == value
     assert cmds.getAttr("channelB.weight") == value
-    assert not row.context_menu.align_action.isEnabled()
+    assert row.context_menu.align_action.isEnabled()
+    row.context_menu.align_action.trigger()
     assert not row.name_label.text().startswith("• ")
     cmds.undo()
     _events()
     assert cmds.getAttr("channelA.weight") == value
     assert cmds.getAttr("channelB.weight") == 0.75
-    assert _row(editor, "weight").name_label.text().startswith("• ")
+    assert not _row(editor, "weight").name_label.text().startswith("• ")
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
@@ -775,7 +775,7 @@ def test_external_change_does_not_propagate(
     _events()
     row = _row(editor, "weight")
     assert row.row.binding.value == 0.9
-    assert row.row.binding.is_mixed
+    assert not row.row.binding.is_mixed
     assert cmds.getAttr("channelB.weight") == 0.75
 
 
@@ -813,18 +813,19 @@ def test_visibility_flag_and_attribute_removal_refresh_rows(
 def test_locked_secondary_is_reported_and_excluded(
     editor: ChannelBoxWidget,
 ) -> None:
-    """編集不可の対象をtooltipへ示し、残りの対応属性だけを更新する。"""
+    """後続lockは操作時に除外し、残りの対応属性だけを更新する。"""
     cmds.setAttr("channelB.weight", lock=True)
     _events()
     row = _row(editor, "weight")
     assert row.row.binding.writable_count == 1
-    assert "1/2" in row.name_label.toolTip()
-    assert "channelB" in row.name_label.toolTip()
-    binding = row.row.binding
-    assert isinstance(binding, MayaFloatPlugsBinding)
-    binding.set_value(0.5)
+    assert "基準ノードのみ" in row.name_label.toolTip()
+    assert isinstance(row.editor, FloatSliderSpinBox)
+    row.editor.spin_box.setValue(0.5)
     assert cmds.getAttr("channelA.weight") == 0.5
     assert cmds.getAttr("channelB.weight") == 0.75
+
+    assert "ロック" in editor.message_label.text()
+    assert "channelB" in editor.message_label.text()
 
 
 def test_dispose_prevents_selection_updates(
@@ -844,10 +845,9 @@ def test_range_rejection_is_visible_and_leaves_all_targets_unchanged(
     """他対象の狭い範囲で拒否した入力を画面へ通知し、部分適用を残さない。"""
     cmds.addAttr("channelB.weight", edit=True, maxValue=0.8)
     editor.refresh()
-    binding = _row(editor, "weight").row.binding
-    assert isinstance(binding, MayaFloatPlugsBinding)
-    with pytest.raises(ValueError):
-        binding.set_value(0.9)
+    view = _row(editor, "weight").editor
+    assert isinstance(view, FloatSliderSpinBox)
+    view.spin_box.setValue(0.9)
     assert cmds.getAttr("channelA.weight") == 0.25
     assert cmds.getAttr("channelB.weight") == 0.75
     assert not editor.message_label.isHidden()
@@ -892,7 +892,7 @@ def test_animated_representative_follows_auto_key(
     assert binding.view_model.set_value_command.can_execute
     row = _row(editor, "weight")
     assert row.context_menu.align_action.isEnabled()
-    assert "2/2" in row.name_label.toolTip()
+    assert "基準ノードのみ" in row.name_label.toolTip()
     assert "Auto Key" in row.name_label.toolTip()
     assert isinstance(row.editor, FloatSliderSpinBox)
     cmds.flushUndo()
@@ -926,11 +926,16 @@ def test_missing_and_incompatible_attributes_are_excluded(
     _events()
     row = _row(editor, "weight")
     assert row.row.binding.target_count == 1
-    assert "型・単位" in row.name_label.toolTip()
+    assert isinstance(row.editor, FloatSliderSpinBox)
+    row.editor.spin_box.setValue(0.5)
+    assert "型・単位" in editor.message_label.text()
+    assert cmds.getAttr("channelB.weight") == 0
     cmds.deleteAttr("channelB.weight")
     _events()
     row = _row(editor, "weight")
-    assert "対応する属性なし" in row.name_label.toolTip()
+    assert isinstance(row.editor, FloatSliderSpinBox)
+    row.editor.spin_box.setValue(0.6)
+    assert "対応する属性なし" in editor.message_label.text()
 
 
 def _value_step(widget: ChannelBoxWidget, name: str) -> FloatValueStepSpinBox:
@@ -966,16 +971,14 @@ def test_step_defaults_by_attribute_kind(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
-@pytest.mark.parametrize("mode", ["values", "bulk_values"])
 @pytest.mark.parametrize("kind", ["double", "doubleLinear", "doubleAngle"])
 @pytest.mark.parametrize("operation", ["up", "wheel"])
 def test_slider_value_step_defaults_and_undo(
     editor: ChannelBoxWidget,
-    mode: ChannelBoxMode,
     kind: str,
     operation: str,
 ) -> None:
-    """両モードの角度Slider値欄を1刻みにし、他型と一回UndoRedoを維持する。"""
+    """角度Slider値欄を1刻みにし、他型と一回UndoRedoを維持する。"""
     original_unit = str(cmds.currentUnit(query=True, angle=True))
     try:
         cmds.currentUnit(angle="deg")
@@ -990,7 +993,6 @@ def test_slider_value_step_defaults_and_undo(
                 keyable=True,
             )
             _set_value(node + ".sliderStepTest", value)
-        editor.controller.set_mode(mode)
         editor.refresh()
         _events()
         view = _row(editor, "sliderStepTest").editor

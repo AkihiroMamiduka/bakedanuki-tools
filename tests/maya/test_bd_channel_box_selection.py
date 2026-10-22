@@ -625,11 +625,11 @@ def test_connection_indicators_match_maya_colors(
         in _row(editor, "visibility").input_indicator.toolTip()
     )
     assert (
-        "ロック状態は選択ノード間で混在"
+        "基準ノードのみ"
         in _row(editor, "visibility").input_indicator.toolTip()
     )
     assert (
-        "接続状態は選択ノード間で混在"
+        "基準ノードのみ"
         in _row(editor, "translateX").input_indicator.toolTip()
     )
     cmds.flushUndo()
@@ -845,10 +845,11 @@ def test_selection_reordering_discards_pending_numeric_input(
     assert cmds.getAttr("multiB.translateY") == 3.0
 
 
-def test_selection_limit_skips_inspection_and_recovers_in_all_modes(
+def test_selection_limit_skips_inspection_in_state_and_setup_modes(
     editor: ChannelBoxWidget, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """50ノード以上では属性取得を止め、全モードで案内と復帰を確認する。"""
+    """状態・設定だけで50ノード上限を維持し、案内と復帰を確認する。"""
+    editor.controller.set_mode("states")
     nodes = tuple(
         cmds.createNode("network", name=f"selectionLimit{index}")
         for index in range(51)
@@ -891,7 +892,7 @@ def test_selection_limit_skips_inspection_and_recovers_in_all_modes(
     assert not editor.table_view.isVisible()
     assert not editor.copy_all_values_action.isEnabled()
 
-    for mode in ("states", "custom_filter_setup", "values"):
+    for mode in ("states", "custom_filter_setup"):
         editor.controller.set_mode(mode)
         _events()
         assert editor.empty_label.text() == expected_message
@@ -907,6 +908,7 @@ def test_selection_limit_skips_inspection_and_recovers_in_all_modes(
     monkeypatch.setattr(
         controller_module, "inspect_scalar_attributes", original_inspect
     )
+    editor.controller.set_mode("states")
     cmds.select(*nodes[:49], replace=True)
     _events()
     assert not editor.controller.selection_limit_exceeded
@@ -1536,27 +1538,14 @@ def test_time_change_discards_pending_animated_numeric_input(
     names = ("gain", "limited") if multiple else ("gain",)
     editor.table_view.select_keys(_keys(editor, *names))
     cmds.flushUndo()
-    if multiple:
-        pending = _begin_input(editor, "4", "gain")
-    else:
-        spin = _spin(editor, "gain")
-        spin.setFocus()
-        spin.selectAll()
-        _key(spin, qt.Qt.Key.Key_4, "4")
-        pending = cast(
-            Callable[[type[qt.QLineEdit]], list[qt.QLineEdit]],
-            getattr(spin, "findChildren"),
-        )(qt.QLineEdit)[0]
-        assert pending.text() == "4"
+    pending = _begin_input(editor, "4", "gain")
+    pending.selectAll()
+    _key(pending, qt.Qt.Key.Key_4, "4")
+    assert pending.text() == "4"
     assert pending.isVisible()
     cmds.currentTime(6)
     _events()
-    if multiple:
-        assert not qt.isValid(pending)
-    else:
-        assert qt.isValid(pending)
-        assert float(pending.text()) == 0.0
-        _key(_spin(editor, "gain"), qt.Qt.Key.Key_Return)
+    assert not qt.isValid(pending)
     assert cmds.keyframe("multiA.gain", query=True, keyframeCount=True) == 1
     assert cmds.getAttr("multiA.gain") == 0.0
     assert cmds.getAttr("multiB.gain") == 0.0
@@ -1608,7 +1597,7 @@ def test_driven_key_input_changes_only_temporary_value(
     cmds.autoKeyframe(state=auto_key)
     _events()
     row = _row(editor, "gain")
-    assert row.row.binding.writable_count == 2
+    assert row.row.binding.writable_count == 1
     assert row.row.binding.target_states[0].edit_description
     before = cmds.keyframe("multiA.gain", query=True, valueChange=True)
     cmds.flushUndo()
@@ -1648,7 +1637,7 @@ def test_layer_input_uses_native_key_target_and_one_undo(
     cmds.autoKeyframe(state=auto_key)
     _events()
     row = _row(editor, "gain")
-    assert row.row.binding.writable_count == 2
+    assert row.row.binding.writable_count == 1
     assert layer in row.name_label.toolTip()
     curves = (
         cast(
@@ -1693,11 +1682,12 @@ def test_constraint_driven_targets_stay_excluded_from_value_and_key_edits(
     _events()
     row = _row(editor, "translateX")
     assert row.row.binding.writable_count == 1
-    assert row.row.binding.target_states[1].reason
+    assert len(row.row.binding.target_states) == 1
     before = cmds.getAttr("multiB.translateX")
     cmds.autoKeyframe(state=True)
     cmds.flushUndo()
     editor.controller.apply_numeric_values(_keys(editor, "translateX"), 12)
+    assert "multiB" in editor.message_label.text()
     assert cmds.getAttr("multiB.translateX") == before
     assert cmds.getAttr("multiA.translateX") == 12
     cmds.undo()
@@ -3069,7 +3059,7 @@ def test_freeze_availability_stops_at_first_eligible_transform(
         else (other, joint, reference)
     )
     cmds.select(*selected, replace=True)
-    editor.controller.set_mode("bulk_values")
+    editor.controller.set_mode("values")
     editor.refresh()
     checked: list[str] = []
     original = cast(
@@ -4052,7 +4042,7 @@ def test_bulk_curve_paste_inspects_candidate_paths_without_value_bindings(
         cmds.createNode("transform", name=node)
     cmds.select("pasteFirst", "pasteReference", replace=True)
     cmds.currentTime(20)
-    editor.controller.set_mode("bulk_values")
+    editor.controller.set_mode("values")
     editor.refresh()
     keys = (
         _keys(editor, "translateX", "translateY")
@@ -4107,13 +4097,11 @@ def test_bulk_curve_paste_inspects_candidate_paths_without_value_bindings(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
-@pytest.mark.parametrize("mode", ["values", "bulk_values"])
 @pytest.mark.parametrize("operation", ["cut", "delete"])
 @pytest.mark.parametrize("multiple", [False, True])
 def test_selected_curve_removal_keeps_node_attribute_order_and_undo(
     editor: ChannelBoxWidget,
     monkeypatch: pytest.MonkeyPatch,
-    mode: Literal["values", "bulk_values"],
     operation: str,
     multiple: bool,
 ) -> None:
@@ -4133,7 +4121,6 @@ def test_selected_curve_removal_keeps_node_attribute_order_and_undo(
             cmds.setKeyframe(node + "." + name, time=10, value=4 + index)
         cmds.setKeyframe(node + ".tx", time=1, value=11)
     cmds.select(*nodes, replace=True)
-    editor.controller.set_mode(mode)
     editor.refresh()
     selected = attributes if multiple else attributes[:1]
     keys = _keys(editor, *selected)
@@ -4226,7 +4213,7 @@ def test_selected_curve_removal_ambiguous_leaf_preserves_other_compounds(
     )
     cmds.setKeyframe("multiA.envelope", time=1, value=3)
     cmds.select(node, "multiA", replace=True)
-    editor.controller.set_mode("bulk_values")
+    editor.controller.set_mode("values")
     editor.refresh()
     keys = _keys(editor, "envelope")
     inspected: list[Sequence[str] | None] = []
@@ -4278,7 +4265,7 @@ def test_curve_paste_ambiguous_leaf_falls_back_to_exact_path_comparison(
     )
     node = cmds.createNode("hierarchyTestNode4")
     cmds.select(node, replace=True)
-    editor.controller.set_mode("bulk_values")
+    editor.controller.set_mode("values")
     editor.refresh()
     original = controller_module.inspect_scalar_attributes
     inspected: list[Sequence[str] | None] = []
@@ -4308,7 +4295,7 @@ def test_bulk_curve_copy_compacts_only_nodes_with_keys_in_selection_order(
     cmds.setKeyframe("multiA.translateX", time=1, value=11)
     cmds.setKeyframe("multiB.translateX", time=1, value=22)
     cmds.select("multiB", "curveWithoutKeys", "multiA", replace=True)
-    editor.controller.set_mode("bulk_values")
+    editor.controller.set_mode("values")
     editor.refresh()
     assert (
         editor.controller.copy_animation_curves_selected(
@@ -5182,7 +5169,10 @@ def test_copied_path_paste_filters_by_reference_node_display_state(
             assert cmds.getAttr(node + ".gain") == expected[0]
             assert cmds.getAttr(node + ".enabled") is expected[1]
             assert cmds.getAttr(node + ".limited") == expected[2]
-        assert not editor.message_label.isVisible()
+        assert not editor.message_label.isVisible(), (
+            display_filter,
+            editor.message_label.text(),
+        )
         assert editor.message_label.text() == ""
 
         cmds.undo()
@@ -5197,6 +5187,7 @@ def test_copied_path_paste_filters_by_reference_node_display_state(
     cmds.setAttr("multiA.enabled", channelBox=False)
     cmds.setAttr("multiA.enabled", keyable=True)
     cmds.setAttr("multiA.limited", keyable=True)
+    _events()
     cmds.flushUndo()
     editor.paste_copied_values_actions["channel_box"].trigger()
     assert not editor.message_label.isVisible()

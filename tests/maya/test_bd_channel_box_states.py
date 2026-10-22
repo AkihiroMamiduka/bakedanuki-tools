@@ -487,7 +487,9 @@ def test_hidden_value_edit_preserves_flags_and_respects_lock_and_connection(
     _filter(editor, "hidden")
     binding = _value_row(editor, "hiddenValue").row.binding
     assert isinstance(binding, MayaFloatPlugsBinding)
-    binding.set_value(0.5)
+    assert editor.controller.apply_numeric_values(
+        (("hiddenValue", "number"),), 0.5
+    )
     _events()
     assert [cmds.getAttr(n + ".hiddenValue") for n in _NODES] == [0.5, 0.5]
     assert [_flags(n + ".hiddenValue") for n in _NODES] == [
@@ -521,14 +523,14 @@ def test_filter_switch_finishes_drag_and_preserves_step(
     step.setSingleStep(0.01)
     binding = _value_row(editor).row.binding
     assert isinstance(binding, MayaFloatPlugsBinding)
-    assert binding.view_model.begin_edit(qt.QObject(editor))
-    binding.set_value(0.4)
-    binding.set_value(0.6)
+    editor.controller.begin_value_edit()
+    editor.controller.apply_numeric_values((("weight", "number"),), 0.4)
+    editor.controller.apply_numeric_values((("weight", "number"),), 0.6)
     _filter(editor, "hidden")
     assert binding.is_disposed
     hidden_binding = _value_row(editor, "hiddenValue").row.binding
     assert isinstance(hidden_binding, MayaFloatPlugsBinding)
-    hidden_binding.set_value(0.5)
+    editor.controller.apply_numeric_values((("hiddenValue", "number"),), 0.5)
     cmds.undo()
     _events()
     assert [cmds.getAttr(n + ".hiddenValue") for n in _NODES] == [0, 0]
@@ -779,7 +781,7 @@ def test_value_mixed_marker_does_not_leak_into_state_mode(
     state_editor: ChannelBoxWidget,
 ) -> None:
     """値だけが混在している行を、表示・ロックの混在として示さない。"""
-    assert _value_row(state_editor).name_label.text().startswith("• ")
+    assert not _value_row(state_editor).name_label.text().startswith("• ")
     _states(state_editor)
     assert not _state_row(state_editor).name_label.text().startswith("• ")
     assert _checked_display(state_editor) == ("keyable",)
@@ -871,10 +873,9 @@ def test_mode_switch_finishes_drag_before_lock_undo(
     """モード切替でSliderの連続Undoを閉じ、続くlock操作と分離する。"""
     binding = _value_row(state_editor).row.binding
     assert isinstance(binding, MayaFloatPlugsBinding)
-    owner = qt.QObject(state_editor)
-    assert binding.view_model.begin_edit(owner)
-    binding.set_value(0.4)
-    binding.set_value(0.6)
+    state_editor.controller.begin_value_edit()
+    state_editor.controller.apply_numeric_values((("weight", "number"),), 0.4)
+    state_editor.controller.apply_numeric_values((("weight", "number"),), 0.6)
     _states(state_editor)
     assert binding.is_disposed
     _state_row(state_editor).lock_check_box.click()

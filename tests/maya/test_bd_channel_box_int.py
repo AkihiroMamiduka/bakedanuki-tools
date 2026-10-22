@@ -111,7 +111,7 @@ def test_integer_rows_edit_align_and_respect_limits(
         short_spin.value(),
     ) == (-20, 20, 5)
     assert long_spin.value() == 2147483647
-    assert byte_row.row.binding.is_mixed
+    assert not byte_row.row.binding.is_mixed
     assert byte_spin.select_all_on_mouse_focus()
 
     byte_spin.setValue(200)
@@ -290,7 +290,7 @@ def test_connected_integer_value_and_undo(
     _events()
     assert cmds.getAttr(path) == 12
     assert cmds.getAttr("intB." + attribute) == 12
-    assert not editor.message_label.isVisible()
+    assert editor.message_label.text().startswith("適用候補: 2属性")
     cmds.undo()
     _events()
     assert cmds.getAttr(path) == initial

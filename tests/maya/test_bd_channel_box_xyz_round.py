@@ -72,7 +72,8 @@ def test_translate_xyz_uses_display_units_and_one_undo(
         list[float],
         cmds.xform(child, query=True, worldSpace=True, translation=True),
     )
-    controller.node_names = (first, second)
+    cmds.select(first, second, replace=True)
+    controller.refresh()
     cmds.flushUndo()
 
     assert controller.round_transform_xyz("translate", 2) == 2
@@ -106,7 +107,8 @@ def test_joint_orient_xyz_filters_mixed_selection_and_keeps_child_pose(
     )
     reports: list[str] = []
     controller.operation_reported.connect(reports.append)
-    controller.node_names = (transform, joint)
+    cmds.select(transform, joint, replace=True)
+    controller.refresh()
     cmds.flushUndo()
 
     assert (

@@ -222,7 +222,7 @@ assert_type(
 )
 assert_type(
     bd_channel_box.show().widget.controller.mode,
-    Literal["values", "bulk_values", "states", "custom_filter_setup"],
+    Literal["values", "states", "custom_filter_setup"],
 )
 assert_type(bd_channel_box.show().widget.controller.set_mode("states"), None)
 table = bd_channel_box.show().widget.table_view

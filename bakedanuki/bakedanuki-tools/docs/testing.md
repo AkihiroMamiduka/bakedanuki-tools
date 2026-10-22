@@ -289,10 +289,10 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。この段�
   照会リストの順序だけで表示nodeを断定しない。network混在時の標準UIの対象も記録する。
   複数ノードのアニメーションカーブCopy/Pasteは、基準優先のBinding順ではなく
   元の選択順でコピー元と貼り付け先を対応させること。
-- 選択上限: 通常値編集・表示とロック・カスタムフィルター設定では、
+- 選択上限: 表示とロック・カスタムフィルター設定では、
   49→50→51→49ノードで50以上の属性取得と表示・編集を休止し、同じ案内を示すこと。
   旧入力欄・行・ノード監視を解放し、49以下で自動復帰すること。
-  多数ノードモードへ切り替えると50以上でも基準の属性を表示すること。
+  初期の値編集では50以上でも基準の属性を表示し、状態・設定から戻っても同じ動作になること。
   件数はcomponent・plugを除外し、DAG instanceを同一ノードにまとめて数えること。
   上限を変更する場合は新しい上限の前後でも確認し、Maya本体で表示と応答性を確かめること。
 - ノード名: 複数選択では末尾だけを改名し、衝突時はMayaの確定名を示すこと。
@@ -420,8 +420,9 @@ utilは`verify.cmd`が成功し、3 versionの型contract、Maya 2025 full pytes
 3 versionのQt／Maya UI互換性検証を完了しました。UIはoffscreenによる自動確認です。
 実rig・Maya本体での描画速度や大量キー付きSliderの応答時間は、この結果に含めません。
 
-多数ノードモードは`tests/maya/test_bd_channel_box_bulk.py`で検証します。
-1000ノード選択時に基準以外の属性列挙や常設Bindingを作らないこと、既存三モードの
+値編集の操作時構築は`tests/maya/test_bd_channel_box_bulk.py`で検証します。
+初期モードと表示名、旧モードキーの拒否、1000ノード選択時に基準以外の属性列挙や
+常設Bindingを作らないこと、状態・設定の二モードの
 50ノード制限、基準の外部変更を他ノードへ転送しないこと、明示的な同値入力、
 型・enum定義・属性欠落・lock・範囲の操作時判定、Undo／Redo、Sliderの連続入力、
 選択変更による未確定入力の破棄、基準Copyと全対象Paste・整列・状態・キー操作を確認します。
@@ -432,8 +433,8 @@ utilは`verify.cmd`が成功し、3 versionの型contract、Maya 2025 full pytes
 `monitor=False`で作られて確実に破棄されることも検証します。
 独立したカスタムenumも1000ノードの実キー入力、Undo／Redo、定義取得回数の線形上限で
 検証します。明示入力・選択属性／フィルター対象の値揃え・三つの値Paste APIが、
-多数ノードモードでは`enum_validation="operation"`、通常モードでは`"per_write"`を
-使うことを固定します。操作途中の定義変更と終了時確認による復旧は、utilの
+値編集では`enum_validation="operation"`を使うことを固定します。
+操作途中の定義変更と終了時確認による復旧は、utilの
 `tests/maya/ui/test_enum_operation_validation.py`で別行・readonly・同値対象も含めて確認します。
 lock・表示状態の索引化では、utilの`test_channel_state_binding.py`と`test_callback.py`で
 多数対象の照合回数、hash衝突、改名、削除履歴、callback本数と解除時の再入を確認します。
