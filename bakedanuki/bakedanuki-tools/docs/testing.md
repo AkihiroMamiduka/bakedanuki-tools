@@ -180,7 +180,8 @@ Window幅が変わらず、値編集222 pxと設定モードの必要幅の操�
 設定モードでは`hide`と`lock`の間が他のボタンと同じ6 pxになることも確認します。
 縦スクロールバーは必要時だけ表示し、その出入りによる名前列幅・入力列位置の変化は許容します。
 既存Hide属性の復帰、key／ch／hideのラジオボタン選択、lock／解除のSpace操作、
-表示とロックの混在・独立操作・Undo／Redo、値とstepの維持も確認します。
+表示とロックは混在する対象でも基準だけを示し、独立操作・Undo／Redo、
+値とstepの維持も確認します。
 両モードで5種類のフィルターを実ComboBoxから選び、モードごとの選択保持、無書込み、
 絞り込み中の状態変更による行の除去・Undo／Redoでの再評価を確認します。
 jointを選択して両モードの指定32属性とdrawOverrideの配置を確認します。
@@ -212,7 +213,7 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 - `10-values-before-mode-switch.png`、`14-values-after-mode-switch.png`:
   モード切替前後の値入力表示。
 - `11-state-mode-hidden-attributes.png`、`12-state-mode-locked.png`、
-  `13-state-mode-mixed.png`: 非表示属性の設定行、ロック中、混在状態の表示。
+  `13-state-mode-reference.png`: 非表示属性の設定行、ロック中、基準状態の表示。
 - `15-values-hidden-filter.png`、`16-states-keyable-filter.png`:
   非表示属性の値編集と、Keyableだけに絞り込んだ状態編集の配置。
 - `17-attribute-order-mode-0.png`、`17-attribute-order-mode-1.png`、
@@ -488,8 +489,10 @@ utilの`test_scalar_paste_lifetime.py`では、軽量削除監視の直接・一
 未commit差分の有無も記録してください。異なるprocessや負荷条件の単発値を直接比較しません。
 反復回数とwarm-up、Qtの遅延更新・削除・描画、GCの扱いを揃え、中央値を比較します。
 特に選択切替は`cmds.select()`の呼出しだけでなく、入力行の再構築とQt更新まで含めます。
-現行の本体runnerは最大10ノードの計測です。多数ノードモードの評価では、この値だけで
-判断せず、100／500／1000ノードなどの同一条件に加えて、実際のrigや属性構成でも
+従来の値編集の反復選択切替benchmarkは最大10ノードです。現在の`--custom-filters-only`は
+1000ノードの設定切替・状態表示・クリック・なぞり・Undo／Redoも確認しますが、
+全入力方式や実rigの反復性能を保証しません。性能評価では100／500／1000ノードなどの
+同一条件に加えて、実際のrigや属性構成でも
 構築・一属性入力・Slider連続更新・Undo／RedoとQt同期を分けて計測してください。
 無接続の単純transformと、多数のキー・SDK・Animation Layerを持つ対象は別の結果として扱います。
 Qt offscreenの参考計測はMaya本体の描画と操作確認を代替しません。
@@ -497,6 +500,13 @@ Qt offscreenの参考計測はMaya本体の描画と操作確認を代替しま�
 `result.json`、画像、ログは既定では`%TEMP%`配下にあるため、将来の比較資料として使う場合は
 消去される前に保管してください。docsには比較条件・結果・検証の制限を残し、
 操作成功とrunnerの終了codeを別々に記録します。性能改善時も既存操作の回帰確認は維持します。
+
+多数ノード対応は2026-10-22に利用者の動作確認とpush完了の報告を受け、機能開発を完了しました。
+次回の負荷報告ではMaya version、tools／utilのcommit、ノード数・型と階層、モード・フィルター・
+表示行数、入力方法・通過行数、接続・キー・Layerの有無を記録し、同じ条件で再現します。
+選択取得・行構築・対象解決・実書込み・DG評価・Undo／Redo・Qt同期を分け、
+常設callback数と操作後・close後の監視解除も確認してください。
+機能ごとの維持事項は[多数ノード対応の開発引き継ぎ](bd_channel_box.md#多数ノード対応の完了記録と開発引き継ぎ)へまとめています。
 
 ### Maya再起動による配置復元
 
