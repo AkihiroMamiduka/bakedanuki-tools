@@ -21,6 +21,7 @@ __all__ = [
     "CustomFilterConflictError",
     "CustomFilterDraft",
     "create_custom_filter",
+    "duplicate_custom_filter",
 ]
 
 
@@ -83,6 +84,21 @@ def _write_temporary(path: Path, content: bytes) -> Path:
 
 def create_custom_filter(path: str | Path, name: str) -> str:
     """空の有効なJSONを新規作成し、既存ファイルを上書きしない。"""
+    return _create_definition(path, name, {})
+
+
+def duplicate_custom_filter(
+    source: str | Path, path: str | Path, name: str
+) -> str:
+    """元JSONを読み直し、全ノード型と属性順を別ファイルへ複製する。"""
+    draft = CustomFilterDraft(source)
+    return _create_definition(path, name, draft.node_types)
+
+
+def _create_definition(
+    path: str | Path, name: str, node_types: dict[str, list[str]]
+) -> str:
+    """検証済みの定義を新しいJSONとして保存し、既存ファイルを保護する。"""
     normalized = normalize_filter_path(path)
     destination = Path(normalized)
     if destination.suffix.lower() != ".json":
@@ -91,7 +107,7 @@ def create_custom_filter(path: str | Path, name: str) -> str:
         raise CustomFilterError("保存先のファイルは既に存在します。")
     if not destination.parent.is_dir():
         raise CustomFilterError("保存先のフォルダーが存在しません。")
-    temporary = _write_temporary(destination, _serialized(name, {}))
+    temporary = _write_temporary(destination, _serialized(name, node_types))
     try:
         if destination.exists():
             raise CustomFilterError("保存先のファイルは既に存在します。")

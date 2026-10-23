@@ -1220,6 +1220,297 @@ def test_manager_creates_and_selects_new_filter(
     )
 
 
+def _queue_filter_name(expected: str, replacement: str | None = None) -> None:
+    """次の名前ダイアログの初期値を確認し、指定名で確定する。"""
+
+    def accept() -> None:
+        """表示された名前欄を検証し、必要なら変更して確定する。"""
+        active = cast(
+            Callable[[], qt.QWidget | None],
+            getattr(qt.QApplication, "activeModalWidget"),
+        )()
+        assert isinstance(active, qt.QDialog)
+        field = active.findChild(qt.QLineEdit, "newCustomFilterName")
+        assert isinstance(field, qt.QLineEdit)
+        assert field.text() == expected
+        if replacement is not None:
+            field.setText(replacement)
+        active.accept()
+
+    cast(
+        Callable[[int, Callable[[], None]], None],
+        getattr(qt.QTimer, "singleShot"),
+    )(0, accept)
+
+
+def test_setup_creates_filter_without_opening_manager(
+    editor: ChannelBoxWidget,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """未登録・ノード未選択でも設定画面から新規作成して編集を始める。"""
+    editor.controller.set_mode("custom_filter_setup")
+    destination = tmp_path / "from-setup.json"
+
+    def choose_path(*_args: object) -> tuple[str, str]:
+        """設定画面で新規JSONの保存先を選択する。"""
+        return str(destination), ""
+
+    monkeypatch.setattr(qt.QFileDialog, "getSaveFileName", choose_path)
+    _queue_filter_name("", "From Setup")
+    editor.setup_panel.new_button.click()
+    _events()
+
+    assert editor.custom_filter_dialog is None
+    assert editor.setup_panel.draft is not None
+    assert editor.setup_panel.draft.name == "From Setup"
+    assert editor.custom_filter_registry.entries[-1].enabled
+    assert (
+        json.loads(destination.read_text(encoding="utf-8"))["node_types"] == {}
+    )
+
+
+def test_manager_duplicates_saved_changes_and_all_types_with_copy_suffix(
+    editor: ChannelBoxWidget,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """保存を選んだ変更を含め、OFFの元定義を_copy名で全型複製する。"""
+    source = tmp_path / "source.json"
+    create_custom_filter(source, "Rig")
+    registry = editor.custom_filter_registry
+    registry.add_paths((source,))
+    registry.set_enabled(registry.entries[0].path, False)
+    panel = editor.setup_panel
+    editor.controller.set_mode("custom_filter_setup")
+    panel.set_target(str(source))
+    assert panel.draft is not None
+    panel.draft.set_many_included("joint", ("visibility", "rigMode"), True)
+    panel.draft.ensure_node_type("network")
+    panel.draft.set_many_included("transform", ("rotateOrder",), True)
+    panel.name_edit.setText("Updated Rig")
+    destination = tmp_path / "copy.json"
+
+    def save_changes(*_args: object) -> qt.QMessageBox.StandardButton:
+        """複製元の未保存変更を先に確定する。"""
+        return qt.QMessageBox.StandardButton.Save
+
+    def choose_path(*args: object) -> tuple[str, str]:
+        """複製先の初期フォルダーと_copy名を確認して保存先を返す。"""
+        assert Path(cast(str, args[2])) == tmp_path / "Updated Rig_copy.json"
+        return str(destination), ""
+
+    monkeypatch.setattr(qt.QMessageBox, "warning", save_changes)
+    monkeypatch.setattr(qt.QFileDialog, "getSaveFileName", choose_path)
+    editor.manage_custom_filters_action.trigger()
+    manager = editor.custom_filter_dialog
+    assert manager is not None and manager.duplicate_button.isEnabled()
+    _queue_filter_name("Updated Rig_copy")
+    manager.duplicate_button.click()
+    _events()
+
+    original = json.loads(source.read_text(encoding="utf-8"))
+    copied = json.loads(destination.read_text(encoding="utf-8"))
+    assert original["name"] == "Updated Rig"
+    assert copied["name"] == "Updated Rig_copy"
+    assert copied["node_types"] == original["node_types"]
+    assert copied["node_types"]["network"] == []
+    assert registry.entries[-1].enabled
+    assert not registry.entries[0].enabled
+    assert panel.draft is not None and panel.draft.name == "Updated Rig_copy"
+
+
+@pytest.mark.parametrize("operation", ("new", "duplicate", "setup"))
+def test_creation_cancelled_before_dialogs_keeps_draft_and_registration(
+    editor: ChannelBoxWidget,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    """未保存確認のキャンセル時はファイル選択を開かず旧編集だけを維持する。"""
+    source = tmp_path / "source.json"
+    create_custom_filter(source, "Rig")
+    registry = editor.custom_filter_registry
+    registry.add_paths((source,))
+    editor.controller.set_mode("custom_filter_setup")
+    panel = editor.setup_panel
+    panel.set_target(str(source))
+    panel.name_edit.setText("Unsaved")
+    before = source.read_bytes()
+
+    def cancel(*_args: object) -> qt.QMessageBox.StandardButton:
+        """対象を離れる前の確認を中止する。"""
+        return qt.QMessageBox.StandardButton.Cancel
+
+    def reject_dialog(_dialog: qt.QDialog) -> int:
+        """確認を中止した後に作成ダイアログが開いたら失敗させる。"""
+        raise AssertionError("作成ダイアログが開きました")
+
+    monkeypatch.setattr(qt.QMessageBox, "warning", cancel)
+    monkeypatch.setattr(qt.QDialog, "exec", reject_dialog)
+    if operation == "setup":
+        panel.new_button.click()
+    else:
+        editor.manage_custom_filters_action.trigger()
+        manager = editor.custom_filter_dialog
+        assert manager is not None
+        button = (
+            manager.new_button
+            if operation == "new"
+            else manager.duplicate_button
+        )
+        button.click()
+    assert len(registry.entries) == 1
+    assert tuple(tmp_path.glob("*.json")) == (source,)
+    assert source.read_bytes() == before
+    assert panel.draft is not None and panel.draft.is_dirty
+    assert panel.name_edit.text() == "Unsaved"
+
+
+def test_setup_type_editor_works_without_nodes_and_preserves_saved_candidates(
+    editor: ChannelBoxWidget, tmp_path: Path
+) -> None:
+    """ノードなしで標準・保存済み候補を追加除外し、他型を保持して保存する。"""
+    source = tmp_path / "types.json"
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "Types",
+                "node_types": {
+                    "transform": ["rigMode", "visibility"],
+                    "joint": ["visibility", "jointOrient.jointOrientX"],
+                    "network": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    editor.custom_filter_registry.add_paths((source,))
+    editor.controller.set_mode("custom_filter_setup")
+    panel = editor.setup_panel
+    panel.set_target(str(source))
+    before = cmds.ls(long=True)
+    cmds.flushUndo()
+    panel.node_type_combo.setCurrentIndex(
+        panel.node_type_combo.findData("transform")
+    )
+    assert panel.draft is not None
+    _candidate_radio(panel, "translate.translateX", True).click()
+    _candidate_radio(panel, "rigMode", False).click()
+    assert panel.draft.paths("transform") == (
+        "visibility",
+        "translate.translateX",
+    )
+    _candidate_radio(panel, "rigMode", True).click()
+    assert panel.draft.paths("transform")[-1] == "rigMode"
+    panel.node_type_combo.setCurrentIndex(
+        panel.node_type_combo.findData("joint")
+    )
+    panel.order_list.setCurrentRow(1)
+    panel.up_button.click()
+    assert panel.draft.paths("joint") == (
+        "jointOrient.jointOrientX",
+        "visibility",
+    )
+    panel.node_type_combo.setCurrentIndex(
+        panel.node_type_combo.findData("network")
+    )
+    panel.clear_type_button.click()
+    assert panel.node_type_combo.findData("network") == -1
+    assert panel.node_type_combo.currentIndex() == 0
+    assert panel.save()
+    saved = json.loads(source.read_text(encoding="utf-8"))["node_types"]
+    assert saved["transform"] == [
+        "visibility",
+        "translate.translateX",
+        "rigMode",
+    ]
+    assert saved["joint"] == ["jointOrient.jointOrientX", "visibility"]
+    assert "network" not in saved
+    assert cmds.ls(long=True) == before
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+def test_fixed_type_ignores_selection_and_uses_standard_filter_flags(
+    editor: ChannelBoxWidget, tmp_path: Path
+) -> None:
+    """型の固定中は選択変更で対象を変えず、型既定のフラグで候補を絞る。"""
+    source = tmp_path / "types.json"
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "Types",
+                "node_types": {
+                    "transform": ["visibility", "rigMode"],
+                    "joint": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    editor.custom_filter_registry.add_paths((source,))
+    editor.controller.set_mode("custom_filter_setup")
+    panel = editor.setup_panel
+    panel.set_target(str(source))
+    panel.node_type_combo.setCurrentIndex(
+        panel.node_type_combo.findData("transform")
+    )
+    joint = cmds.createNode("joint")
+    cmds.select(joint)
+    editor.controller.refresh()
+    _events()
+    assert "transform 型" in panel.node_label.text()
+    assert panel.node_type_combo.currentData() == "transform"
+    editor.controller.set_attribute_filter("keyable")
+    _events()
+    assert _candidate_label(panel, "translate.translateX")
+    panel.search_edit.setText("rigMode")
+    assert not panel.include_all_button.isEnabled()
+    editor.controller.set_attribute_filter("all")
+    _events()
+    assert panel.include_all_button.isEnabled()
+    panel.node_type_combo.setCurrentIndex(0)
+    assert "joint 型" in panel.node_label.text()
+
+
+def test_unknown_type_keeps_saved_paths_editable_without_loading_plugin(
+    editor: ChannelBoxWidget, tmp_path: Path
+) -> None:
+    """未ロード型でも保存済みpathを再追加でき、別型の定義を保つ。"""
+    source = tmp_path / "types.json"
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "Types",
+                "node_types": {
+                    "bdUnavailablePluginType": ["mode", "amount"],
+                    "transform": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    editor.custom_filter_registry.add_paths((source,))
+    editor.controller.set_mode("custom_filter_setup")
+    panel = editor.setup_panel
+    panel.set_target(str(source))
+    panel.node_type_combo.setCurrentIndex(1)
+    _candidate_radio(panel, "mode", False).click()
+    _candidate_radio(panel, "mode", True).click()
+    assert panel.draft is not None
+    assert panel.draft.paths("bdUnavailablePluginType") == ("amount", "mode")
+    assert "型情報を取得できない" in panel.status_label.text()
+    assert panel.save()
+    saved = json.loads(source.read_text(encoding="utf-8"))["node_types"]
+    assert saved == {
+        "bdUnavailablePluginType": ["amount", "mode"],
+        "transform": [],
+    }
+
+
 @pytest.mark.parametrize("mode", ("values", "states"))
 def test_custom_filter_without_node_type_uses_visible_fallback(
     editor: ChannelBoxWidget,

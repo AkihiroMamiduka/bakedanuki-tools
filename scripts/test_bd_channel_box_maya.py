@@ -198,6 +198,7 @@ class _MayaSmokeSession:
                 self._show,
                 self._inspect_custom_filters,
                 self._inspect_custom_filter_sweep,
+                self._inspect_custom_filter_type_editor,
                 self._inspect_reference_only_custom_filter_setup,
                 self._inspect_thousand_node_states,
                 self._finish,
@@ -1961,32 +1962,35 @@ class _MayaSmokeSession:
             "multiHiddenB",
         ):
             raise AssertionError("表示順一覧に検証用の属性が揃いません")
-        for index, modifiers in (
-            (1, qt.Qt.KeyboardModifier.NoModifier),
-            (2, qt.Qt.KeyboardModifier.ShiftModifier),
+        item = order.item(1)
+        order.scrollToItem(item)
+        order.setFocus()
+        self._flush_gui()
+        position = order.visualItemRect(item).center()
+        for event_type in (
+            qt.QEvent.Type.MouseButtonPress,
+            qt.QEvent.Type.MouseButtonRelease,
         ):
-            item = order.item(index)
-            order.scrollToItem(item)
-            self._flush_gui()
-            position = order.visualItemRect(item).center()
-            self._mouse(
-                order.viewport(),
-                qt.QEvent.Type.MouseButtonPress,
-                position,
-                modifiers=modifiers,
-            )
-            self._mouse(
-                order.viewport(),
-                qt.QEvent.Type.MouseButtonRelease,
-                position,
-                modifiers=modifiers,
+            self._mouse(order.viewport(), event_type, position)
+        # 範囲の拡張はキー入力を使い、OS側の修飾キー状態へ依存させない
+        for event_type in (qt.QEvent.Type.KeyPress, qt.QEvent.Type.KeyRelease):
+            qt.QApplication.sendEvent(
+                order,
+                qt.QtGui.QKeyEvent(
+                    event_type,
+                    qt.Qt.Key.Key_Down,
+                    qt.Qt.KeyboardModifier.ShiftModifier,
+                ),
             )
         self._flush_gui()
         if tuple(item.text() for item in order.selectedItems()) != (
             "multiHiddenA",
             "multiHiddenB",
         ):
-            raise AssertionError("表示順一覧の複数選択が反映されません")
+            raise AssertionError(
+                "表示順一覧の複数選択が反映されません: "
+                f"{tuple(item.text() for item in order.selectedItems())}"
+            )
         panel.up_button.click()
         self._flush_gui()
         if panel.draft.paths("joint") != (
@@ -2110,6 +2114,123 @@ class _MayaSmokeSession:
             widget.mode_combo, widget.mode_combo.findData(saved_mode)
         )
         self.steps.append("custom_filter_same_column_sweep_preserves_scene")
+
+    def _inspect_custom_filter_type_editor(self) -> None:
+        """実画面で型の直接編集、検索位置、アイコン操作を確認して撮影する。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+        from bd_tools.bd_channel_box.custom_filter_editor import (
+            CustomFilterDraft,
+            create_custom_filter,
+        )
+
+        widget = self._require_window().widget
+        panel = widget.setup_panel
+        registry = widget.custom_filter_registry
+        saved_mode = widget.controller.mode
+        saved_selection = tuple(cmds.ls(selection=True, long=True) or ())
+        saved_target = panel.draft.path if panel.draft is not None else None
+        saved_search = panel.search_edit.text()
+        source = self.output / "type-editor.json"
+        path = create_custom_filter(source, "Type Editor")
+        draft = CustomFilterDraft(path)
+        draft.set_many_included(
+            "transform",
+            ("visibility", "translate.translateX", "rigMode"),
+            True,
+        )
+        draft.ensure_node_type("joint")
+        draft.save()
+        registry.add_paths((path,))
+
+        try:
+            # ノード未選択でも型を選び、標準候補と保存済みpathを編集する
+            self._select_combo_item(widget.mode_combo, 2)
+            panel.set_target(path)
+            cmds.select(clear=True)
+            self._flush_gui()
+            self._select_combo_item(
+                panel.node_type_combo,
+                panel.node_type_combo.findData("transform"),
+            )
+            if panel.order_list.count() != 3:
+                raise AssertionError("ノードなしで型の定義を表示できません")
+            panel.search_edit.setText("translate")
+            self._flush_gui()
+            if not panel.include_all_button.isEnabled():
+                raise AssertionError("型の標準属性を検索できません")
+
+            # 指定リソースの取得可否と、代替を含む表示用アイコンを別々に記録する
+            resources: dict[str, bool] = {}
+            for button, icon_name in (
+                (panel.up_button, "nodeGrapherArrowUp.png"),
+                (panel.down_button, "nodeGrapherArrowDown.png"),
+                (panel.remove_button, "RS_delete.png"),
+            ):
+                resources[icon_name] = (
+                    not qt.QIcon(f":/{icon_name}").pixmap(16, 16).isNull()
+                )
+                if button.size() != qt.QSize(20, 20):
+                    raise AssertionError("表示順ボタンが20×20ではありません")
+                if button.icon().pixmap(16, 16).isNull():
+                    raise AssertionError("表示順ボタンのアイコンが空です")
+                if (
+                    button.mapToGlobal(qt.QPoint()).x()
+                    >= panel.order_list.mapToGlobal(qt.QPoint()).x()
+                ):
+                    raise AssertionError("表示順ボタンが一覧の左にありません")
+            self.diagnostics.append(
+                {"custom_filter_icon_resources": resources}
+            )
+            search_y = panel.search_edit.mapToGlobal(qt.QPoint()).y()
+            if not (
+                panel.include_all_button.mapToGlobal(qt.QPoint()).y()
+                < search_y
+                < panel.candidate_scroll.mapToGlobal(qt.QPoint()).y()
+            ):
+                raise AssertionError(
+                    "属性検索が一括ボタンと候補一覧の間にありません"
+                )
+            panel.order_list.setCurrentRow(1)
+            panel.up_button.click()
+            self._flush_gui()
+            if (
+                panel.draft is None
+                or panel.draft.paths("transform")[0] != "translate.translateX"
+            ):
+                raise AssertionError("型の表示順をアイコンで変更できません")
+            self._capture("54-custom-filter-type-editor.png")
+            panel.save_button.click()
+            cmds.select(self.nodes[0], replace=True)
+            self._flush_gui()
+            if panel.node_type_combo.currentData() != "transform":
+                raise AssertionError("選択変更で固定した型が切り替わりました")
+            widget.manage_custom_filters_action.trigger()
+            self._flush_gui()
+            manager = widget.custom_filter_dialog
+            if manager is None or not manager.duplicate_button.isEnabled():
+                raise AssertionError("管理画面で複製を選べません")
+            image_path = self.output / "55-custom-filter-manager-duplicate.png"
+            if not manager.grab().save(str(image_path)):
+                raise RuntimeError("複製ボタンのある管理画面を撮影できません")
+            self.screenshots.append(str(image_path))
+            manager.hide()
+            self.steps.append(
+                "edit_custom_filter_type_without_nodes_and_inspect_icons"
+            )
+        finally:
+            # 後続の基準ノード検証へ、元の登録と選択追従を戻す
+            panel.discard()
+            panel.node_type_combo.setCurrentIndex(0)
+            if saved_target is not None:
+                panel.set_target(saved_target)
+            registry.remove(path)
+            panel.search_edit.setText(saved_search)
+            cmds.select(*saved_selection, replace=True)
+            self._select_combo_item(
+                widget.mode_combo, widget.mode_combo.findData(saved_mode)
+            )
 
     def _inspect_reference_only_custom_filter_setup(self) -> None:
         """千ノードの混在選択でも基準型だけの設定画面を操作できるか確認する。"""

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
         CustomFilterConflictError,
         CustomFilterDraft,
         create_custom_filter,
+        duplicate_custom_filter,
     )
     from bd_tools.bd_channel_box.custom_filters import (
         CustomFilterError,
@@ -61,6 +62,7 @@ else:
     CustomFilterConflictError = _EDITOR.CustomFilterConflictError
     CustomFilterDraft = _EDITOR.CustomFilterDraft
     create_custom_filter = _EDITOR.create_custom_filter
+    duplicate_custom_filter = _EDITOR.duplicate_custom_filter
 
 
 def test_create_empty_definition_and_refuse_overwrite(tmp_path: Path) -> None:
@@ -73,6 +75,48 @@ def test_create_empty_definition_and_refuse_overwrite(tmp_path: Path) -> None:
     with pytest.raises(CustomFilterError, match="既に存在"):
         create_custom_filter(path, "Other")
     assert path.read_bytes() == source
+
+
+def test_duplicate_preserves_all_types_order_empty_definitions_and_source(
+    tmp_path: Path,
+) -> None:
+    """複製が全型・属性順・空定義を引き継ぎ、元JSONを変更しない。"""
+    source = tmp_path / "rig.json"
+    create_custom_filter(source, "Rig")
+    draft = CustomFilterDraft(source)
+    draft.set_many_included("joint", (".visibility", "rigMode"), True)
+    draft.ensure_node_type("network")
+    draft.set_many_included("transform", ("rotateOrder", "visibility"), True)
+    draft.save()
+    before = source.read_bytes()
+    copy = tmp_path / "rig-copy.json"
+
+    duplicate_custom_filter(source, copy, "Rig_copy")
+
+    definition = load_custom_filter(copy)
+    assert definition.name == "Rig_copy"
+    assert tuple(definition.node_types) == ("joint", "network", "transform")
+    assert definition.node_types == load_custom_filter(source).node_types
+    assert source.read_bytes() == before
+    copied = copy.read_bytes()
+    with pytest.raises(CustomFilterError, match="既に存在"):
+        duplicate_custom_filter(source, copy, "Other")
+    with pytest.raises(CustomFilterError, match="既に存在"):
+        duplicate_custom_filter(source, source, "Other")
+    assert copy.read_bytes() == copied
+    assert source.read_bytes() == before
+
+
+def test_duplicate_rejects_unreadable_source_without_creating_destination(
+    tmp_path: Path,
+) -> None:
+    """複製元が読込不能なときは不完全な複製ファイルを作成しない。"""
+    source = tmp_path / "invalid.json"
+    source.write_text("{}", encoding="utf-8")
+    destination = tmp_path / "copy.json"
+    with pytest.raises(CustomFilterError):
+        duplicate_custom_filter(source, destination, "Copy")
+    assert not destination.exists()
 
 
 def test_draft_preserves_other_types_and_json_order(tmp_path: Path) -> None:

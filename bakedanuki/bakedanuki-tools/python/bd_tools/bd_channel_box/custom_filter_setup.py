@@ -10,10 +10,16 @@ from functools import partial
 from pathlib import Path
 from typing import cast
 
-from bd_util.maya.node.inspection import ScalarAttributeInfo
+from bd_util.maya.node.inspection import (
+    ScalarAttributeDisplayFilter,
+    ScalarAttributeInfo,
+    inspect_scalar_attributes_by_type,
+    matches_scalar_attribute_display_filter,
+)
 from bd_util.ui import RadioButtonSweep, qt
 
 from .custom_filter_editor import CustomFilterDraft
+from . import config
 from .custom_filter_registry import CustomFilterRegistry
 from .custom_filters import CustomFilterError, normalize_filter_path
 
@@ -21,10 +27,27 @@ __all__ = ["CustomFilterSetupPanel"]
 
 
 @dataclass(frozen=True)
+class _SavedAttribute:
+    """型情報を取得できない保存済みpathを、型を捏造せず候補に残す。"""
+
+    path: str
+
+    @property
+    def name(self) -> str:
+        """検索に用いる末尾の属性名を返す。"""
+        return self.path.rsplit(".", 1)[-1]
+
+    @property
+    def nice_name(self) -> str:
+        """型定義では検証できない候補であることを示す。"""
+        return f"{self.path}（保存済み・型情報未確認）"
+
+
+@dataclass(frozen=True)
 class _CandidateRow:
     """候補属性の操作部品と選択色を戻すための元の配色。"""
 
-    attribute: ScalarAttributeInfo
+    attribute: ScalarAttributeInfo | _SavedAttribute
     widget: qt.QWidget
     label: qt.QLabel
     include: qt.QRadioButton
@@ -38,6 +61,7 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     error_occurred = qt.Signal(str)
     saved = qt.Signal(str)
+    create_requested = qt.Signal()
 
     def __init__(
         self, registry: CustomFilterRegistry, parent: qt.QWidget
@@ -48,7 +72,17 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.draft: CustomFilterDraft | None = None
         self._node_name: str | None = None
         self._node_type: str | None = None
-        self._attributes: tuple[ScalarAttributeInfo, ...] = ()
+        self._selected_node_name: str | None = None
+        self._selected_node_type: str | None = None
+        self._selected_attributes: tuple[ScalarAttributeInfo, ...] = ()
+        self._display_filter: ScalarAttributeDisplayFilter = "all"
+        self._type_info_node_type: str | None = None
+        self._type_attributes: tuple[ScalarAttributeInfo, ...] = ()
+        self._type_error: str | None = None
+        self._known_paths: dict[str, dict[str, None]] = {}
+        self._attributes: tuple[
+            ScalarAttributeInfo | _SavedAttribute, ...
+        ] = ()
         self._candidate_rows: list[_CandidateRow] = []
         self._candidate_rows_by_path: dict[str, _CandidateRow] = {}
         self._candidate_selection_targets: dict[qt.QObject, str] = {}
@@ -67,6 +101,8 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.target_combo = qt.QComboBox(self)
         self.target_combo.setObjectName("customFilterSetupTarget")
         self.target_combo.setAccessibleName("編集するカスタムフィルター")
+        self.new_button = qt.QPushButton("新規作成...", self)
+        self.new_button.setObjectName("createCustomFilterInSetupButton")
         self.name_label = qt.QLabel("表示名:", self)
         self.name_edit = qt.QLineEdit(self)
         self.name_edit.setObjectName("customFilterSetupName")
@@ -77,6 +113,11 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.node_label = qt.QLabel("ノードを選択してください", self)
         self.node_label.setObjectName("customFilterSetupNode")
         self.node_label.setWordWrap(True)
+        self.node_type_label = qt.QLabel("編集するノード型:", self)
+        self.node_type_combo = qt.QComboBox(self)
+        self.node_type_combo.setObjectName("customFilterSetupNodeType")
+        self.node_type_combo.setAccessibleName("編集するノード型")
+        self.node_type_combo.addItem("選択ノード", None)
         self.status_label = qt.QLabel(self)
         self.status_label.setObjectName("customFilterSetupStatus")
         self.status_label.setWordWrap(True)
@@ -90,9 +131,27 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.order_list.setSizePolicy(
             qt.QSizePolicy.Policy.Expanding, qt.QSizePolicy.Policy.Ignored
         )
-        self.up_button = qt.QPushButton("上へ", self)
-        self.down_button = qt.QPushButton("下へ", self)
-        self.remove_button = qt.QPushButton("除外", self)
+        self.up_button = qt.QToolButton(self)
+        self.down_button = qt.QToolButton(self)
+        self.remove_button = qt.QToolButton(self)
+        for button, label, icon_name, fallback in (
+            (self.up_button, "上へ", "nodeGrapherArrowUp.png", "arrowUp.png"),
+            (
+                self.down_button,
+                "下へ",
+                "nodeGrapherArrowDown.png",
+                "arrowDown.png",
+            ),
+            (self.remove_button, "除外", "RS_delete.png", "RS_delete.png"),
+        ):
+            icon = qt.QIcon(f":/{icon_name}")
+            if icon.pixmap(16, 16).isNull():
+                icon = qt.QIcon(f":/{fallback}")
+            button.setIcon(icon)
+            button.setIconSize(qt.QSize(16, 16))
+            button.setFixedSize(20, 20)
+            button.setToolTip(label)
+            button.setAccessibleName(label)
         self.define_type_button = qt.QPushButton("この型を0件で定義", self)
         self.clear_type_button = qt.QPushButton("この型の定義を削除", self)
         self.save_button = qt.QPushButton("JSONに保存", self)
@@ -137,20 +196,26 @@ class CustomFilterSetupPanel(qt.QWidget):
         grid.setColumnStretch(1, 1)
         grid.addWidget(self.target_label, 0, 0)
         grid.addWidget(self.target_combo, 0, 1)
+        grid.addWidget(self.new_button, 0, 2)
         grid.addWidget(self.name_label, 1, 0)
-        grid.addWidget(self.name_edit, 1, 1)
-        grid.addWidget(qt.QLabel("属性検索:", self), 2, 0)
-        grid.addWidget(self.search_edit, 2, 1)
-        order_buttons = qt.QHBoxLayout()
+        grid.addWidget(self.name_edit, 1, 1, 1, 2)
+        grid.addWidget(self.node_type_label, 2, 0)
+        grid.addWidget(self.node_type_combo, 2, 1, 1, 2)
+        order_buttons = qt.QVBoxLayout()
+        order_buttons.setSpacing(2)
         for button in (self.up_button, self.down_button, self.remove_button):
             order_buttons.addWidget(button)
+        order_buttons.addStretch(1)
+        order_content = qt.QHBoxLayout()
+        order_content.setSpacing(4)
+        order_content.addLayout(order_buttons)
+        order_content.addWidget(self.order_list, 1)
         order_pane = qt.QWidget(self)
         order_layout = qt.QVBoxLayout(order_pane)
         order_layout.setContentsMargins(0, 0, 0, 0)
         order_layout.setSpacing(4)
         order_layout.addWidget(self.order_label)
-        order_layout.addWidget(self.order_list, 1)
-        order_layout.addLayout(order_buttons)
+        order_layout.addLayout(order_content, 1)
         bulk_buttons = qt.QHBoxLayout()
         bulk_buttons.addWidget(self.include_all_button)
         bulk_buttons.addWidget(self.exclude_all_button)
@@ -160,6 +225,10 @@ class CustomFilterSetupPanel(qt.QWidget):
         candidate_layout.setSpacing(4)
         candidate_layout.addWidget(self.candidates_label)
         candidate_layout.addLayout(bulk_buttons)
+        search_layout = qt.QHBoxLayout()
+        search_layout.addWidget(qt.QLabel("属性検索:", self))
+        search_layout.addWidget(self.search_edit, 1)
+        candidate_layout.addLayout(search_layout)
         candidate_layout.addWidget(self.candidate_scroll, 1)
         self.list_splitter = qt.QSplitter(qt.Qt.Orientation.Vertical, self)
         self.list_splitter.setObjectName("customFilterSetupSplitter")
@@ -193,6 +262,10 @@ class CustomFilterSetupPanel(qt.QWidget):
         layout.addLayout(save_buttons)
 
         self.target_combo.currentIndexChanged.connect(self._change_target)
+        self.new_button.clicked.connect(self._request_create)
+        self.node_type_combo.currentIndexChanged.connect(
+            self._change_node_type
+        )
         self.name_edit.textChanged.connect(self._change_name)
         self.search_edit.textChanged.connect(self._change_search)
         self.order_list.itemSelectionChanged.connect(self._sync_buttons)
@@ -269,6 +342,8 @@ class CustomFilterSetupPanel(qt.QWidget):
         self._clear_candidate_selection()
         self.order_list.clearSelection()
         self.order_list.setCurrentRow(-1)
+        self._known_paths.clear()
+        self._type_info_node_type = None
         try:
             self.draft = CustomFilterDraft(path) if path is not None else None
         except CustomFilterError as error:
@@ -300,17 +375,113 @@ class CustomFilterSetupPanel(qt.QWidget):
         node_name: str | None,
         node_type: str | None,
         attributes: tuple[ScalarAttributeInfo, ...],
+        *,
+        display_filter: ScalarAttributeDisplayFilter = "all",
     ) -> None:
-        """選択末尾のノード型と現在の標準表示条件の候補を示す。"""
+        """選択ノードを保持し、型の固定中は選択変更による編集対象変更を防ぐ。"""
         self._finish_radio_sweep()
-        if node_name != self._node_name or node_type != self._node_type:
+        self._selected_node_name = node_name
+        self._selected_node_type = node_type
+        self._selected_attributes = attributes
+        previous_filter = self._display_filter
+        self._display_filter = display_filter
+        if (
+            self.node_type_combo.currentData() is not None
+            and display_filter == previous_filter
+        ):
+            return
+        self._refresh_view()
+
+    def _request_create(self) -> None:
+        """親画面へ新規作成と未保存変更の確認を依頼する。"""
+        self.create_requested.emit()
+
+    def _refresh_node_types(self) -> None:
+        """未保存・0件を含む編集中の型を列挙し、削除された型から戻る。"""
+        current = self.node_type_combo.currentData()
+        node_types = self.draft.node_types if self.draft is not None else {}
+        blocked = self.node_type_combo.blockSignals(True)
+        try:
+            self.node_type_combo.clear()
+            self.node_type_combo.addItem("選択ノード", None)
+            for node_type, paths in node_types.items():
+                self.node_type_combo.addItem(node_type, node_type)
+                known = self._known_paths.setdefault(node_type, {})
+                known.update((path.lstrip("."), None) for path in paths)
+            index = self.node_type_combo.findData(current)
+            self.node_type_combo.setCurrentIndex(max(0, index))
+        finally:
+            self.node_type_combo.blockSignals(blocked)
+
+    def _change_node_type(self, _index: int) -> None:
+        """同じ下書き内で型を切り替え、全型の未保存内容を保持する。"""
+        self._finish_radio_sweep()
+        self._type_info_node_type = None
+        self._refresh_view()
+
+    def _refresh_context(self) -> None:
+        """選択ノードか固定した型から、編集対象と現在の候補を決める。"""
+        fixed_type = self.node_type_combo.currentData()
+        node_type = (
+            fixed_type
+            if isinstance(fixed_type, str)
+            else self._selected_node_type
+        )
+        node_name = (
+            None if fixed_type is not None else self._selected_node_name
+        )
+        if node_type != self._node_type or node_name != self._node_name:
             self._clear_candidate_selection()
             self.order_list.clearSelection()
             self.order_list.setCurrentRow(-1)
-        self._node_name = node_name
         self._node_type = node_type
-        self._attributes = attributes
-        self._refresh_view()
+        self._node_name = node_name
+        if not isinstance(fixed_type, str):
+            self._attributes = self._selected_attributes
+            return
+
+        # 型の標準属性は型切替時に一度だけ読み、選択変更では再取得しない
+        if self._type_info_node_type != fixed_type:
+            self._type_info_node_type = fixed_type
+            self._type_error = None
+            try:
+                self._type_attributes = inspect_scalar_attributes_by_type(
+                    fixed_type
+                )
+            except (ValueError, RuntimeError) as error:
+                self._type_attributes = ()
+                self._type_error = str(error)
+        priorities = {
+            path: index
+            for index, path in enumerate(
+                dict.fromkeys(config.ATTRIBUTE_PRIORITY_PATHS)
+            )
+        }
+        attributes = sorted(
+            self._type_attributes,
+            key=lambda attribute: priorities.get(
+                attribute.path,
+                len(priorities)
+                + (not attribute.path.startswith("drawOverride.")),
+            ),
+        )
+        self._attributes = tuple(
+            attribute
+            for attribute in attributes
+            if matches_scalar_attribute_display_filter(
+                attribute, self._display_filter
+            )
+        )
+        # 所属を外した保存済みpathも残し、型情報がなくても再追加できるようにする
+        if self._display_filter == "all":
+            standard_paths = {
+                attribute.path.lstrip(".") for attribute in attributes
+            }
+            self._attributes += tuple(
+                _SavedAttribute(path)
+                for path in self._known_paths.get(fixed_type, {})
+                if path not in standard_paths
+            )
 
     def set_search_tokens(self, tokens: tuple[str, ...]) -> None:
         """現在の属性候補へ検索語を適用し、所属は変更しない。"""
@@ -331,7 +502,9 @@ class CustomFilterSetupPanel(qt.QWidget):
             if path in self._selected_candidate_paths
         )
 
-    def _matches_search(self, attribute: ScalarAttributeInfo) -> bool:
+    def _matches_search(
+        self, attribute: ScalarAttributeInfo | _SavedAttribute
+    ) -> bool:
         """属性候補が現在の検索語すべてに一致するか返す。"""
         if not self._search_tokens:
             return True
@@ -548,6 +721,8 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def _refresh_view(self) -> None:
         """定義、型、候補属性に合わせて順序と2択を描き直す。"""
+        self._refresh_node_types()
+        self._refresh_context()
         draft = self.draft
         node_type = self._node_type
         blocked = self.name_edit.blockSignals(True)
@@ -555,11 +730,21 @@ class CustomFilterSetupPanel(qt.QWidget):
             self.name_edit.setText(draft.name if draft is not None else "")
         finally:
             self.name_edit.blockSignals(blocked)
-        self.node_label.setText(
-            f"基準: {self._node_name}（{node_type} 型）"
-            if node_type is not None
-            else "Maya ノードを選択してください"
-        )
+        if self.node_type_combo.currentData() is not None:
+            self.node_label.setText(
+                f"基準: {node_type} 型（標準属性と保存済み属性）"
+            )
+            self.node_label.setToolTip(
+                "表示フラグは型の既定値です。型情報未確認の保存済み属性は"
+                "「全て」で表示します。新しい追加属性は「選択ノード」から取得します。"
+            )
+        else:
+            self.node_label.setText(
+                f"基準: {self._node_name}（{node_type} 型）"
+                if node_type is not None
+                else "Maya ノードを選択してください"
+            )
+            self.node_label.setToolTip("")
         self._refresh_status()
         self._refresh_order()
         self._refresh_candidates()
@@ -584,6 +769,13 @@ class CustomFilterSetupPanel(qt.QWidget):
             )
         if draft is not None and draft.is_dirty:
             message += "（未保存）"
+        if self.node_type_combo.currentData() is not None and self._type_error:
+            message += "\n型情報を取得できないため、保存済み属性を編集します。"
+        self.status_label.setToolTip(
+            self._type_error or ""
+            if self.node_type_combo.currentData() is not None
+            else ""
+        )
         self.status_label.setText(message)
 
     def _refresh_order(self) -> None:
@@ -592,7 +784,13 @@ class CustomFilterSetupPanel(qt.QWidget):
         node_type = self._node_type
         previous = set(self._selected_order_paths())
         current = self._selected_order_path()
-        available = {attribute.path for attribute in self._attributes}
+        fixed_type = self.node_type_combo.currentData() is not None
+        available = {
+            attribute.path.lstrip(".")
+            for attribute in (
+                self._type_attributes if fixed_type else self._attributes
+            )
+        }
         blocked = self.order_list.blockSignals(True)
         try:
             self.order_list.clear()
@@ -601,7 +799,11 @@ class CustomFilterSetupPanel(qt.QWidget):
                     label = (
                         path
                         if path.lstrip(".") in available
-                        else f"{path}（現在のノードにありません）"
+                        else (
+                            f"{path}（保存済み・型情報未確認）"
+                            if fixed_type
+                            else f"{path}（現在の候補にありません）"
+                        )
                     )
                     item = qt.QListWidgetItem(label, self.order_list)
                     item.setData(qt.Qt.ItemDataRole.UserRole, path)
@@ -676,7 +878,7 @@ class CustomFilterSetupPanel(qt.QWidget):
             exclude = qt.QRadioButton("含めない", row)
             include.setObjectName("customFilterInclude")
             exclude.setObjectName("customFilterExclude")
-            if attribute.path in included_paths:
+            if attribute.path.lstrip(".") in included_paths:
                 include.setChecked(True)
             else:
                 exclude.setChecked(True)
@@ -739,7 +941,7 @@ class CustomFilterSetupPanel(qt.QWidget):
         if draft is None or node_type is None:
             return
         current = {item.lstrip(".") for item in draft.paths(node_type)}
-        if (path in current) != included:
+        if (path.lstrip(".") in current) != included:
             self._set_paths_included((path,), included, defer_view=True)
 
     def _apply_radio_included(
@@ -756,7 +958,9 @@ class CustomFilterSetupPanel(qt.QWidget):
             else (path,)
         )
         current = {item.lstrip(".") for item in draft.paths(node_type)}
-        if not any((item in current) != included for item in paths):
+        if not any(
+            (item.lstrip(".") in current) != included for item in paths
+        ):
             return
         self._set_paths_included(paths, included)
 
@@ -773,6 +977,7 @@ class CustomFilterSetupPanel(qt.QWidget):
         if draft is None or node_type is None or not paths:
             return
         draft.set_many_included(node_type, paths, included)
+        self._refresh_node_types()
         self.candidate_container.setUpdatesEnabled(False)
         try:
             for path in paths:
@@ -852,6 +1057,7 @@ class CustomFilterSetupPanel(qt.QWidget):
             draft is not None and node_type is not None and bool(selected_rows)
         )
         self.name_edit.setEnabled(draft is not None)
+        self.node_type_combo.setEnabled(draft is not None)
         self.up_button.setEnabled(has_order and selected_rows[0] > 0)
         self.down_button.setEnabled(
             has_order and selected_rows[-1] < self.order_list.count() - 1

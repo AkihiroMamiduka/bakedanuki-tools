@@ -54,9 +54,9 @@ from .controller import (
     RotationDestination,
 )
 from .custom_filter_registry import CustomFilterRegistry
-from .custom_filter_editor import create_custom_filter
+from .custom_filter_dialogs import create_registered_filter
 from .custom_filter_setup import CustomFilterSetupPanel
-from .custom_filters import CustomFilterError, CustomFilterSelection
+from .custom_filters import CustomFilterSelection
 from .table import ChannelTableView, TableRow
 
 __all__ = [
@@ -1267,14 +1267,19 @@ class CustomFilterManagerDialog(qt.QDialog):
     created = qt.Signal(str)
 
     def __init__(
-        self, registry: CustomFilterRegistry, parent: qt.QWidget
+        self,
+        registry: CustomFilterRegistry,
+        parent: qt.QWidget,
+        *,
+        confirm_create: Callable[[], bool] | None = None,
     ) -> None:
         """登録一覧と操作ボタンを構成し、registryの変更へ追従する。"""
         super().__init__(parent)
         self.registry = registry
+        self._confirm_create = confirm_create
         self.setObjectName("bdChannelBoxCustomFilterManager")
         self.setWindowTitle("カスタムフィルター管理")
-        self.resize(600, 390)
+        self.resize(700, 390)
         self.list_widget = qt.QListWidget(self)
         self.list_widget.setObjectName("customFilterRegistrationList")
         self.list_widget.setAccessibleName("カスタムフィルター登録一覧")
@@ -1288,6 +1293,8 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.new_button = qt.QPushButton("新規作成...", self)
         self.new_button.setObjectName("createCustomFilterButton")
         self.add_button = qt.QPushButton("追加...", self)
+        self.duplicate_button = qt.QPushButton("複製...", self)
+        self.duplicate_button.setObjectName("duplicateCustomFilterButton")
         self.remove_button = qt.QPushButton("削除", self)
         self.move_up_button = qt.QPushButton("上へ", self)
         self.move_down_button = qt.QPushButton("下へ", self)
@@ -1297,6 +1304,7 @@ class CustomFilterManagerDialog(qt.QDialog):
         for button in (
             self.new_button,
             self.add_button,
+            self.duplicate_button,
             self.remove_button,
             self.move_up_button,
             self.move_down_button,
@@ -1316,6 +1324,7 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.list_widget.currentRowChanged.connect(self._sync_selection)
         self.new_button.clicked.connect(self._create_file)
         self.add_button.clicked.connect(self._add_files)
+        self.duplicate_button.clicked.connect(self._duplicate_selected)
         self.remove_button.clicked.connect(self._remove_selected)
         self.move_up_button.clicked.connect(self._move_up)
         self.move_down_button.clicked.connect(self._move_down)
@@ -1388,6 +1397,9 @@ class CustomFilterManagerDialog(qt.QDialog):
         )
         has_selection = entry is not None
         self.remove_button.setEnabled(has_selection)
+        self.duplicate_button.setEnabled(
+            entry is not None and entry.definition is not None
+        )
         self.move_up_button.setEnabled(has_selection and index > 0)
         self.move_down_button.setEnabled(
             has_selection and index < self.list_widget.count() - 1
@@ -1433,50 +1445,26 @@ class CustomFilterManagerDialog(qt.QDialog):
 
     def _create_file(self) -> None:
         """名前と保存先を選び、空の定義を作成して末尾へ登録する。"""
-        dialog = qt.QDialog(self)
-        dialog.setWindowTitle("カスタムフィルターを新規作成")
-        name_edit = qt.QLineEdit(dialog)
-        name_edit.setObjectName("newCustomFilterName")
-        buttons = qt.QDialogButtonBox(
-            qt.QDialogButtonBox.StandardButton.Ok
-            | qt.QDialogButtonBox.StandardButton.Cancel,
-            dialog,
+        if self._confirm_create is not None and not self._confirm_create():
+            return
+        self._register_created(create_registered_filter(self, self.registry))
+
+    def _duplicate_selected(self) -> None:
+        """未保存変更を先に確認し、選択JSONの全型を別名で複製する。"""
+        path = self._selected_path()
+        if path is None:
+            return
+        if self._confirm_create is not None and not self._confirm_create():
+            return
+        self._register_created(
+            create_registered_filter(self, self.registry, source=path)
         )
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout = qt.QVBoxLayout(dialog)
-        layout.addWidget(qt.QLabel("フィルター名:", dialog))
-        layout.addWidget(name_edit)
-        layout.addWidget(buttons)
-        accepted = dialog.exec() == qt.QDialog.DialogCode.Accepted
-        name = name_edit.text() if accepted else ""
-        dialog.deleteLater()
-        if not accepted:
-            return
-        if not name.strip():
-            qt.QMessageBox.warning(
-                self, "作成できません", "名前を入力してください。"
-            )
-            return
-        path, _selected_filter = qt.QFileDialog.getSaveFileName(
-            self,
-            "カスタムフィルター定義の保存先",
-            f"{name.strip()}.json",
-            "JSON ファイル (*.json)",
-        )
-        if not path:
-            return
-        if not path.lower().endswith(".json"):
-            path += ".json"
-        try:
-            created = create_custom_filter(path, name)
-        except CustomFilterError as error:
-            qt.QMessageBox.warning(self, "作成できません", str(error))
-            return
-        added = self.registry.add_paths((created,))
-        if added:
-            self._select_path(added[-1])
-            self.created.emit(added[-1])
+
+    def _register_created(self, path: str | None) -> None:
+        """新規・複製ファイルを選択し、設定モードでの編集を要求する。"""
+        if path is not None:
+            self._select_path(path)
+            self.created.emit(path)
 
     def _remove_selected(self) -> None:
         """選択した登録だけを削除する。"""
@@ -1746,6 +1734,7 @@ class ChannelBoxWidget(qt.QWidget):
         self.setup_panel = CustomFilterSetupPanel(
             self.custom_filter_registry, self
         )
+        self.setup_panel.create_requested.connect(self._create_filter_in_setup)
         self.setup_panel.hide()
         self.empty_label = qt.QLabel("", self)
         self.empty_label.setWordWrap(True)
@@ -1889,13 +1878,23 @@ class ChannelBoxWidget(qt.QWidget):
         dialog = self.custom_filter_dialog
         if dialog is None or not qt.isValid(dialog):
             dialog = CustomFilterManagerDialog(
-                self.custom_filter_registry, self
+                self.custom_filter_registry,
+                self,
+                confirm_create=self.setup_panel.confirm_leave,
             )
             dialog.created.connect(self._edit_created_filter)
             self.custom_filter_dialog = dialog
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
+
+    def _create_filter_in_setup(self) -> None:
+        """設定画面内から、管理画面と同じ手順で新規JSONを作成する。"""
+        if not self.setup_panel.confirm_leave():
+            return
+        path = create_registered_filter(self, self.custom_filter_registry)
+        if path is not None:
+            self._edit_created_filter(path)
 
     def _edit_created_filter(self, path: str) -> None:
         """新規定義を作成したら設定モードで編集対象にする。"""
@@ -3393,7 +3392,12 @@ class ChannelBoxWidget(qt.QWidget):
                 else None
             )
             self.setup_panel.set_node(
-                node_name, node_type, self.controller.setup_attributes
+                node_name,
+                node_type,
+                self.controller.setup_attributes,
+                display_filter=cast(
+                    ChannelAttributeFilter, self.controller.attribute_filter
+                ),
             )
             self.filter_fallback_label.hide()
             self.empty_label.hide()

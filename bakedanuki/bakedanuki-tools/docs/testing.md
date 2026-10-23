@@ -138,8 +138,15 @@ Attribute Filterへの反映を確認します。非表示属性をJSONの順に
 定義にないjoint型では`keyable + channelbox`へ戻る案内と表示行を確認します。
 同じ工程で設定モードのJSON保存、分割バー、候補の一括操作とドラッグ複数選択、
 表示順一覧の複数選択・上下移動・除外も実画面で確認します。
+ノード未選択での型直接選択と属性順の編集、型固定中の選択変更、20×20アイコンと
+属性検索の配置、複製ボタンを含む管理画面も確認して撮影します。指定された上下アイコンの
+取得可否を記録し、代替リソースを含めて描画できることを確認します。
+表示順一覧の範囲選択はクリックとShift＋下矢印のキー入力を使い、OS側の修飾キー状態に
+依存する合成マウス入力を避けます。
 設定モードは`tests/maya/test_bd_channel_box_custom_filters.py`で標準5条件、非表示属性の
 JSON登録、保存後のCustom表示、sceneとUndo履歴の不変を確認します。
+設定画面からの新規作成、`_copy`初期名での全型複製、未保存確認キャンセル時の未作成、
+未ロード型を含むノードなしの編集、保存済み候補の除外・再追加も検証します。
 表示順と候補の境界を動かした際の両領域の表示、絞り込み候補の一括含める／含めない、
 スクロール外の候補、候補外の既存pathと別ノード型の保持、0件時の空配列も確認します。
 一括操作では保存前に共有JSON・scene・Undoが変わらず、保存後の再読込で反映されることを
@@ -459,6 +466,18 @@ Maya 2025本体ではカスタムフィルターの同列なぞり、1000ノー�
 資料は`%TEMP%/bd-channel-box-maya2025-ihougs_g`です。機能結果はsuccess=true／error=nullですが、
 専用Mayaの終了が180秒以内に完了せず、runnerが専用processを停止して終了code 1を返しました。
 正常終了までは確認できておらず、終了待ちの原因は未特定です。
+
+2026-10-23のカスタムフィルター拡張では、toolsの`check.cmd`（unit 40件）、
+3 versionのPyright、Maya 2025／2026／2027の全runtime test各602件が成功しました。
+utilは公式`verify.cmd`と、新しい型別調査APIの実装を含む3 versionのPyrightが成功しました。
+Maya本体でも3 versionで型の直接編集、検索配置、20×20ボタンの操作を確認し、
+`nodeGrapherArrowUp.png`・`nodeGrapherArrowDown.png`・`RS_delete.png`をすべて取得できました。
+2027の初回検証は合成Shiftクリックの範囲選択で停止したため、runtime testと同じ
+クリック＋Shift下矢印の入力で再確認し、操作結果は3 versionともsuccess=true／error=nullです。
+資料は`%TEMP%/bd-channel-box-maya2025-daki4y1b`、
+`%TEMP%/bd-channel-box-maya2026-q1n62gye`、`%TEMP%/bd-channel-box-maya2027-drxd4ik7`です。
+Maya本体の終了待ちは2025／2026で300秒、2027の再確認で90秒の制限時間を超え、
+runnerが専用processを停止して終了code 1を返しました。表示・操作の成功と正常終了は区別します。
 
 1000jointの`drawStyle`は実キー入力一回で全対象を編集し、Undo／Redoで復元することを
 確認します。共有enum定義の取得回数が対象数に比例する上限内に収まり、操作時の一時Bindingが
