@@ -27,14 +27,6 @@ from bd_tools.bd_channel_box.custom_filters import (
 from bd_tools.bd_channel_box.widget import ChannelBoxWidget
 
 
-def _set_splitter_sizes(splitter: qt.QSplitter, sizes: list[int]) -> None:
-    """同梱stubの不完全な型をQt境界で閉じ、分割領域のサイズを指定する。"""
-    set_sizes = cast(
-        Callable[[list[int]], None], getattr(splitter, "setSizes")
-    )
-    set_sizes(sizes)
-
-
 def _events() -> None:
     """遅延した選択・表示更新とWidget破棄を処理する。"""
     for _ in range(3):
@@ -64,6 +56,8 @@ def _paths(editor: ChannelBoxWidget) -> tuple[str, ...]:
 
 def _candidate_label(panel: CustomFilterSetupPanel, path: str) -> qt.QLabel:
     """正式pathに対応する設定候補の属性名欄を取得する。"""
+    panel.tool_box.setCurrentWidget(panel.candidate_page)
+    _events()
     find_labels = cast(
         Callable[[type[qt.QLabel]], list[qt.QLabel]],
         getattr(panel, "findChildren"),
@@ -77,6 +71,8 @@ def _candidate_radio(
     panel: CustomFilterSetupPanel, path: str, included: bool
 ) -> qt.QRadioButton:
     """正式pathと所属方向に対応する候補のラジオを取得する。"""
+    panel.tool_box.setCurrentWidget(panel.candidate_page)
+    _events()
     find_radios = cast(
         Callable[[type[qt.QRadioButton]], list[qt.QRadioButton]],
         getattr(panel, "findChildren"),
@@ -144,6 +140,8 @@ def _mouse_order_item(
     modifiers: qt.Qt.KeyboardModifier = qt.Qt.KeyboardModifier.NoModifier,
 ) -> None:
     """表示順一覧の項目を修飾キー付きでクリックする。"""
+    panel.tool_box.setCurrentWidget(panel.order_page)
+    _events()
     order = panel.order_list
     item = order.item(index)
     order.scrollToItem(item)
@@ -225,7 +223,7 @@ def _setup_radio_sweep(
     panel.set_target(str(path))
     editor.filter_combo.setCurrentIndex(editor.filter_combo.findData("hidden"))
     panel.search_edit.setText("sweep")
-    _set_splitter_sizes(panel.list_splitter, [80, 500])
+    panel.tool_box.setCurrentWidget(panel.candidate_page)
     _events()
     cmds.flushUndo()
     return panel, node, path
@@ -680,10 +678,10 @@ def test_setup_order_multi_selection_moves_and_removes_as_one_action(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
-def test_setup_splitter_and_selected_candidates_keep_other_definitions(
+def test_setup_toolbox_and_selected_candidates_keep_other_definitions(
     editor: ChannelBoxWidget, tmp_path: Path
 ) -> None:
-    """分割幅と候補の範囲選択をUIから確認し、候補外の定義を守る。"""
+    """作業ページを切り替えて選択とスクロールを保ち、候補外の定義を守る。"""
     node = cmds.createNode("transform", name="bulkSetupBase")
     batch_paths = tuple(f"batch{index:02d}" for index in range(30))
     for path in (*batch_paths, "hiddenOther"):
@@ -718,16 +716,12 @@ def test_setup_splitter_and_selected_candidates_keep_other_definitions(
     panel.search_edit.setText("batch")
     _events()
 
-    assert panel.list_splitter.orientation() == qt.Qt.Orientation.Vertical
-    assert panel.list_splitter.count() == 2
-    _set_splitter_sizes(panel.list_splitter, [300, 80])
-    _events()
-    upper_large = panel.list_splitter.sizes()
-    _set_splitter_sizes(panel.list_splitter, [80, 300])
-    _events()
-    lower_large = panel.list_splitter.sizes()
-    assert upper_large[0] > lower_large[0]
-    assert upper_large[1] < lower_large[1]
+    assert panel.tool_box.count() == 2
+    assert panel.tool_box.itemText(0) == "フィルターの表示順"
+    assert panel.tool_box.itemText(1) == "属性をフィルターに含める"
+    assert panel.tool_box.currentWidget() is panel.candidate_page
+    assert panel.candidate_scroll.isVisible()
+    assert not panel.order_list.isVisible()
     assert panel.candidate_scroll.verticalScrollBar().maximum() > 0
 
     first = _candidate_label(panel, batch_paths[0])
@@ -752,6 +746,36 @@ def test_setup_splitter_and_selected_candidates_keep_other_definitions(
     assert path.read_bytes() == original_json
     assert cmds.getAttr(f"{node}.batch00") == 0.0
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+    # 切替だけでは下書き・検索・候補選択・各一覧の位置を描き直さない
+    draft = panel.draft
+    candidate_position = panel.candidate_scroll.verticalScrollBar().value()
+    panel.tool_box.setCurrentWidget(panel.order_page)
+    _events()
+    assert panel.order_list.isVisible()
+    assert not panel.candidate_scroll.isVisible()
+    assert panel.target_combo.isVisible() and panel.node_type_combo.isVisible()
+    panel.order_list.setCurrentRow(2)
+    panel.order_list.verticalScrollBar().setValue(
+        panel.order_list.verticalScrollBar().maximum()
+    )
+    order_position = panel.order_list.verticalScrollBar().value()
+    selected_order = _selected_order_paths(panel)
+    panel.tool_box.setCurrentWidget(panel.candidate_page)
+    _events()
+    assert panel.draft is draft
+    assert panel.search_edit.text() == "batch"
+    assert panel.selected_candidate_paths() == batch_paths
+    assert (
+        panel.candidate_scroll.verticalScrollBar().value()
+        == candidate_position
+    )
+    panel.tool_box.setCurrentWidget(panel.order_page)
+    _events()
+    assert _selected_order_paths(panel) == selected_order
+    assert panel.order_list.verticalScrollBar().value() == order_position
+    panel.tool_box.setCurrentWidget(panel.candidate_page)
+    _events()
 
     _candidate_radio(panel, batch_paths[-1], False).click()
     _events()
@@ -1009,7 +1033,7 @@ def test_setup_radio_sweep_preserves_selection_and_batches_display(
 
 
 @pytest.mark.parametrize(
-    "interruption", ("search", "reference", "json", "hide", "save")
+    "interruption", ("search", "reference", "json", "hide", "save", "page")
 )
 def test_setup_radio_sweep_finishes_before_context_changes(
     editor: ChannelBoxWidget, tmp_path: Path, interruption: str
@@ -1037,6 +1061,8 @@ def test_setup_radio_sweep_finishes_before_context_changes(
         panel.discard()
     elif interruption == "hide":
         panel.hide()
+    elif interruption == "page":
+        panel.tool_box.setCurrentWidget(panel.order_page)
     else:
         assert panel.save()
     assert not panel.radio_sweep.is_active
@@ -1097,7 +1123,7 @@ def test_setup_name_range_drag_and_offscreen_selection(
     panel.set_target(str(path))
     editor.filter_combo.setCurrentIndex(editor.filter_combo.findData("hidden"))
     panel.search_edit.setText("range")
-    _set_splitter_sizes(panel.list_splitter, [80, 500])
+    panel.tool_box.setCurrentWidget(panel.candidate_page)
     _events()
     _mouse_candidate(_candidate_label(panel, "range01"))
     _mouse_candidate(
@@ -1182,41 +1208,20 @@ def test_manager_creates_and_selects_new_filter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """管理画面の新規作成が登録末尾と設定モードの対象に反映する。"""
-    path = tmp_path / "new-rig.json"
+    path = tmp_path / "New Rig.json"
 
     def choose_path(*_args: object) -> tuple[str, str]:
         """保存ダイアログから検証用の新規pathを返す。"""
         assert Path(cast(str, _args[2])) == (
-            tmp_path / "bd_channel_box" / "custom_filter" / "New Rig.json"
+            tmp_path / "bd_channel_box" / "custom_filter"
         )
-        assert Path(cast(str, _args[2])).parent.is_dir()
+        assert Path(cast(str, _args[2])).is_dir()
         return str(path), "JSON ファイル (*.json)"
-
-    def accept_name() -> None:
-        """名前入力ダイアログへ値を入力して確定する。"""
-        active_modal = cast(
-            Callable[[], qt.QWidget | None],
-            getattr(qt.QApplication, "activeModalWidget"),
-        )()
-        assert isinstance(active_modal, qt.QDialog)
-        layout = active_modal.layout()
-        assert layout is not None
-        item = layout.itemAt(1)
-        assert item is not None
-        field = item.widget()
-        assert isinstance(field, qt.QLineEdit)
-        field.setText("New Rig")
-        active_modal.accept()
 
     monkeypatch.setattr(qt.QFileDialog, "getSaveFileName", choose_path)
     editor.manage_custom_filters_action.trigger()
     manager = editor.custom_filter_dialog
     assert manager is not None
-    single_shot = cast(
-        Callable[[int, Callable[[], None]], None],
-        getattr(qt.QTimer, "singleShot"),
-    )
-    single_shot(0, accept_name)
     manager.new_button.click()
     _events()
 
@@ -1272,17 +1277,16 @@ def test_setup_creates_filter_without_opening_manager(
 ) -> None:
     """未登録・ノード未選択でも設定画面から新規作成して編集を始める。"""
     editor.controller.set_mode("custom_filter_setup")
-    destination = tmp_path / "from-setup.json"
+    destination = tmp_path / "From Setup.json"
 
     def choose_path(*_args: object) -> tuple[str, str]:
         """設定画面で新規JSONの保存先を選択する。"""
         assert Path(cast(str, _args[2])) == (
-            tmp_path / "bd_channel_box" / "custom_filter" / "From Setup.json"
+            tmp_path / "bd_channel_box" / "custom_filter"
         )
         return str(destination), ""
 
     monkeypatch.setattr(qt.QFileDialog, "getSaveFileName", choose_path)
-    _queue_filter_name("", "From Setup")
     editor.setup_panel.new_button.click()
     _events()
 
@@ -1299,7 +1303,7 @@ def test_setup_rename_is_draft_only_until_save_and_can_be_discarded(
     editor: ChannelBoxWidget, tmp_path: Path
 ) -> None:
     """名前だけの編集を選択欄へ表示し、保存・破棄と他型の保持を確認する。"""
-    source = tmp_path / "rig.json"
+    source = tmp_path / "Rig.json"
     source.write_text(
         json.dumps(
             {
@@ -1337,10 +1341,12 @@ def test_setup_rename_is_draft_only_until_save_and_can_be_discarded(
     assert panel.target_combo.currentText() == "Saved"
     assert not panel.save_button.isEnabled()
     assert not panel.discard_button.isEnabled()
-    saved = json.loads(source.read_text(encoding="utf-8"))
+    destination = tmp_path / "Saved.json"
+    assert not source.exists()
+    saved = json.loads(destination.read_text(encoding="utf-8"))
     assert saved["name"] == "Saved"
     assert saved["node_types"] == {"transform": ["visibility"], "joint": []}
-    assert tuple(tmp_path.glob("*.json")) == (source,)
+    assert tuple(tmp_path.glob("*.json")) == (destination,)
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
@@ -1352,7 +1358,7 @@ def test_setup_rename_cancel_invalid_and_unchanged_keep_clean_draft(
     editor: ChannelBoxWidget, tmp_path: Path, replacement: str, accepted: bool
 ) -> None:
     """取消・不正入力・同名確定はJSONと未保存状態を変更しない。"""
-    source = tmp_path / "rig.json"
+    source = tmp_path / "Rig.json"
     create_custom_filter(source, "Rig")
     editor.custom_filter_registry.add_paths((source,))
     editor.controller.set_mode("custom_filter_setup")
@@ -1372,7 +1378,7 @@ def test_setup_rename_cancel_invalid_and_unchanged_keep_clean_draft(
     assert not panel.save_button.isEnabled()
     assert source.read_bytes() == before
     if accepted and not replacement:
-        assert "名前は空でない" in editor.message_label.text()
+        assert editor.message_label.text()
 
 
 def test_manager_duplicates_saved_changes_and_all_types_with_copy_suffix(
@@ -1397,7 +1403,7 @@ def test_manager_duplicates_saved_changes_and_all_types_with_copy_suffix(
         "Rig", "Updated Rig", field_name="renameCustomFilterName"
     )
     panel.rename_button.click()
-    destination = tmp_path / "copy.json"
+    destination = tmp_path / "Updated Rig_copy.json"
 
     def save_changes(*_args: object) -> qt.QMessageBox.StandardButton:
         """複製元の未保存変更を先に確定する。"""
@@ -1413,11 +1419,13 @@ def test_manager_duplicates_saved_changes_and_all_types_with_copy_suffix(
     editor.manage_custom_filters_action.trigger()
     manager = editor.custom_filter_dialog
     assert manager is not None and manager.duplicate_button.isEnabled()
-    _queue_filter_name("Updated Rig_copy")
     manager.duplicate_button.click()
     _events()
 
-    original = json.loads(source.read_text(encoding="utf-8"))
+    assert not source.exists()
+    original = json.loads(
+        (tmp_path / "Updated Rig.json").read_text(encoding="utf-8")
+    )
     copied = json.loads(destination.read_text(encoding="utf-8"))
     assert original["name"] == "Updated Rig"
     assert copied["name"] == "Updated Rig_copy"
@@ -1456,7 +1464,13 @@ def test_creation_cancelled_before_dialogs_keeps_draft_and_registration(
         raise AssertionError("作成ダイアログが開きました")
 
     monkeypatch.setattr(qt.QMessageBox, "warning", cancel)
+
+    def reject_file_dialog(*_args: object) -> tuple[str, str]:
+        """未保存確認を中止した後に保存先選択が開いたら失敗させる。"""
+        raise AssertionError("保存先ダイアログが開きました")
+
     monkeypatch.setattr(qt.QDialog, "exec", reject_dialog)
+    monkeypatch.setattr(qt.QFileDialog, "getSaveFileName", reject_file_dialog)
     if operation == "setup":
         panel.new_button.click()
     else:

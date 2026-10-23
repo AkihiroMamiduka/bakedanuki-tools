@@ -17,7 +17,11 @@ from bd_tools.bd_channel_box.controller import (
     ChannelAttributeFilter,
     ChannelBoxMode,
 )
-from bd_tools.bd_channel_box.custom_filters import CustomFilterSelection
+from bd_tools.bd_channel_box.custom_filters import (
+    CustomFilterError,
+    CustomFilterSelection,
+    normalize_filter_path,
+)
 from bd_tools.bd_channel_box.widget import ChannelBoxWidget
 
 
@@ -186,3 +190,129 @@ def test_invalid_saved_identifier_uses_default(
     settings.sync()
     second = editor_factory()
     assert second.controller.values_attribute_filter == "visible"
+
+
+@pytest.mark.parametrize("mode", ("values", "states", "custom_filter_setup"))
+def test_file_rename_migrates_both_mode_selections_and_saved_path(
+    editor_factory: Callable[[], ChannelBoxWidget],
+    tmp_path: Path,
+    mode: ChannelBoxMode,
+) -> None:
+    """別モードを表示中でも両方の保持選択と次回復元先を改名先へ移す。"""
+    first = editor_factory()
+    source = tmp_path / "before.json"
+    destination = tmp_path / "after.json"
+    _write_filter(source, "Before")
+    (old_path,) = first.custom_filter_registry.add_paths((source,))
+    selected = first.filter_combo.itemData(5)
+    assert isinstance(selected, CustomFilterSelection)
+    first.controller.set_attribute_filter(selected)
+    first.controller.set_mode("states")
+    first.controller.set_attribute_filter(selected)
+    first.controller.set_mode(mode)
+
+    # 保存後の実ファイル改名を登録へ通知する
+    source.rename(destination)
+    _write_filter(destination, "After")
+    new_path = normalize_filter_path(destination)
+    assert first.custom_filter_registry.replace_path(old_path, new_path)
+    assert len(first.custom_filter_registry.entries) == 1
+    assert first.custom_filter_registry.entries[0].path == new_path
+    assert not source.exists()
+
+    target_modes: tuple[ChannelBoxMode, ...] = ("values", "states")
+    for target_mode in target_modes:
+        first.controller.set_mode(target_mode)
+        actual = first.controller.attribute_filter
+        assert isinstance(actual, CustomFilterSelection)
+        assert actual.path == new_path
+        assert actual.definition.name == "After"
+        assert first.filter_combo.currentText() == "Custom: After"
+        assert first.filter_combo.count() == 6
+
+    restored = editor_factory()
+    actual = restored.controller.values_attribute_filter
+    assert isinstance(actual, CustomFilterSelection)
+    assert actual.path == new_path
+    assert restored.filter_combo.currentText() == "Custom: After"
+
+
+def test_rename_preserves_unselected_registration_order_and_disabled_state(
+    editor_factory: Callable[[], ChannelBoxWidget], tmp_path: Path
+) -> None:
+    """非選択のOFF登録だけを同じ位置で改名し、選択中の別定義を維持する。"""
+    first = editor_factory()
+    sources = tuple(tmp_path / name for name in ("a.json", "b.json", "c.json"))
+    for source in sources:
+        _write_filter(source, source.stem)
+    first_path, old_path, last_path = first.custom_filter_registry.add_paths(
+        sources
+    )
+    first.filter_combo.setCurrentIndex(5)
+    first.custom_filter_registry.set_enabled(old_path, False)
+    events: list[str] = []
+
+    def on_path_changed(old: str, new: str) -> None:
+        """一般の一覧更新より先に改名が通知されたことを記録する。"""
+        assert old == old_path
+        assert new == new_path
+        events.append("path")
+
+    def on_changed() -> None:
+        """一般の一覧更新通知を記録する。"""
+        events.append("changed")
+
+    first.custom_filter_registry.path_changed.connect(on_path_changed)
+    first.custom_filter_registry.changed.connect(on_changed)
+    destination = tmp_path / "renamed.json"
+    sources[1].rename(destination)
+    new_path = normalize_filter_path(destination)
+    assert first.custom_filter_registry.replace_path(old_path, new_path)
+    assert events == ["path", "changed"]
+    entries = first.custom_filter_registry.entries
+    assert tuple(entry.path for entry in entries) == (
+        first_path,
+        new_path,
+        last_path,
+    )
+    assert tuple(entry.enabled for entry in entries) == (True, False, True)
+    selected = first.controller.values_attribute_filter
+    assert isinstance(selected, CustomFilterSelection)
+    assert selected.path == first_path
+
+    restored = editor_factory()
+    assert tuple(
+        entry.path for entry in restored.custom_filter_registry.entries
+    ) == (first_path, new_path, last_path)
+    assert not restored.custom_filter_registry.entries[1].enabled
+    selected = restored.controller.values_attribute_filter
+    assert isinstance(selected, CustomFilterSelection)
+    assert selected.path == first_path
+
+
+@pytest.mark.parametrize("failure", ("registered", "missing", "invalid"))
+def test_rename_rejects_unreadable_or_registered_destination(
+    editor_factory: Callable[[], ChannelBoxWidget],
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    """登録宛先の衝突や読込失敗を明示し、元の登録と保持選択を変更しない。"""
+    widget = editor_factory()
+    source = tmp_path / "original.json"
+    destination = tmp_path / "destination.json"
+    _write_filter(source, "Original")
+    (old_path,) = widget.custom_filter_registry.add_paths((source,))
+    widget.filter_combo.setCurrentIndex(5)
+    if failure == "registered":
+        _write_filter(destination, "Existing")
+        widget.custom_filter_registry.add_paths((destination,))
+    elif failure == "invalid":
+        destination.write_text("{}", encoding="utf-8")
+    previous = widget.custom_filter_registry.entries
+    with pytest.raises(CustomFilterError):
+        widget.custom_filter_registry.replace_path(old_path, str(destination))
+    assert widget.custom_filter_registry.entries == previous
+    selected = widget.controller.values_attribute_filter
+    assert isinstance(selected, CustomFilterSelection)
+    assert selected.path == old_path
+    assert source.exists()

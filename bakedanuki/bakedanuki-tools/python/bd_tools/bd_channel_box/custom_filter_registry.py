@@ -40,6 +40,7 @@ class CustomFilterRegistry(qt.QObject):
     """登録一覧を Maya の個人設定へ保存し、共有 JSON を読み直す。"""
 
     changed = qt.Signal()
+    path_changed = qt.Signal(str, str)
 
     def __init__(self, parent: qt.QObject | None = None) -> None:
         """既存登録を読み込み、現在参照できる共有定義を取得する。"""
@@ -87,6 +88,39 @@ class CustomFilterRegistry(qt.QObject):
             return False
         del self._entries[index]
         self._save()
+        self.changed.emit()
+        return True
+
+    def replace_path(
+        self,
+        old_path: str,
+        new_path: str,
+        *,
+        saved_definition: CustomFilterDefinition | None = None,
+    ) -> bool:
+        """保存済み改名先へ登録を移し、確定済みの定義と選択を引き継ぐ。"""
+        normalized_old = normalize_filter_path(old_path)
+        normalized_new = normalize_filter_path(new_path)
+        index = self._index_of(normalized_old)
+        if index is None or normalized_old == normalized_new:
+            return False
+        if self._index_of(normalized_new) is not None:
+            raise CustomFilterError("変更先のファイルは既に登録されています")
+
+        # 保存直後は検証済み定義を引き継ぎ、再読込失敗による登録の孤立を防ぐ
+        definition = (
+            load_custom_filter(normalized_new)
+            if saved_definition is None
+            else saved_definition
+        )
+        current = self._entries[index]
+        self._entries[index] = CustomFilterRegistration(
+            normalized_new, current.enabled, definition, None
+        )
+        self._save()
+
+        # 一覧更新で旧pathが利用不能と判定される前に保持選択を移す
+        self.path_changed.emit(normalized_old, normalized_new)
         self.changed.emit()
         return True
 

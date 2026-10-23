@@ -22,11 +22,51 @@ __all__ = [
     "CustomFilterDraft",
     "create_custom_filter",
     "duplicate_custom_filter",
+    "filter_file_name",
 ]
+
+_INVALID_FILE_CHARACTERS = frozenset('<>:"/\\|?*')
+_RESERVED_FILE_NAMES = frozenset(
+    ("con", "prn", "aux", "nul", "conin$", "conout$")
+) | frozenset(
+    f"{prefix}{suffix}"
+    for prefix in ("com", "lpt")
+    for suffix in "123456789¹²³"
+)
 
 
 class CustomFilterConflictError(CustomFilterError):
     """編集中に共有ファイルが外部で変わった場合の例外。"""
+
+
+def filter_file_name(name: str) -> str:
+    """前後の空白とJSON拡張子を除き、Windowsのファイル名を検証する。"""
+    if any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in name):
+        raise CustomFilterError("ファイル名に制御文字は使用できません。")
+    base_name = name.strip()
+    if base_name.lower().endswith(".json"):
+        base_name = base_name[:-5]
+    if not base_name:
+        raise CustomFilterError("ファイル名を入力してください。")
+    if base_name.endswith((".", " ")):
+        raise CustomFilterError(
+            "ファイル名の末尾にピリオドや空白は使えません。"
+        )
+    if any(
+        char in _INVALID_FILE_CHARACTERS
+        or ord(char) < 32
+        or 127 <= ord(char) <= 159
+        for char in base_name
+    ):
+        raise CustomFilterError(
+            "ファイル名に使用できない文字が含まれています。"
+        )
+    if (
+        base_name.split(".", 1)[0].rstrip(" ").casefold()
+        in _RESERVED_FILE_NAMES
+    ):
+        raise CustomFilterError("Windowsの予約名はファイル名に使えません。")
+    return base_name
 
 
 def _attribute_key(path: str) -> str:
@@ -100,7 +140,7 @@ def _create_definition(
 ) -> str:
     """検証済みの定義を新しいJSONとして保存し、既存ファイルを保護する。"""
     normalized = normalize_filter_path(path)
-    destination = Path(normalized)
+    destination = Path(path).expanduser().resolve()
     if destination.suffix.lower() != ".json":
         raise CustomFilterError("保存先には.jsonファイルを指定してください。")
     if destination.exists():
@@ -127,6 +167,9 @@ class CustomFilterDraft:
     def __init__(self, path: str | Path) -> None:
         """現在の共有ファイルを読み、外部更新検出用の基準を保持する。"""
         self.path = normalize_filter_path(path)
+        self._destination_path = str(
+            Path(self.path).with_name(Path(path).expanduser().resolve().name)
+        )
         source_digest = _digest(Path(self.path))
         definition = load_custom_filter(self.path)
         if _digest(Path(self.path)) != source_digest:
@@ -142,12 +185,23 @@ class CustomFilterDraft:
         self._explicit_types = set(self.node_types)
         self._saved = self._snapshot()
 
-    def _snapshot(self) -> tuple[str, tuple[tuple[str, tuple[str, ...]], ...]]:
-        """名前・ノード型・属性順を変更判定用に固定する。"""
-        return self.name, tuple(
-            (node_type, tuple(paths))
-            for node_type, paths in self.node_types.items()
+    def _snapshot(
+        self,
+    ) -> tuple[str, str, tuple[tuple[str, tuple[str, ...]], ...]]:
+        """名前・保存先・ノード型・属性順を変更判定用に固定する。"""
+        return (
+            self.name,
+            self.destination_path,
+            tuple(
+                (node_type, tuple(paths))
+                for node_type, paths in self.node_types.items()
+            ),
         )
+
+    @property
+    def destination_path(self) -> str:
+        """保存時の移動先を、入力した大文字小文字を保持して返す。"""
+        return self._destination_path
 
     @property
     def is_dirty(self) -> bool:
@@ -171,6 +225,27 @@ class CustomFilterDraft:
                 "名前は空でない1行の文字列にしてください。"
             )
         self.name = name.strip()
+
+    def rename(self, name: str) -> None:
+        """表示名と同じフォルダー内の移動先を下書きだけに設定する。"""
+        base_name = filter_file_name(name)
+        destination = Path(self.path).with_name(f"{base_name}.json")
+        self._check_destination(destination)
+        self.name = base_name
+        self._destination_path = str(destination)
+
+    def _check_destination(self, destination: Path) -> None:
+        """現在のファイル自身以外の既存保存先を拒否する。"""
+        same_path = os.path.normcase(str(destination)) == self.path
+        if not same_path and os.path.lexists(destination):
+            raise CustomFilterError("同名ファイルが存在します。")
+
+    def _check_source(self) -> None:
+        """読込時と異なる内容の共有ファイルを保護する。"""
+        if _digest(Path(self.path)) != self._source_digest:
+            raise CustomFilterConflictError(
+                "共有ファイルが外部で変更されました。再読込してから保存してください。"
+            )
 
     def has_node_type(self, node_type: str) -> bool:
         """型がJSONに明示されているか返す。"""
@@ -286,26 +361,43 @@ class CustomFilterDraft:
         return True
 
     def save(self) -> None:
-        """外部変更を検査し、全型と属性順を原子的に書き替える。"""
-        destination = Path(self.path)
-        if _digest(destination) != self._source_digest:
-            raise CustomFilterConflictError(
-                "共有ファイルが外部で変更されました。再読込してから保存してください。"
-            )
+        """外部変更と移動先の衝突を検査し、名前・全型・属性順を保存する。"""
+        source = Path(self.path)
+        destination = Path(self.destination_path)
+        self._check_source()
+        self._check_destination(destination)
         content = _serialized(self.name, self.node_types)
         temporary = _write_temporary(destination, content)
         try:
-            if _digest(destination) != self._source_digest:
-                raise CustomFilterConflictError(
-                    "共有ファイルが外部で変更されました。再読込してから保存してください。"
-                )
-            os.replace(temporary, destination)
+            self._check_source()
+            self._check_destination(destination)
+            if os.path.normcase(str(destination)) == self.path:
+                # 同じファイルへの保存は大小文字だけの変更も一度の置換で確定する
+                os.replace(temporary, destination)
+            else:
+                # Windowsの上書きしない移動で新しい保存先を先に確保する
+                os.rename(temporary, destination)
+                try:
+                    self._check_source()
+                    if destination.read_bytes() != content:
+                        raise CustomFilterConflictError(
+                            "移動先の共有ファイルが外部で変更されました。再読込してください。"
+                        )
+                    source.unlink()
+                except (OSError, CustomFilterError):
+                    # 外部で変更された新宛先は撤回せず、その内容も保護する
+                    if destination.read_bytes() == content:
+                        destination.unlink()
+                    raise
+        except FileExistsError as error:
+            raise CustomFilterError("同名ファイルが存在します。") from error
         except OSError as error:
             raise CustomFilterError(
                 f"定義ファイルを保存できません: {destination}（{error}）"
             ) from error
         finally:
             temporary.unlink(missing_ok=True)
+        self.path = normalize_filter_path(destination)
         self._source_digest = hashlib.sha256(content).hexdigest()
         self._explicit_types = set(self.node_types)
         self._saved = self._snapshot()

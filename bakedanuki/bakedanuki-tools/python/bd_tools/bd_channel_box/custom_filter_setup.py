@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from bisect import bisect_left
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
@@ -18,7 +19,7 @@ from bd_util.maya.node.inspection import (
 )
 from bd_util.ui import RadioButtonSweep, qt
 
-from .custom_filter_editor import CustomFilterDraft
+from .custom_filter_editor import CustomFilterDraft, filter_file_name
 from . import config
 from .custom_filter_registry import CustomFilterRegistry
 from .custom_filters import CustomFilterError, normalize_filter_path
@@ -62,6 +63,7 @@ class CustomFilterSetupPanel(qt.QWidget):
     error_occurred = qt.Signal(str)
     saved = qt.Signal(str)
     create_requested = qt.Signal()
+    manage_requested = qt.Signal()
 
     def __init__(
         self, registry: CustomFilterRegistry, parent: qt.QWidget
@@ -108,6 +110,8 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.save_button.setObjectName("customFilterSetupSave")
         self.discard_button = qt.QToolButton(self)
         self.discard_button.setObjectName("customFilterSetupDiscard")
+        self.manage_button = qt.QToolButton(self)
+        self.manage_button.setObjectName("customFilterSetupManage")
         self.target_combo.setSizePolicy(
             qt.QSizePolicy.Policy.Ignored, qt.QSizePolicy.Policy.Fixed
         )
@@ -115,6 +119,7 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.search_edit.setObjectName("customFilterSetupSearch")
         self.search_edit.setPlaceholderText("候補属性を検索")
         self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.installEventFilter(self)
         self.node_label = qt.QLabel("ノードを選択してください", self)
         self.node_label.setObjectName("customFilterSetupNode")
         self.node_label.setWordWrap(True)
@@ -125,7 +130,6 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.node_type_combo.addItem("選択ノード", None)
         self.clear_type_button = qt.QToolButton(self)
         self.clear_type_button.setObjectName("customFilterSetupClearType")
-        self.order_label = qt.QLabel("フィルターの表示順:", self)
         self.order_list = qt.QListWidget(self)
         self.order_list.setObjectName("customFilterSetupOrder")
         self.order_list.setSelectionMode(
@@ -135,6 +139,18 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.order_list.setSizePolicy(
             qt.QSizePolicy.Policy.Expanding, qt.QSizePolicy.Policy.Ignored
         )
+        self.order_list.installEventFilter(self)
+        self.order_list.viewport().installEventFilter(self)
+        self.order_context_menu = qt.QMenu(self.order_list)
+        self.order_context_menu.setObjectName("customFilterOrderContextMenu")
+        self.remove_order_action = qt.QAction(
+            "除外する", self.order_context_menu
+        )
+        self.remove_order_action.setObjectName("removeCustomFilterOrderAction")
+        cast(
+            Callable[[qt.QAction], None],
+            getattr(self.order_context_menu, "addAction"),
+        )(self.remove_order_action)
         self.up_button = qt.QToolButton(self)
         self.down_button = qt.QToolButton(self)
         self.remove_button = qt.QToolButton(self)
@@ -147,7 +163,7 @@ class CustomFilterSetupPanel(qt.QWidget):
             ),
             (
                 self.rename_button,
-                "フィルターの表示名を変更",
+                "フィルター名を変更",
                 "fileTextureEdit.png",
                 "fileTextureEdit.png",
             ),
@@ -157,6 +173,12 @@ class CustomFilterSetupPanel(qt.QWidget):
                 "保存済みの内容に戻す（変更を破棄）",
                 "redo_s.png",
                 "redo_s.png",
+            ),
+            (
+                self.manage_button,
+                "カスタムフィルター管理",
+                "QR_settings.png",
+                "QR_settings.png",
             ),
             (
                 self.clear_type_button,
@@ -181,7 +203,7 @@ class CustomFilterSetupPanel(qt.QWidget):
             button.setFixedSize(20, 20)
             button.setToolTip(label)
             button.setAccessibleName(label)
-        self.candidates_label = qt.QLabel("属性をフィルターに含める:", self)
+        self.remove_order_action.setIcon(self.remove_button.icon())
         self.candidate_scroll = qt.QScrollArea(self)
         self.candidate_scroll.setObjectName("customFilterSetupAttributes")
         self.candidate_scroll.setMinimumHeight(28)
@@ -214,6 +236,7 @@ class CustomFilterSetupPanel(qt.QWidget):
             self.rename_button,
             self.save_button,
             self.discard_button,
+            self.manage_button,
         ):
             filter_controls.addWidget(button)
         type_controls = qt.QHBoxLayout()
@@ -234,55 +257,54 @@ class CustomFilterSetupPanel(qt.QWidget):
         order_content.setSpacing(4)
         order_content.addLayout(order_buttons)
         order_content.addWidget(self.order_list, 1)
-        order_pane = qt.QWidget(self)
-        order_layout = qt.QVBoxLayout(order_pane)
+        self.order_page = qt.QWidget(self)
+        self.order_page.setSizePolicy(
+            qt.QSizePolicy.Policy.Expanding, qt.QSizePolicy.Policy.Ignored
+        )
+        order_layout = qt.QVBoxLayout(self.order_page)
         order_layout.setContentsMargins(0, 0, 0, 0)
         order_layout.setSpacing(4)
-        order_layout.addWidget(self.order_label)
         order_layout.addLayout(order_content, 1)
-        candidate_pane = qt.QWidget(self)
-        candidate_layout = qt.QVBoxLayout(candidate_pane)
+        self.candidate_page = qt.QWidget(self)
+        self.candidate_page.setSizePolicy(
+            qt.QSizePolicy.Policy.Expanding, qt.QSizePolicy.Policy.Ignored
+        )
+        candidate_layout = qt.QVBoxLayout(self.candidate_page)
         candidate_layout.setContentsMargins(0, 0, 0, 0)
         candidate_layout.setSpacing(4)
-        candidate_layout.addWidget(self.candidates_label)
         search_layout = qt.QHBoxLayout()
         search_layout.addWidget(qt.QLabel("属性検索:", self))
         search_layout.addWidget(self.search_edit, 1)
         candidate_layout.addLayout(search_layout)
         candidate_layout.addWidget(self.candidate_scroll, 1)
-        self.list_splitter = qt.QSplitter(qt.Qt.Orientation.Vertical, self)
-        self.list_splitter.setObjectName("customFilterSetupSplitter")
-        self.list_splitter.setChildrenCollapsible(False)
-        # 大量の候補行は境界を離したときだけ再配置する
-        self.list_splitter.setOpaqueResize(False)
-        self.list_splitter.addWidget(order_pane)
-        self.list_splitter.addWidget(candidate_pane)
-        self.list_splitter.setStretchFactor(0, 1)
-        self.list_splitter.setStretchFactor(1, 2)
-        # Maya 2027同梱stubで不明な引数型をQt呼び出しの境界で確定する
-        set_sizes = cast(
-            Callable[[list[int]], None],
-            getattr(self.list_splitter, "setSizes"),
-        )
-        set_sizes([140, 280])
+        self.tool_box = qt.QtWidgets.QToolBox(self)
+        self.tool_box.setObjectName("customFilterSetupToolBox")
+        # ページと候補の背景をMayaのWindow配色へ揃える
+        self.tool_box.setBackgroundRole(qt.QPalette.ColorRole.Window)
+        self.tool_box.addItem(self.order_page, "フィルターの表示順")
+        self.tool_box.addItem(self.candidate_page, "属性をフィルターに含める")
+        self.tool_box.setCurrentWidget(self.candidate_page)
         layout = qt.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         layout.addLayout(grid)
         layout.addWidget(self.node_label)
-        layout.addWidget(self.list_splitter, 1)
+        layout.addWidget(self.tool_box, 1)
 
         self.target_combo.currentIndexChanged.connect(self._change_target)
         self.new_button.clicked.connect(self._request_create)
+        self.manage_button.clicked.connect(self._request_manage)
         self.rename_button.clicked.connect(self._rename_filter)
         self.node_type_combo.currentIndexChanged.connect(
             self._change_node_type
         )
         self.search_edit.textChanged.connect(self._change_search)
+        self.tool_box.currentChanged.connect(self._change_list_page)
         self.order_list.itemSelectionChanged.connect(self._sync_buttons)
         self.up_button.clicked.connect(partial(self._move_selected, -1))
         self.down_button.clicked.connect(partial(self._move_selected, 1))
         self.remove_button.clicked.connect(self._remove_selected)
+        self.remove_order_action.triggered.connect(self._remove_selected)
         self.clear_type_button.clicked.connect(self._clear_type)
         self.save_button.clicked.connect(self.save)
         self.discard_button.clicked.connect(self.discard)
@@ -400,6 +422,10 @@ class CustomFilterSetupPanel(qt.QWidget):
     def _request_create(self) -> None:
         """親画面へ新規作成と未保存変更の確認を依頼する。"""
         self.create_requested.emit()
+
+    def _request_manage(self) -> None:
+        """編集中の内容を保ち、親画面へ管理ウィンドウの表示を依頼する。"""
+        self.manage_requested.emit()
 
     def _refresh_node_types(self) -> None:
         """未保存・0件を含む編集中の型を列挙し、削除された型から戻る。"""
@@ -684,9 +710,52 @@ class CustomFilterSetupPanel(qt.QWidget):
         self._selection_drag_bottoms = ()
 
     def eventFilter(self, watched: qt.QObject, event: qt.QEvent) -> bool:
-        """属性名と余白の選択操作だけを受け、ラジオ操作を妨げない。"""
+        """候補の選択と設定専用の右クリックを処理し、通常の入力は維持する。"""
         kind = event.type()
+        if isinstance(event, qt.QtGui.QContextMenuEvent):
+            if watched is self.search_edit:
+                # 標準メニューも親のStepメニューも開かず、キー入力は維持する
+                event.accept()
+                return True
+            if watched in (self.order_list, self.order_list.viewport()):
+                viewport = self.order_list.viewport()
+                position = (
+                    viewport.mapFrom(self.order_list, event.pos())
+                    if watched is self.order_list
+                    else event.pos()
+                )
+                if (
+                    event.reason()
+                    == qt.QtGui.QContextMenuEvent.Reason.Keyboard
+                ):
+                    current = cast(
+                        qt.QListWidgetItem | None,
+                        self.order_list.currentItem(),
+                    )
+                    if current is not None and current.isSelected():
+                        position = self.order_list.visualItemRect(
+                            current
+                        ).center()
+                self._show_order_context_menu(position)
+                event.accept()
+                return True
         if isinstance(event, qt.QtGui.QMouseEvent):
+            if (
+                watched is self.order_list.viewport()
+                and event.button() == qt.Qt.MouseButton.RightButton
+                and kind
+                in (
+                    qt.QEvent.Type.MouseButtonPress,
+                    qt.QEvent.Type.MouseButtonRelease,
+                )
+            ):
+                # Qt標準の右押下で既存の複数選択が崩れる前に対象を決める
+                if kind == qt.QEvent.Type.MouseButtonPress:
+                    self._select_order_context_target(
+                        event.position().toPoint()
+                    )
+                event.accept()
+                return True
             if kind == qt.QEvent.Type.MouseMove:
                 if self._drag_candidate_selection(event):
                     return True
@@ -716,8 +785,39 @@ class CustomFilterSetupPanel(qt.QWidget):
             self._finish_candidate_drag()
         return super().eventFilter(watched, event)
 
+    def _select_order_context_target(
+        self, position: qt.QPoint
+    ) -> qt.QListWidgetItem | None:
+        """選択内の右押下は集合を保ち、選択外の行だけを新しい単独選択にする。"""
+        item = cast(
+            qt.QListWidgetItem | None, self.order_list.itemAt(position)
+        )
+        if item is not None and not item.isSelected():
+            self.order_list.clearSelection()
+            self.order_list.setCurrentItem(item)
+            item.setSelected(True)
+        return item
+
+    def _show_order_context_menu(self, position: qt.QPoint) -> None:
+        """正式pathを持つ項目上だけで、選択行を除外するメニューを開く。"""
+        self._finish_radio_sweep()
+        self.order_context_menu.hide()
+        item = self._select_order_context_target(position)
+        if item is None or not self.remove_button.isEnabled():
+            return
+        self.order_context_menu.popup(
+            self.order_list.viewport().mapToGlobal(position)
+        )
+
+    def _change_list_page(self, _index: int) -> None:
+        """作業ページを切り替える際にメニューとなぞり・選択ドラッグを閉じる。"""
+        self.order_context_menu.hide()
+        self._finish_radio_sweep()
+        self._finish_candidate_drag()
+
     def hideEvent(self, event: qt.QtGui.QHideEvent) -> None:
-        """設定モードを隠す際にドラッグの一時監視を解除する。"""
+        """設定モードを隠す際にメニューとドラッグの一時状態を終了する。"""
+        self.order_context_menu.hide()
         self._finish_radio_sweep()
         self._finish_candidate_drag()
         super().hideEvent(event)
@@ -752,17 +852,38 @@ class CustomFilterSetupPanel(qt.QWidget):
         self._sync_buttons()
 
     def _refresh_target_label(self) -> None:
-        """編集用の名前と未保存印を更新し、ほかの項目は保存済み表示へ戻す。"""
+        """同名の定義をpathで区別し、下書き名と未保存印を反映する。"""
         draft = self.draft
         entries = {entry.path: entry for entry in self.registry.entries}
+        names = {
+            entry.path: entry.definition.name
+            for entry in self.registry.entries
+            if entry.definition is not None
+        }
+        if draft is not None:
+            names[draft.path] = draft.name
+        counts = Counter(names.values())
+        file_counts = Counter(
+            (name, Path(path).name) for path, name in names.items()
+        )
         # 選択項目だけに下書き名を使い、切替前の未保存印を残さない
         blocked = self.target_combo.blockSignals(True)
         try:
             for index in range(1, self.target_combo.count()):
                 path = self.target_combo.itemData(index)
                 entry = entries.get(path) if isinstance(path, str) else None
+                if not isinstance(path, str) or path not in names:
+                    continue
+                name = names[path]
+                label = name
+                if counts[name] > 1:
+                    location = (
+                        path
+                        if file_counts[name, Path(path).name] > 1
+                        else Path(path).name
+                    )
+                    label += f"（{location}）"
                 if draft is not None and path == draft.path:
-                    label = draft.name
                     if entry is None or entry.definition is None:
                         label += "（登録・読込状態を確認）"
                     elif not entry.enabled:
@@ -770,17 +891,24 @@ class CustomFilterSetupPanel(qt.QWidget):
                     if draft.is_dirty:
                         label += " *"
                 elif entry is not None and entry.definition is not None:
-                    label = entry.definition.name
                     if not entry.enabled:
                         label += "（一覧ではOFF）"
                 else:
                     continue
                 self.target_combo.setItemText(index, label)
+                tooltip = path
+                if draft is not None and path == draft.path:
+                    if draft.is_dirty and draft.destination_path != draft.path:
+                        tooltip += "\n保存後: " + draft.destination_path
+                self.target_combo.setItemData(
+                    index, tooltip, qt.Qt.ItemDataRole.ToolTipRole
+                )
         finally:
             self.target_combo.blockSignals(blocked)
 
     def _refresh_order(self) -> None:
         """全登録pathを並べ、複数選択と現在行を正式pathで復元する。"""
+        self.order_context_menu.hide()
         draft = self.draft
         node_type = self._node_type
         previous = set(self._selected_order_paths())
@@ -1026,18 +1154,21 @@ class CustomFilterSetupPanel(qt.QWidget):
         self._refresh_view()
 
     def _rename_filter(self) -> None:
-        """表示名をダイアログで検証して下書きへ反映し、保存先は変更しない。"""
+        """同じフォルダーのファイル名と表示名を検証し、改名予定を下書きへ反映する。"""
         self._finish_radio_sweep()
         draft = self.draft
         if draft is None:
             return
         # 現在の下書き名を初期値にして、取消時には変更しない
         dialog = qt.QDialog(self)
-        dialog.setWindowTitle("フィルターの表示名を変更")
+        dialog.setWindowTitle("フィルター名を変更")
         name_edit = qt.QLineEdit(dialog)
         name_edit.setObjectName("renameCustomFilterName")
         name_edit.setText(draft.name)
         name_edit.selectAll()
+        message = qt.QLabel(dialog)
+        message.setObjectName("renameCustomFilterError")
+        message.setWordWrap(True)
         buttons = qt.QDialogButtonBox(
             qt.QDialogButtonBox.StandardButton.Ok
             | qt.QDialogButtonBox.StandardButton.Cancel,
@@ -1046,23 +1177,63 @@ class CustomFilterSetupPanel(qt.QWidget):
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout = qt.QVBoxLayout(dialog)
-        layout.addWidget(qt.QLabel("フィルター名:", dialog))
+        layout.addWidget(
+            qt.QLabel("フィルター名（拡張子 .json は省略可）:", dialog)
+        )
         layout.addWidget(name_edit)
+        layout.addWidget(message)
         layout.addWidget(buttons)
+
+        def validate(text: str) -> None:
+            """入力中の宛先を検査し、衝突・不正名を確定できなくする。"""
+            error = self._rename_error(text)
+            message.setText(error or "")
+            ok = cast(
+                qt.QPushButton | None,
+                buttons.button(qt.QDialogButtonBox.StandardButton.Ok),
+            )
+            if ok is not None:
+                ok.setEnabled(error is None)
+
+        name_edit.textChanged.connect(validate)
+        validate(name_edit.text())
         name_edit.setFocus()
         accepted = dialog.exec() == qt.QDialog.DialogCode.Accepted
         name = name_edit.text()
         dialog.deleteLater()
         if not accepted:
             return
-        # 検証済みの表示名だけを下書きへ反映する
+        # ダイアログ表示中の外部更新も確定前に再検査する
         try:
-            draft.set_name(name)
+            error = self._rename_error(name)
+            if error is not None:
+                raise CustomFilterError(error)
+            draft.rename(name)
         except CustomFilterError as error:
             self.error_occurred.emit(str(error))
             return
         self._refresh_target_label()
         self._sync_buttons()
+
+    def _rename_error(self, name: str) -> str | None:
+        """ファイル名の妥当性と、別のファイル・登録への衝突を調べる。"""
+        draft = self.draft
+        if draft is None:
+            return "編集するフィルターを選択してください。"
+        try:
+            base_name = filter_file_name(name)
+            destination = Path(draft.path).with_name(base_name + ".json")
+            target = normalize_filter_path(destination)
+            if target != draft.path:
+                if destination.exists() or destination.is_symlink():
+                    return "同名ファイルが存在します。"
+                if any(
+                    entry.path == target for entry in self.registry.entries
+                ):
+                    return "同名ファイルが登録されています。"
+        except (CustomFilterError, OSError, ValueError) as error:
+            return str(error)
+        return None
 
     def _sync_buttons(self) -> None:
         """現在の型・選択・未保存状態に応じて操作を有効化する。"""
@@ -1083,6 +1254,7 @@ class CustomFilterSetupPanel(qt.QWidget):
             has_order and selected_rows[-1] < self.order_list.count() - 1
         )
         self.remove_button.setEnabled(has_order)
+        self.remove_order_action.setEnabled(has_order)
         self.clear_type_button.setEnabled(
             draft is not None
             and node_type is not None
@@ -1092,15 +1264,36 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.discard_button.setEnabled(draft is not None and draft.is_dirty)
 
     def save(self) -> bool:
-        """共有JSONへ保存し、通常モードの登録定義を再読込する。"""
+        """改名とJSON編集を保存し、登録先と通常モードの参照を引き継ぐ。"""
         self._finish_radio_sweep()
         draft = self.draft
         if draft is None:
             return False
         try:
             if draft.is_dirty:
+                previous_path = draft.path
+                destination = normalize_filter_path(draft.destination_path)
+                if destination != previous_path and not any(
+                    entry.path == previous_path
+                    for entry in self.registry.entries
+                ):
+                    raise CustomFilterError(
+                        "編集対象の登録がありません。登録し直してから保存してください。"
+                    )
+                if destination != previous_path and any(
+                    entry.path == destination
+                    for entry in self.registry.entries
+                ):
+                    raise CustomFilterError("同名ファイルが登録されています。")
                 draft.save()
-                self.registry.reload(draft.path)
+                if draft.path != previous_path:
+                    self.registry.replace_path(
+                        previous_path,
+                        draft.path,
+                        saved_definition=draft.definition(),
+                    )
+                else:
+                    self.registry.reload(draft.path)
                 self.saved.emit(draft.path)
         except CustomFilterError as error:
             self.error_occurred.emit(str(error))

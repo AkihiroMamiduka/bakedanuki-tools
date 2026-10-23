@@ -1445,7 +1445,7 @@ class CustomFilterManagerDialog(qt.QDialog):
             self._sync_selection()
 
     def _create_file(self) -> None:
-        """名前と保存先を選び、空の定義を作成して末尾へ登録する。"""
+        """保存先のファイル名で空の定義を作成し、末尾へ登録する。"""
         if self._confirm_create is not None and not self._confirm_create():
             return
         self._register_created(create_registered_filter(self, self.registry))
@@ -1456,6 +1456,10 @@ class CustomFilterManagerDialog(qt.QDialog):
         if path is None:
             return
         if self._confirm_create is not None and not self._confirm_create():
+            return
+        # 未保存の改名を保存した場合は、更新された登録先から複製する
+        path = self._selected_path()
+        if path is None:
             return
         self._register_created(
             create_registered_filter(self, self.registry, source=path)
@@ -1686,7 +1690,6 @@ class ChannelBoxWidget(qt.QWidget):
         self.header_separator = qt.QFrame(self)
         self.header_separator.setObjectName("channelBoxHeaderSeparator")
         self.header_separator.setFrameShape(qt.QFrame.Shape.HLine)
-        self.header_separator.setFrameShadow(qt.QFrame.Shadow.Sunken)
         search_layout = qt.QHBoxLayout()
         search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.setSpacing(6)
@@ -1749,6 +1752,9 @@ class ChannelBoxWidget(qt.QWidget):
             self.custom_filter_registry, self
         )
         self.setup_panel.create_requested.connect(self._create_filter_in_setup)
+        self.setup_panel.manage_requested.connect(
+            self._show_custom_filter_manager
+        )
         self.setup_panel.hide()
         self.empty_label = qt.QLabel("", self)
         self.empty_label.setWordWrap(True)
@@ -1792,6 +1798,9 @@ class ChannelBoxWidget(qt.QWidget):
         self.controller.operation_reported.connect(self._show_operation_report)
         self.controller.mode_changed.connect(self._sync_mode)
         self.controller.filter_changed.connect(self._sync_filter)
+        self.custom_filter_registry.path_changed.connect(
+            self._custom_filter_path_changed
+        )
         self.custom_filter_registry.changed.connect(
             self._custom_filters_changed
         )
@@ -1879,6 +1888,26 @@ class ChannelBoxWidget(qt.QWidget):
                 )
         self._active_custom_filters = active
 
+    def _custom_filter_path_changed(
+        self, old_path: str, new_path: str
+    ) -> None:
+        """改名先へ選択を移し、一覧更新による標準フィルターへの復帰を防ぐ。"""
+        if self.controller.is_disposed:
+            return
+
+        # 新pathの項目を先に用意し、controllerの通知を新しいComboBoxへ同期する
+        blocked = self.filter_combo.blockSignals(True)
+        try:
+            self._populate_filter_combo()
+        finally:
+            self.filter_combo.blockSignals(blocked)
+        selection = self._active_custom_filters.get(new_path)
+        if selection is not None:
+            self.controller.replace_custom_filter(
+                selection, previous_path=old_path
+            )
+        self._sync_filter()
+
     def _custom_filters_changed(self) -> None:
         """登録変更を ComboBox と両モードの選択へ安全に反映する。"""
         if self.controller.is_disposed:
@@ -1897,7 +1926,7 @@ class ChannelBoxWidget(qt.QWidget):
         self._sync_filter()
 
     def _show_custom_filter_manager(self) -> None:
-        """設定メニューから同じ管理画面を再利用して表示する。"""
+        """メニューと設定画面のアイコンから同じ管理ウィンドウを表示する。"""
         dialog = self.custom_filter_dialog
         if dialog is None or not qt.isValid(dialog):
             dialog = CustomFilterManagerDialog(
@@ -2064,6 +2093,7 @@ class ChannelBoxWidget(qt.QWidget):
             self.mode_combo.blockSignals(blocked)
         self.header_label.setVisible(not setup)
         if setup:
+            self.context_menu.close()
             self.selection_count_label.hide()
         self.table_view.setVisible(not setup)
         self.empty_label.setVisible(not setup)
@@ -2148,8 +2178,9 @@ class ChannelBoxWidget(qt.QWidget):
                 return
 
     def contextMenuEvent(self, event: qt.QtGui.QContextMenuEvent) -> None:
-        """画面の余白からStep設定を開く。"""
-        self.context_menu.popup(event.globalPos())
+        """設定モード以外の余白からStep設定を開き、設定中は親への伝播も止める。"""
+        if self.controller.mode != "custom_filter_setup":
+            self.context_menu.popup(event.globalPos())
         event.accept()
 
     def refresh(self) -> None:
@@ -3652,6 +3683,7 @@ class ChannelBoxWidget(qt.QWidget):
         self._scroll_timer.stop()
         self._search_timer.stop()
         self.context_menu.close()
+        self.setup_panel.order_context_menu.close()
         for widget in self.row_widgets:
             if isinstance(widget, AttributeRowWidget):
                 widget.close_context_menu()

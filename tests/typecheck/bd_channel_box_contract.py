@@ -40,7 +40,9 @@ from bd_tools.bd_channel_box.custom_filters import (
 from bd_tools.bd_channel_box.custom_filter_editor import (
     CustomFilterDraft,
     duplicate_custom_filter,
+    filter_file_name,
 )
+from bd_tools.bd_channel_box.custom_filter_registry import CustomFilterRegistry
 from bd_tools.bd_channel_box.custom_filter_setup import CustomFilterSetupPanel
 from bd_tools.bd_channel_box.filter_preferences import ValueFilterPreferences
 from bd_tools.bd_channel_box.widget import (
@@ -56,12 +58,25 @@ assert_type(bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
 assert_type(bd_channel_box.show().widget, ChannelBoxWidget)
 assert_type(bd_channel_box.show().widget.setup_panel, CustomFilterSetupPanel)
 assert_type(
+    bd_channel_box.show().widget.setup_panel.tool_box, qt.QtWidgets.QToolBox
+)
+assert_type(bd_channel_box.show().widget.setup_panel.order_page, qt.QWidget)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.candidate_page, qt.QWidget
+)
+assert_type(
     bd_channel_box.show().widget.setup_panel.node_type_combo, qt.QComboBox
 )
 assert_type(
     bd_channel_box.show().widget.setup_panel.new_button, qt.QToolButton
 )
 assert_type(bd_channel_box.show().widget.header_separator, qt.QFrame)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.order_context_menu, qt.QMenu
+)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.remove_order_action, qt.QAction
+)
 assert_type(
     bd_channel_box.show().widget.setup_panel.rename_button, qt.QToolButton
 )
@@ -70,6 +85,9 @@ assert_type(
 )
 assert_type(
     bd_channel_box.show().widget.setup_panel.discard_button, qt.QToolButton
+)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.manage_button, qt.QToolButton
 )
 assert_type(
     bd_channel_box.show().widget.setup_panel.clear_type_button, qt.QToolButton
@@ -86,6 +104,17 @@ assert_type(ValueFilterPreferences().restore({}), ChannelDisplayFilter)
 assert_type(ValueFilterPreferences().save("all"), bool)
 assert_type(bd_channel_box.show().widget.setup_panel.up_button, qt.QToolButton)
 assert_type(duplicate_custom_filter("rig.json", "copy.json", "Rig_copy"), str)
+assert_type(filter_file_name("Rig.json"), str)
+assert_type(CustomFilterDraft("rig.json").destination_path, str)
+assert_type(CustomFilterDraft("rig.json").rename("Renamed"), None)
+assert_type(CustomFilterRegistry().replace_path("old.json", "new.json"), bool)
+assert_type(
+    bd_channel_box.show().widget.controller.replace_custom_filter(
+        CustomFilterSelection("new.json", CustomFilterDefinition("New", {})),
+        previous_path="old.json",
+    ),
+    None,
+)
 assert_type(CustomFilterDraft("rig.json").move_many("joint", ("a",), -1), bool)
 assert_type(CustomFilterDraft("rig.json").remove_many("joint", ("a",)), None)
 assert_type(

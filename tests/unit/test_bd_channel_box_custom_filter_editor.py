@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
         CustomFilterDraft,
         create_custom_filter,
         duplicate_custom_filter,
+        filter_file_name,
     )
     from bd_tools.bd_channel_box.custom_filters import (
         CustomFilterError,
@@ -63,6 +65,134 @@ else:
     CustomFilterDraft = _EDITOR.CustomFilterDraft
     create_custom_filter = _EDITOR.create_custom_filter
     duplicate_custom_filter = _EDITOR.duplicate_custom_filter
+    filter_file_name = _EDITOR.filter_file_name
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    (
+        ("Rig", "Rig"),
+        (" Saved ", "Saved"),
+        ("日本語.JSON", "日本語"),
+        ("rig.json.json", "rig.json"),
+    ),
+)
+def test_filter_file_name_normalizes_optional_extension(
+    value: str, expected: str
+) -> None:
+    """前後空白と拡張子一つだけを除き、日本語名も維持する。"""
+    assert filter_file_name(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "",
+        " ",
+        ".json",
+        ".",
+        "..",
+        "rig.",
+        "rig .json",
+        "a/b",
+        "a\\b",
+        "a:b",
+        'a"b',
+        "a<b",
+        "a>b",
+        "a|b",
+        "a?b",
+        "a*b",
+        "a\nb",
+        "a\x00b",
+        "rig\n",
+        "\trig",
+        "CON",
+        "nul.json",
+        "COM1",
+        "lPt9",
+        "com¹",
+        "CON.txt",
+        "CONIN$",
+    ),
+)
+def test_filter_file_name_rejects_invalid_windows_names(value: str) -> None:
+    """空文字・禁止文字・末尾dot・Windows予約名を拒否する。"""
+    with pytest.raises(CustomFilterError):
+        filter_file_name(value)
+
+
+def test_rename_is_draft_until_save_and_commits_file_and_display_name(
+    tmp_path: Path,
+) -> None:
+    """リネームは保存まで元ファイルを変えず、保存時に両方の名前を変更する。"""
+    source = tmp_path / "rig.json"
+    create_custom_filter(source, "Rig")
+    original = source.read_bytes()
+    draft = CustomFilterDraft(source)
+    original_path = draft.path
+    destination = tmp_path / "Renamed.json"
+    draft.rename("Renamed.json")
+    draft.set_included("joint", "visibility", True)
+    assert draft.path == original_path
+    assert Path(draft.destination_path).name == "Renamed.json"
+    assert draft.name == "Renamed"
+    assert draft.is_dirty
+    assert source.read_bytes() == original
+    assert not destination.exists()
+    discarded = CustomFilterDraft(source)
+    assert discarded.name == "Rig"
+    assert not discarded.is_dirty
+    draft.save()
+    assert not source.exists()
+    assert Path(draft.path) == destination
+    assert Path(draft.destination_path).name == "Renamed.json"
+    assert load_custom_filter(destination).name == "Renamed"
+    assert load_custom_filter(destination).node_types["joint"] == (
+        "visibility",
+    )
+    assert not draft.is_dirty
+    draft.set_included("joint", "rigMode", True)
+    draft.save()
+    assert load_custom_filter(destination).node_types["joint"] == (
+        "visibility",
+        "rigMode",
+    )
+
+
+def test_rename_rejects_existing_destination_and_retains_current_draft(
+    tmp_path: Path,
+) -> None:
+    """同じフォルダーの別ファイルへは名前を変更せず、下書きも保持する。"""
+    source = tmp_path / "rig.json"
+    other = tmp_path / "Other.json"
+    create_custom_filter(source, "Rig")
+    create_custom_filter(other, "Other")
+    before = other.read_bytes()
+    draft = CustomFilterDraft(source)
+    with pytest.raises(CustomFilterError, match="同名ファイルが存在"):
+        draft.rename("Other")
+    assert draft.name == "Rig"
+    assert not draft.is_dirty
+    assert other.read_bytes() == before
+
+
+def test_rename_case_only_updates_filename_and_can_revert_draft(
+    tmp_path: Path,
+) -> None:
+    """Windows上で大小文字だけの改名も下書き取消と保存を正しく扱う。"""
+    source = tmp_path / "Rig.json"
+    create_custom_filter(source, "Rig")
+    draft = CustomFilterDraft(source)
+    draft.rename("RIG")
+    assert draft.is_dirty
+    draft.rename("Rig")
+    assert not draft.is_dirty
+    draft.rename("RIG")
+    draft.save()
+    assert [path.name for path in tmp_path.iterdir()] == ["RIG.json"]
+    assert load_custom_filter(draft.path).name == "RIG"
+    assert not draft.is_dirty
 
 
 def test_create_empty_definition_and_refuse_overwrite(tmp_path: Path) -> None:
@@ -367,3 +497,127 @@ def test_external_change_blocks_save(tmp_path: Path) -> None:
     with pytest.raises(CustomFilterConflictError, match="外部で変更"):
         draft.save()
     assert load_custom_filter(path).name == "Other"
+
+
+def test_rename_save_rechecks_destination_created_after_dialog(
+    tmp_path: Path,
+) -> None:
+    """改名入力後に作られた同名ファイルも保存時に上書きしない。"""
+    source = tmp_path / "rig.json"
+    destination = tmp_path / "Other.json"
+    create_custom_filter(source, "Rig")
+    original = source.read_bytes()
+    draft = CustomFilterDraft(source)
+    draft.rename("Other")
+    create_custom_filter(destination, "Other")
+    occupied = destination.read_bytes()
+    with pytest.raises(CustomFilterError, match="同名ファイルが存在"):
+        draft.save()
+    assert source.read_bytes() == original
+    assert destination.read_bytes() == occupied
+    assert draft.is_dirty
+
+
+def test_rename_save_does_not_overwrite_racing_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """最終検査直後の競合でもWindowsの無上書き移動で両ファイルを守る。"""
+    source = tmp_path / "rig.json"
+    destination = tmp_path / "Other.json"
+    create_custom_filter(source, "Rig")
+    original = source.read_bytes()
+    draft = CustomFilterDraft(source)
+    draft.rename("Other")
+    original_rename = os.rename
+
+    def occupy_destination(temporary: Path, target: Path) -> None:
+        """移動直前に別の利用者が宛先を確保した状態を再現する。"""
+        target.write_bytes(b"occupied")
+        original_rename(temporary, target)
+
+    monkeypatch.setattr(os, "rename", occupy_destination)
+    with pytest.raises(CustomFilterError, match="同名ファイルが存在"):
+        draft.save()
+    assert source.read_bytes() == original
+    assert destination.read_bytes() == b"occupied"
+    assert len(tuple(tmp_path.iterdir())) == 2
+    assert draft.is_dirty
+
+
+def test_rename_retracts_destination_if_source_cannot_be_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """元ファイルの削除に失敗したら新宛先を撤回して元データを残す。"""
+    source = tmp_path / "rig.json"
+    destination = tmp_path / "Other.json"
+    create_custom_filter(source, "Rig")
+    original = source.read_bytes()
+    draft = CustomFilterDraft(source)
+    original_path = draft.path
+    draft.rename("Other")
+    original_unlink = Path.unlink
+
+    def block_source_unlink(path: Path, missing_ok: bool = False) -> None:
+        """元JSONだけ削除できない状態を再現する。"""
+        if path == source:
+            raise PermissionError("source is locked")
+        original_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", block_source_unlink)
+    with pytest.raises(CustomFilterError, match="保存できません"):
+        draft.save()
+    assert source.read_bytes() == original
+    assert not destination.exists()
+    assert draft.path == original_path
+    assert draft.is_dirty
+    assert len(tuple(tmp_path.iterdir())) == 1
+
+
+def test_rename_external_source_change_retracts_new_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """新宛先確保中に元JSONが更新された場合も、元の変更を消さない。"""
+    source = tmp_path / "rig.json"
+    destination = tmp_path / "Other.json"
+    create_custom_filter(source, "Rig")
+    draft = CustomFilterDraft(source)
+    draft.rename("Other")
+    original_rename = os.rename
+
+    def edit_source_after_move(temporary: Path, target: Path) -> None:
+        """新宛先作成と元ファイル削除の間に外部更新を差し込む。"""
+        original_rename(temporary, target)
+        source.write_bytes(b"external update")
+
+    monkeypatch.setattr(os, "rename", edit_source_after_move)
+    with pytest.raises(CustomFilterConflictError, match="外部で変更"):
+        draft.save()
+    assert source.read_bytes() == b"external update"
+    assert not destination.exists()
+    assert draft.is_dirty
+    assert len(tuple(tmp_path.iterdir())) == 1
+
+
+def test_rename_external_destination_change_preserves_both_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """新宛先確保中の外部更新を検出し、元JSONと変更後の新宛先を残す。"""
+    source = tmp_path / "rig.json"
+    destination = tmp_path / "Other.json"
+    create_custom_filter(source, "Rig")
+    before = source.read_bytes()
+    draft = CustomFilterDraft(source)
+    draft.rename("Other")
+    original_rename = os.rename
+
+    def edit_destination_after_move(temporary: Path, target: Path) -> None:
+        """新宛先確保と元ファイル削除の間に宛先の外部更新を再現する。"""
+        original_rename(temporary, target)
+        target.write_bytes(b"external destination update")
+
+    monkeypatch.setattr(os, "rename", edit_destination_after_move)
+    with pytest.raises(CustomFilterConflictError, match="移動先.*外部で変更"):
+        draft.save()
+    assert source.read_bytes() == before
+    assert destination.read_bytes() == b"external destination update"
+    assert draft.is_dirty

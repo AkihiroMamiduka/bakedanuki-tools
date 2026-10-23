@@ -199,6 +199,7 @@ class _MayaSmokeSession:
                 self._inspect_custom_filters,
                 self._inspect_custom_filter_sweep,
                 self._inspect_custom_filter_type_editor,
+                self._inspect_custom_filter_context_menus,
                 self._inspect_reference_only_custom_filter_setup,
                 self._inspect_thousand_node_states,
                 self._inspect_value_filter_preferences,
@@ -1842,21 +1843,25 @@ class _MayaSmokeSession:
         if not cmds.undoInfo(query=True, undoQueueEmpty=True):
             raise AssertionError("設定モードの選択がUndo履歴を変更しました")
 
-        # 分割バーと候補の所属変更を実画面で確かめる
-        splitter = panel.list_splitter
-        if splitter.orientation() != qt.Qt.Orientation.Vertical:
-            raise AssertionError("表示順と候補の分割方向が縦ではありません")
-        splitter.setSizes([300, 80])
+        # ページを切り替えて各一覧へ領域を配分し、編集内容を保持する
+        tool_box = panel.tool_box
+        if tool_box.count() != 2:
+            raise AssertionError("表示順と候補の2ページがありません")
+        tool_box.setCurrentWidget(panel.order_page)
         self._flush_gui()
-        order_large = splitter.sizes()
-        splitter.setSizes([80, 300])
-        self._flush_gui()
-        candidates_large = splitter.sizes()
-        if not (
-            order_large[0] > candidates_large[0]
-            and order_large[1] < candidates_large[1]
+        if (
+            not panel.order_list.isVisible()
+            or panel.candidate_scroll.isVisible()
         ):
-            raise AssertionError("分割バーで一覧の表示範囲を変更できません")
+            raise AssertionError("表示順ページへの切替が反映されません")
+        self._capture("59-custom-filter-toolbox-order.png")
+        tool_box.setCurrentWidget(panel.candidate_page)
+        self._flush_gui()
+        if (
+            not panel.candidate_scroll.isVisible()
+            or panel.order_list.isVisible()
+        ):
+            raise AssertionError("属性候補ページへの切替が反映されません")
         panel.search_edit.setText("hiddenWeight")
         self._flush_gui()
         self._custom_filter_radio("hiddenWeight", False).click()
@@ -1872,7 +1877,7 @@ class _MayaSmokeSession:
         self._capture("47-custom-filter-batch.png")
         if not cmds.undoInfo(query=True, undoQueueEmpty=True):
             raise AssertionError("候補の一括操作がUndo履歴を変更しました")
-        self.steps.append("resize_and_edit_custom_filter_setup")
+        self.steps.append("switch_toolbox_and_edit_custom_filter_setup")
 
         # 属性名の縦ドラッグと選択行へのラジオ一括適用を実画面で確かめる
         panel.search_edit.setText("multiHidden")
@@ -1951,7 +1956,7 @@ class _MayaSmokeSession:
 
         # 上段の複数選択を一段移動し、選択全件の除外まで確認する
         self._custom_filter_radio("multiHiddenA", True).click()
-        panel.list_splitter.setSizes([300, 80])
+        panel.tool_box.setCurrentWidget(panel.order_page)
         self._flush_gui()
         order = panel.order_list
         if panel.draft is None or panel.draft.paths("joint") != (
@@ -2038,7 +2043,7 @@ class _MayaSmokeSession:
         panel = widget.setup_panel
         saved_search = panel.search_edit.text()
         panel.search_edit.setText("multiHidden")
-        panel.list_splitter.setSizes([80, 300])
+        panel.tool_box.setCurrentWidget(panel.candidate_page)
         self._flush_gui()
         draft = panel.draft
         if draft is None:
@@ -2145,6 +2150,21 @@ class _MayaSmokeSession:
         try:
             # ノード未選択でも型を選び、標準候補と保存済みpathを編集する
             self._select_combo_item(widget.mode_combo, 2)
+            panel.target_combo.setCurrentIndex(0)
+            if not panel.manage_button.isEnabled():
+                raise AssertionError(
+                    "フィルター未選択時に管理ボタンが無効です"
+                )
+            panel.manage_button.click()
+            self._flush_gui()
+            manager = widget.custom_filter_dialog
+            if (
+                manager is None
+                or not manager.isVisible()
+                or panel.draft is not None
+            ):
+                raise AssertionError("未選択のまま管理画面を開けません")
+            manager.hide()
             panel.set_target(path)
             cmds.select(clear=True)
             self._flush_gui()
@@ -2152,6 +2172,7 @@ class _MayaSmokeSession:
                 panel.node_type_combo,
                 panel.node_type_combo.findData("transform"),
             )
+            panel.tool_box.setCurrentWidget(panel.candidate_page)
             if panel.order_list.count() != 3:
                 raise AssertionError("ノードなしで型の定義を表示できません")
             panel.search_edit.setText("translate")
@@ -2189,6 +2210,7 @@ class _MayaSmokeSession:
                 ),
                 (panel.save_button, panel.target_combo, "fileSave.png"),
                 (panel.discard_button, panel.target_combo, "redo_s.png"),
+                (panel.manage_button, panel.target_combo, "QR_settings.png"),
                 (
                     panel.clear_type_button,
                     panel.node_type_combo,
@@ -2220,6 +2242,7 @@ class _MayaSmokeSession:
                 panel.rename_button,
                 panel.save_button,
                 panel.discard_button,
+                panel.manage_button,
             )
             if any(
                 left.x() >= right.x() or left.y() != right.y()
@@ -2228,13 +2251,34 @@ class _MayaSmokeSession:
                 raise AssertionError(
                     "フィルター操作アイコンの順序・行が不正です"
                 )
+            background = panel.palette().color(qt.QPalette.ColorRole.Window)
+            for surface in (
+                panel.tool_box,
+                panel.order_page,
+                panel.candidate_page,
+                panel.candidate_scroll.viewport(),
+                panel.candidate_container,
+            ):
+                if (
+                    surface.palette().color(surface.backgroundRole())
+                    != background
+                ):
+                    raise AssertionError(
+                        "QToolBoxの背景色が周囲と一致しません"
+                    )
+            if not resources["QR_settings.png"]:
+                raise AssertionError(
+                    "管理ボタンの指定アイコンを取得できません"
+                )
             search_y = panel.search_edit.mapToGlobal(qt.QPoint()).y()
             if not (
-                panel.candidates_label.mapToGlobal(qt.QPoint()).y()
-                < search_y
+                panel.candidate_page.mapToGlobal(qt.QPoint()).y()
+                <= search_y
                 < panel.candidate_scroll.mapToGlobal(qt.QPoint()).y()
             ):
                 raise AssertionError("属性検索が候補一覧の直上にありません")
+            self._capture("60-custom-filter-toolbox-candidates.png")
+            panel.tool_box.setCurrentWidget(panel.order_page)
             panel.order_list.setCurrentRow(1)
             panel.up_button.click()
             self._flush_gui()
@@ -2248,6 +2292,9 @@ class _MayaSmokeSession:
 
             # 改名ダイアログからの変更を下書きに保ち、破棄と保存を確認する
             saved_name_content = source.read_bytes()
+            occupied_source = self.output / "Type Editor Occupied.json"
+            create_custom_filter(occupied_source, "Occupied")
+            occupied_content = occupied_source.read_bytes()
 
             def accept_rename() -> None:
                 """現在名を表示した改名ダイアログを新しい表示名で確定する。"""
@@ -2267,7 +2314,34 @@ class _MayaSmokeSession:
                     raise AssertionError(
                         "現在のフィルター名が初期表示されません"
                     )
+                buttons = dialog.findChild(qt.QDialogButtonBox)
+                message = dialog.findChild(
+                    qt.QLabel, "renameCustomFilterError"
+                )
+                if not isinstance(
+                    buttons, qt.QDialogButtonBox
+                ) or not isinstance(message, qt.QLabel):
+                    raise AssertionError("改名の入力検証UIがありません")
+                ok = buttons.button(qt.QDialogButtonBox.StandardButton.Ok)
+                field.setText("Type Editor Occupied")
+                if (
+                    ok is None
+                    or ok.isEnabled()
+                    or "同名ファイルが存在します" not in message.text()
+                ):
+                    raise AssertionError("同名ファイルへの改名を確定できます")
+                image_path = (
+                    self.output / "61-custom-filter-rename-collision.png"
+                )
+                if not dialog.grab().save(str(image_path)):
+                    raise RuntimeError("改名の衝突表示を撮影できません")
+                if str(image_path) not in self.screenshots:
+                    self.screenshots.append(str(image_path))
                 field.setText("Type Editor Renamed")
+                if not ok.isEnabled() or message.text():
+                    raise AssertionError(
+                        "衝突を解消しても改名を確定できません"
+                    )
                 dialog.accept()
 
             single_shot = cast(
@@ -2283,18 +2357,51 @@ class _MayaSmokeSession:
             ):
                 raise AssertionError("改名が下書きに限定されていません")
             self._capture("56-custom-filter-rename-draft.png")
+
+            # 管理アイコンとメニューは同じWindowを使い、編集中の内容を保持する
+            current_draft = panel.draft
+            panel.manage_button.click()
+            self._flush_gui()
+            manager = widget.custom_filter_dialog
+            if manager is None or not manager.isVisible():
+                raise AssertionError(
+                    "設定画面のアイコンから管理画面が開きません"
+                )
+            widget.manage_custom_filters_action.trigger()
+            self._flush_gui()
+            if (
+                widget.custom_filter_dialog is not manager
+                or panel.draft is not current_draft
+                or not panel.save_button.isEnabled()
+                or panel.target_combo.currentText() != "Type Editor Renamed *"
+                or source.read_bytes() != saved_name_content
+            ):
+                raise AssertionError(
+                    "管理画面を開いた際に重複か未保存内容の変更が起きました"
+                )
+            manager.hide()
+            self.steps.append("open_custom_filter_manager_from_setup_icon")
             panel.discard_button.click()
             if panel.target_combo.currentText() != "Type Editor":
                 raise AssertionError("表示名を破棄できません")
             single_shot(0, accept_rename)
             panel.rename_button.click()
             panel.save_button.click()
+            renamed_source = self.output / "Type Editor Renamed.json"
             if (
-                json.loads(source.read_text(encoding="utf-8"))["name"]
+                source.exists()
+                or json.loads(renamed_source.read_text(encoding="utf-8"))[
+                    "name"
+                ]
                 != "Type Editor Renamed"
                 or panel.save_button.isEnabled()
+                or occupied_source.read_bytes() != occupied_content
             ):
                 raise AssertionError("名前変更を保存できません")
+            if panel.draft is None:
+                raise AssertionError("保存後の編集対象が失われました")
+            path = panel.draft.path
+            source = renamed_source
             self.steps.append("rename_custom_filter_draft_discard_and_save")
             # 型削除は下書きだけに反映し、JSONの空配列と他型を保つ
             saved_content = source.read_bytes()
@@ -2348,6 +2455,200 @@ class _MayaSmokeSession:
             self._select_combo_item(
                 widget.mode_combo, widget.mode_combo.findData(saved_mode)
             )
+
+    def _inspect_custom_filter_context_menus(self) -> None:
+        """設定専用の右クリック、選択範囲、除外と検索の編集キーを実画面で確認する。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+        from bd_tools.bd_channel_box.custom_filter_editor import (
+            CustomFilterDraft,
+            create_custom_filter,
+        )
+
+        widget = self._require_window().widget
+        panel = widget.setup_panel
+        saved_mode = widget.controller.mode
+        saved_target = panel.draft.path if panel.draft is not None else None
+        saved_search = panel.search_edit.text()
+        source = self.output / "context-menu-filter.json"
+        path = create_custom_filter(source, "Context Menu")
+        draft = CustomFilterDraft(path)
+        draft.set_many_included(
+            "transform",
+            ("visibility", "translate.translateX", "rigMode"),
+            True,
+        )
+        draft.ensure_node_type("joint")
+        draft.save()
+        registry = widget.custom_filter_registry
+        registry.add_paths((path,))
+        try:
+            widget.controller.set_mode("custom_filter_setup")
+            panel.set_target(path)
+            panel.search_edit.clear()
+            panel.node_type_combo.setCurrentIndex(
+                panel.node_type_combo.findData("transform")
+            )
+            panel.tool_box.setCurrentWidget(panel.order_page)
+            self._flush_gui()
+            cmds.flushUndo()
+            before = source.read_bytes()
+            order = panel.order_list
+            order.setCurrentRow(0)
+            order.item(2).setSelected(True)
+            self._right_click(
+                order.viewport(), order.visualItemRect(order.item(2)).center()
+            )
+            self._flush_gui()
+            if (
+                not panel.order_context_menu.isVisible()
+                or not order.item(0).isSelected()
+                or not order.item(2).isSelected()
+                or widget.context_menu.isVisible()
+                or [
+                    action.text()
+                    for action in panel.order_context_menu.actions()
+                ]
+                != ["除外する"]
+            ):
+                raise AssertionError(
+                    "表示順の右クリックで選択集合か専用メニューが失われました"
+                )
+            image_path = (
+                self.output / "58-custom-filter-order-context-menu.png"
+            )
+            if not panel.order_context_menu.grab().save(str(image_path)):
+                raise RuntimeError(
+                    "表示順の右クリックメニューを撮影できません"
+                )
+            self.screenshots.append(str(image_path))
+            menu = panel.order_context_menu
+            position = menu.actionGeometry(panel.remove_order_action).center()
+            self._mouse(menu, qt.QEvent.Type.MouseButtonPress, position)
+            self._mouse(menu, qt.QEvent.Type.MouseButtonRelease, position)
+            self._flush_gui()
+            if (
+                panel.draft is None
+                or panel.draft.paths("transform") != ("translate.translateX",)
+                or panel.draft.paths("joint") != ()
+                or source.read_bytes() != before
+                or not panel.target_combo.currentText().endswith(" *")
+            ):
+                raise AssertionError(
+                    "右クリックの除外が選択した下書きだけに適用されません"
+                )
+            panel.discard_button.click()
+            order.setCurrentRow(0)
+            order.item(2).setSelected(True)
+            self._right_click(
+                order.viewport(), order.visualItemRect(order.item(1)).center()
+            )
+            self._flush_gui()
+            if (
+                not order.item(1).isSelected()
+                or order.item(0).isSelected()
+                or order.item(2).isSelected()
+            ):
+                raise AssertionError(
+                    "選択外の右クリックが単独選択になりません"
+                )
+            panel.order_context_menu.hide()
+            blank = order.viewport().rect().bottomRight() - qt.QPoint(3, 3)
+            if order.itemAt(blank) is not None:
+                raise AssertionError("メニュー検証用の表示順余白がありません")
+            self._right_click(order.viewport(), blank)
+            self._right_click(
+                panel.node_label, panel.node_label.rect().center()
+            )
+            self._right_click(widget, qt.QPoint(2, 2))
+
+            # 検索の右クリックだけを抑止し、元のclipboardを保って編集キーを試す
+            panel.tool_box.setCurrentWidget(panel.candidate_page)
+            self._flush_gui()
+            field = panel.search_edit
+            field.setText("translate")
+            self._right_click(field, field.rect().center())
+            self._flush_gui()
+            popup = cast(
+                Callable[[], qt.QWidget | None],
+                getattr(qt.QApplication, "activePopupWidget"),
+            )()
+            if popup is not None or widget.context_menu.isVisible():
+                raise AssertionError(
+                    "設定の余白か検索欄に不要なメニューが表示されました"
+                )
+            clipboard = qt.QApplication.clipboard()
+            if clipboard is None:
+                raise RuntimeError("検索の標準編集キーを検証できません")
+            previous = qt.QtCore.QMimeData()
+            original = cast(qt.QtCore.QMimeData | None, clipboard.mimeData())
+            if original is not None:
+                for name in original.formats():
+                    previous.setData(name, original.data(name))
+            try:
+                # Mayaのフォーカス移動とclipboard通知を各キー入力の間に処理する
+                field.setFocus()
+                self._flush_gui()
+                field.selectAll()
+                self._key(
+                    field,
+                    qt.Qt.Key.Key_C,
+                    modifiers=qt.Qt.KeyboardModifier.ControlModifier,
+                )
+                self._flush_gui()
+                if clipboard.text() != "translate":
+                    raise AssertionError(
+                        f"検索欄のCtrl+C結果が不正です: {clipboard.text()!r}"
+                    )
+                self._key(
+                    field,
+                    qt.Qt.Key.Key_X,
+                    modifiers=qt.Qt.KeyboardModifier.ControlModifier,
+                )
+                self._flush_gui()
+                if field.text():
+                    raise AssertionError("検索欄のCtrl+Xが動作しません")
+                self._key(
+                    field,
+                    qt.Qt.Key.Key_V,
+                    modifiers=qt.Qt.KeyboardModifier.ControlModifier,
+                )
+                self._flush_gui()
+                if field.text() != "translate":
+                    raise AssertionError(
+                        f"検索欄のCtrl+V結果が不正です: {field.text()!r}"
+                    )
+                self._key(
+                    field,
+                    qt.Qt.Key.Key_Z,
+                    modifiers=qt.Qt.KeyboardModifier.ControlModifier,
+                )
+                self._flush_gui()
+                if field.text():
+                    raise AssertionError("検索欄のCtrl+Zが動作しません")
+            finally:
+                clipboard.setMimeData(previous)
+            if source.read_bytes() != before or not cmds.undoInfo(
+                query=True, undoQueueEmpty=True
+            ):
+                raise AssertionError(
+                    "右クリックか検索がJSON・Maya Undoを変更しました"
+                )
+            self.steps.append(
+                "custom_filter_context_selection_exclusion_and_search_keys"
+            )
+        finally:
+            panel.order_context_menu.hide()
+            panel.discard()
+            panel.node_type_combo.setCurrentIndex(0)
+            if saved_target is not None:
+                panel.set_target(saved_target)
+            else:
+                panel.target_combo.setCurrentIndex(0)
+            registry.remove(path)
+            panel.search_edit.setText(saved_search)
+            widget.controller.set_mode(saved_mode)
 
     def _inspect_common_header(self) -> None:
         """実画面でモードと検索の有無によらないヘッダー配置と区切りを確認する。"""
@@ -4798,6 +5099,35 @@ class _MayaSmokeSession:
             raise AssertionError(
                 f"{name}: expected={expected}, actual={values}"
             )
+
+    @staticmethod
+    def _right_click(widget: qt.QWidget, position: qt.QPoint) -> None:
+        """右ボタンの押下・解放とメニュー通知を同じ位置へ送り、選択経路も通す。"""
+        from bd_util.ui import qt
+
+        for kind in (
+            qt.QEvent.Type.MouseButtonPress,
+            qt.QEvent.Type.MouseButtonRelease,
+        ):
+            event = qt.QtGui.QMouseEvent(
+                kind,
+                qt.QPointF(position),
+                qt.QPointF(widget.mapToGlobal(position)),
+                qt.Qt.MouseButton.RightButton,
+                (
+                    qt.Qt.MouseButton.RightButton
+                    if kind == qt.QEvent.Type.MouseButtonPress
+                    else qt.Qt.MouseButton.NoButton
+                ),
+                qt.Qt.KeyboardModifier.NoModifier,
+            )
+            qt.QApplication.sendEvent(widget, event)
+        context = qt.QtGui.QContextMenuEvent(
+            qt.QtGui.QContextMenuEvent.Reason.Mouse,
+            position,
+            widget.mapToGlobal(position),
+        )
+        qt.QApplication.sendEvent(widget, context)
 
     @staticmethod
     def _open_context_menu(widget: qt.QWidget) -> None:

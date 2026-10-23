@@ -415,15 +415,23 @@ class ChannelBoxController(qt.QObject):
             self.filter_changed.emit()
             self.refresh()
 
-    def replace_custom_filter(self, selection: CustomFilterSelection) -> None:
-        """再読込した同一ファイルの定義を両モードの選択へ反映する。"""
+    def replace_custom_filter(
+        self,
+        selection: CustomFilterSelection,
+        *,
+        previous_path: str | None = None,
+    ) -> None:
+        """再読込やファイル改名を両モードの保持選択へ反映する。"""
         if self._disposed:
             return
+        source_path = (
+            selection.path if previous_path is None else previous_path
+        )
         active_changed = False
         for mode in ("values", "states"):
             selected = self._filters[mode]
             if isinstance(selected, CustomFilterSelection) and (
-                selected.path == selection.path
+                selected.path == source_path
             ):
                 self._filters[mode] = selection
                 active_changed |= mode == self._mode

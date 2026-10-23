@@ -136,7 +136,7 @@ tooltip、constraintの入力禁止、Undo／Redo、時刻変更でのSlider終�
 検証用の共有JSONを2件作成して登録し、管理画面の一覧・順序変更・ON/OFFと
 Attribute Filterへの反映を確認します。非表示属性をJSONの順に表示して値編集・Undoを行い、
 定義にないjoint型では`keyable + channelbox`へ戻る案内と表示行を確認します。
-同じ工程で設定モードのJSON保存、分割バー、候補の所属操作とドラッグ複数選択、
+同じ工程で設定モードのJSON保存、QToolBoxの切替、候補の所属操作とドラッグ複数選択、
 表示順一覧の複数選択・上下移動・除外も実画面で確認します。
 ノード未選択での型直接選択と属性順の編集、型固定中の選択変更、20×20アイコンと
 属性検索の配置、複製ボタンを含む管理画面も確認して撮影します。新規作成の`fileNew.png`と
@@ -148,16 +148,29 @@ Attribute Filterへの反映を確認します。非表示属性をJSONの順に
 JSON登録、保存後のCustom表示、sceneとUndo履歴の不変を確認します。
 設定画面からの新規作成、`_copy`初期名での全型複製、未保存確認キャンセル時の未作成、
 未ロード型を含むノードなしの編集、保存済み候補の除外・再追加も検証します。
-表示順と候補の境界を動かした際の両領域の表示、絞り込み候補の範囲選択と所属変更、
+QToolBoxのページ切替と選択・検索・スクロール位置の保持、絞り込み候補の範囲選択と所属変更、
 スクロール外の候補、候補外の既存pathと別ノード型の保持、0件時の空配列も確認します。
 一括操作では保存前に共有JSON・scene・Undoが変わらず、保存後の再読込で反映されることを
 確認します。候補数が多い場合も、各候補の変更ごとに画面全体を再構築しないことを確認します。
 新規作成の初期保存先がprefs内の`bd_channel_box/custom_filter`で、フォルダーを自動作成し、
 複製は元JSONのフォルダーを初期表示することも検証します。
 共通ヘッダーの横線と、モード・検索表示を切り替えても上2行の配置が変わらないことを確認します。
-設定画面は新規作成・名前変更・保存・破棄のアイコン順序と描画を確認します。
+設定画面は新規作成・名前変更・保存・破棄・管理のアイコン順序と描画を確認します。
+Maya本体のrunnerで`QR_settings.png`の取得と、アイコン・メニューから同じ管理画面を開き、
+未保存編集を維持することを確認します。QToolBox内部のページと候補領域が周囲のWindow配色を
+継承することも確認します。
 名前変更の初期値・取消・空欄・同名、保存前のJSON不変、未保存印、保存・破棄後の表示を検証します。
+`test_bd_channel_box_filter_file_dialogs.py`では保存先選択への一本化、実ファイル名からの表示名生成、
+衝突時の再選択・取消、改名入力中のOK無効化、保存直前の衝突、同名候補の識別を確認します。
+改名成功後は保存済みの定義を再読込なしで引き継ぎ、登録先が孤立しないことも検証します。
+ファイル名の変更後も登録順・ON/OFF・各モードの選択・再起動時の値編集の選択が維持されることを
+`test_bd_channel_box_filter_preferences.py`とファイル操作の検証で確認します。
 型情報取得失敗は常設案内ラベルではなく共通通知へ出ることを確認します。
+`test_bd_channel_box_custom_filter_context.py`では、右ボタンの押下・解放・メニュー通知を送り、
+選択内の複数選択維持、選択外の単独選択、余白・空一覧での選択維持とメニュー抑止を確認します。
+欠落pathを含む除外の下書き反映、保存・破棄、他型とscene・Undoの不変、メニューの終了も検証します。
+設定モードのStep抑止とほかのモードの維持、検索のメニュー抑止とCtrl+C／X／V／Zも確認します。
+Maya本体の同じrunnerでも右クリックの選択規則・除外・検索の編集キーを実行し、専用メニューを撮影します。
 値編集の選択は`test_bd_channel_box_filter_preferences.py`で標準5項目、同名・改名・並べ替え後の
 カスタムpath、利用不能・不正設定時の既定復帰、別モードからの独立性を確認します。
 `test_bd_channel_box_dock.py`では再表示・配置reset・reloadと既存UI設定の共存を確認します。
@@ -173,6 +186,22 @@ Maya本体でも、表示・ロックまたは設定モードから閉じて再�
 保存前後のJSONとscene・Undo履歴も確認します。
 JSONの新規作成、型・属性順の保持、空定義と未定義型、外部更新時の上書き防止は
 `tests/unit/test_bd_channel_box_custom_filter_editor.py`で確認します。
+
+2026-10-23のファイル名連動・QToolBox変更は、Maya 2025／2026／2027の全runtime testが
+各657件成功しました。保存済み定義の直接引き継ぎを補強した後も、追加1件を含む関連33件が
+全versionで成功しています。最終suiteの収集件数は658件です。unitは79件成功し、
+全versionのPyrightはerror・warning 0件、Black checkと`git diff --check`も成功しました。
+Maya 2025本体は20工程が成功し、2ページの配置と同名時のOK無効化を画像でも確認しました。
+結果は`%TEMP%/bd-channel-box-maya2025-7v56ypze`の`result.json`で、`success: true`・
+`error: null`です。操作結果保存後の終了待ちは既知の90秒タイムアウトとなり、runnerは
+専用processを終了してcode 1を返しました。操作成功と正常終了を分けて記録します。
+Maya 2026／2027本体の画面操作は今回実施していません。
+
+続く背景色・管理アイコンの調整では、Maya 2025／2026／2027の関連test各23件、
+全versionのPyright、Black checkが成功しました。Maya 2025本体は21工程が成功し、
+Window配色の継承、`QR_settings.png`の描画、未選択時の管理起動、メニューとのWindow共有と
+未保存編集の保持を確認しました。結果は`%TEMP%/bd-channel-box-maya2025-3eo3m3j_`です。
+`success: true`・`error: null`で、今回はrunner・Mayaとも正常終了し、終了codeは0です。
 
 runnerは別の `maya.exe` を起動し、一時ディレクトリの `MAYA_APP_DIR`、Maya.env探索先、
 project、script pathを使用します。通常のMaya.envを書き換えず、起動済みMayaへ接続しません。
@@ -264,7 +293,7 @@ drawOverrideの先頭はoverrideEnabled、その次はoverrideDisplayTypeです�
 - `44-custom-filter-hidden-rows.png`: カスタム定義の順に並ぶ非表示属性を含む値編集行。
 - `45-custom-filter-undefined-joint.png`: 未定義joint型の代替条件の案内と表示行。
 - `46-custom-filter-setup.png`: 設定モードの編集対象、属性2択、表示順、保存操作。
-- `47-custom-filter-batch.png`: 分割バー調整後の設定画面と、検索候補の一括操作。
+- `47-custom-filter-batch.png`: 属性候補ページの設定画面と、検索候補の一括操作。
 - `48-custom-filter-selection.png`: 属性名の縦ドラッグによる複数選択と、選択行の所属操作。
 - `49-custom-filter-order-selection.png`: 上段の複数選択と、選択属性の一段移動。
 - `result-restart.json`、`clipboard-original.json`: 別Maya processでのOSクリップボード読取り結果と、
@@ -334,7 +363,8 @@ utilの`verify.cmd`も対応3 versionを含めて成功しました。この段�
   状態操作ではenum定義の不一致を理由にノードを除外しないこと、親ロックを自動解除しないこと。
 - 現行の右クリックメニュー: 値編集行のラベル・入力部品から同じメニューを開き、
   選択済みの行は複数選択を維持し、未選択行はその行だけを選ぶこと。
-  状態編集行はメニューも選択変更もなく、余白はStep設定だけを示すこと。
+  状態編集行はメニューも選択変更もなく、値編集・表示とロックの余白はStep設定だけを示すこと。
+  設定モードではStepを開かず、表示順項目に専用の「除外する」だけを表示すること。
   アニメーション、値の揃え・コピー・ペースト・float系の四捨五入・回転の集約、フリーズ、
   Step設定、ロック・表示の並びを[現行仕様](bd_channel_box.md#選択属性のメニュー)に照らすこと。
   四捨五入は選択範囲と桁数の3階層で、非float行には表示しないこと。
@@ -518,6 +548,18 @@ Maya 2025／2026／2027の全runtime test各626件も成功しました。
 幅340／520での共通ヘッダー配置とリサイズ追従、名前変更の取消・不正名・同名・保存・破棄、
 未保存印とラジオなぞりの更新回数、型取得失敗の共通通知を含みます。
 standaloneはpytest cacheの書込み権限警告がありますが、テスト結果は成功です。
+
+同日の右クリック整理では、toolsの`check.cmd`（unit 40件）、Black check、3 versionのPyright、
+Maya 2025／2026／2027の全runtime test各641件が成功しました。専用の15件には、右クリック時の
+選択保持・切替、欠落pathの除外、余白・検索のメニュー抑止、編集キー、保存・破棄、メニュー終了を含みます。
+Maya本体も3 versionで20工程がsuccess=true／error=nullとなり、専用メニューを撮影しました。
+2026の初回は連続キー入力のCtrl+V期待値で停止したため、runnerでフォーカス移動とclipboard通知を
+各入力の間に処理するようにし、再確認で成功しました。ツール本体のキー処理は変更していません。
+成功資料は`%TEMP%/bd-channel-box-maya2025-ixighhld`、
+`%TEMP%/bd-channel-box-maya2026-jaj73e_w`、`%TEMP%/bd-channel-box-maya2027-ttohjg_5`です。
+結果JSONと2025／2026のメニュー画像はローカルの`build/custom-filter-context-qa-20261023`にも保管しました。
+standaloneはpytest cacheの書込み権限警告があります。Maya本体はいずれも終了待ちが90秒で
+タイムアウトし、runnerは専用processを停止して終了code 1を返しました。操作成功と正常終了は区別します。
 
 1000jointの`drawStyle`は実キー入力一回で全対象を編集し、Undo／Redoで復元することを
 確認します。共有enum定義の取得回数が対象数に比例する上限内に収まり、操作時の一時Bindingが

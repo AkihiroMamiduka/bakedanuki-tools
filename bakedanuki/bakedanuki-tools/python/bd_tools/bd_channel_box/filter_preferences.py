@@ -51,7 +51,7 @@ class ValueFilterPreferences:
         return "visible"
 
     def save(self, value: ChannelDisplayFilter) -> bool:
-        """選択変更を同期し、名前変更や表示順変更で保存値を変えない。"""
+        """選択と改名先pathを同期し、表示名や表示順だけの変更では保存しない。"""
         identifier = (
             _CUSTOM_PREFIX + value.path
             if isinstance(value, CustomFilterSelection)
