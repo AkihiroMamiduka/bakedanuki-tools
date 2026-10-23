@@ -201,6 +201,8 @@ class _MayaSmokeSession:
                 self._inspect_custom_filter_type_editor,
                 self._inspect_reference_only_custom_filter_setup,
                 self._inspect_thousand_node_states,
+                self._inspect_value_filter_preferences,
+                self._inspect_common_header,
                 self._finish,
             )
 
@@ -1840,7 +1842,7 @@ class _MayaSmokeSession:
         if not cmds.undoInfo(query=True, undoQueueEmpty=True):
             raise AssertionError("設定モードの選択がUndo履歴を変更しました")
 
-        # 分割バーと候補一括操作を実画面で確かめる
+        # 分割バーと候補の所属変更を実画面で確かめる
         splitter = panel.list_splitter
         if splitter.orientation() != qt.Qt.Orientation.Vertical:
             raise AssertionError("表示順と候補の分割方向が縦ではありません")
@@ -1857,24 +1859,20 @@ class _MayaSmokeSession:
             raise AssertionError("分割バーで一覧の表示範囲を変更できません")
         panel.search_edit.setText("hiddenWeight")
         self._flush_gui()
-        panel.exclude_all_button.click()
+        self._custom_filter_radio("hiddenWeight", False).click()
         self._flush_gui()
         if panel.draft is None or panel.draft.paths("joint"):
-            raise AssertionError(
-                "候補の一括除外が作業中の定義へ反映されません"
-            )
-        panel.include_all_button.click()
+            raise AssertionError("候補の除外が作業中の定義へ反映されません")
+        self._custom_filter_radio("hiddenWeight", True).click()
         self._flush_gui()
         if panel.draft is None or panel.draft.paths("joint") != (
             "hiddenWeight",
         ):
-            raise AssertionError(
-                "候補の一括追加が作業中の定義へ反映されません"
-            )
+            raise AssertionError("候補の追加が作業中の定義へ反映されません")
         self._capture("47-custom-filter-batch.png")
         if not cmds.undoInfo(query=True, undoQueueEmpty=True):
             raise AssertionError("候補の一括操作がUndo履歴を変更しました")
-        self.steps.append("resize_and_batch_custom_filter_setup")
+        self.steps.append("resize_and_edit_custom_filter_setup")
 
         # 属性名の縦ドラッグと選択行へのラジオ一括適用を実画面で確かめる
         panel.search_edit.setText("multiHidden")
@@ -1952,7 +1950,7 @@ class _MayaSmokeSession:
         self.steps.append("select_and_toggle_custom_filter_candidates")
 
         # 上段の複数選択を一段移動し、選択全件の除外まで確認する
-        panel.include_all_button.click()
+        self._custom_filter_radio("multiHiddenA", True).click()
         panel.list_splitter.setSizes([300, 80])
         self._flush_gui()
         order = panel.order_list
@@ -2158,7 +2156,9 @@ class _MayaSmokeSession:
                 raise AssertionError("ノードなしで型の定義を表示できません")
             panel.search_edit.setText("translate")
             self._flush_gui()
-            if not panel.include_all_button.isEnabled():
+            if not self._custom_filter_radio(
+                "translate.translateX", True
+            ).isVisible():
                 raise AssertionError("型の標準属性を検索できません")
 
             # 指定リソースの取得可否と、代替を含む表示用アイコンを別々に記録する
@@ -2180,18 +2180,61 @@ class _MayaSmokeSession:
                     >= panel.order_list.mapToGlobal(qt.QPoint()).x()
                 ):
                     raise AssertionError("表示順ボタンが一覧の左にありません")
+            for button, combo, icon_name in (
+                (panel.new_button, panel.target_combo, "fileNew.png"),
+                (
+                    panel.rename_button,
+                    panel.target_combo,
+                    "fileTextureEdit.png",
+                ),
+                (panel.save_button, panel.target_combo, "fileSave.png"),
+                (panel.discard_button, panel.target_combo, "redo_s.png"),
+                (
+                    panel.clear_type_button,
+                    panel.node_type_combo,
+                    "RS_delete.png",
+                ),
+            ):
+                resources[icon_name] = (
+                    not qt.QIcon(f":/{icon_name}").pixmap(16, 16).isNull()
+                )
+                if (
+                    button.size() != qt.QSize(20, 20)
+                    or button.icon().pixmap(16, 16).isNull()
+                ):
+                    raise AssertionError(
+                        "新規作成・型削除アイコンが20×20で描画されません"
+                    )
+                if (
+                    button.mapToGlobal(qt.QPoint()).x()
+                    <= combo.mapToGlobal(qt.QPoint()).x() + combo.width()
+                ):
+                    raise AssertionError(
+                        "アイコンが対象ComboBoxの右隣にありません"
+                    )
             self.diagnostics.append(
                 {"custom_filter_icon_resources": resources}
             )
+            toolbar = (
+                panel.new_button,
+                panel.rename_button,
+                panel.save_button,
+                panel.discard_button,
+            )
+            if any(
+                left.x() >= right.x() or left.y() != right.y()
+                for left, right in zip(toolbar, toolbar[1:])
+            ):
+                raise AssertionError(
+                    "フィルター操作アイコンの順序・行が不正です"
+                )
             search_y = panel.search_edit.mapToGlobal(qt.QPoint()).y()
             if not (
-                panel.include_all_button.mapToGlobal(qt.QPoint()).y()
+                panel.candidates_label.mapToGlobal(qt.QPoint()).y()
                 < search_y
                 < panel.candidate_scroll.mapToGlobal(qt.QPoint()).y()
             ):
-                raise AssertionError(
-                    "属性検索が一括ボタンと候補一覧の間にありません"
-                )
+                raise AssertionError("属性検索が候補一覧の直上にありません")
             panel.order_list.setCurrentRow(1)
             panel.up_button.click()
             self._flush_gui()
@@ -2202,6 +2245,79 @@ class _MayaSmokeSession:
                 raise AssertionError("型の表示順をアイコンで変更できません")
             self._capture("54-custom-filter-type-editor.png")
             panel.save_button.click()
+
+            # 改名ダイアログからの変更を下書きに保ち、破棄と保存を確認する
+            saved_name_content = source.read_bytes()
+
+            def accept_rename() -> None:
+                """現在名を表示した改名ダイアログを新しい表示名で確定する。"""
+                dialog = cast(
+                    Callable[[], qt.QWidget | None],
+                    getattr(qt.QApplication, "activeModalWidget"),
+                )()
+                if not isinstance(dialog, qt.QDialog):
+                    raise AssertionError("名前変更ダイアログが開きません")
+                field = dialog.findChild(
+                    qt.QLineEdit, "renameCustomFilterName"
+                )
+                if (
+                    not isinstance(field, qt.QLineEdit)
+                    or field.text() != "Type Editor"
+                ):
+                    raise AssertionError(
+                        "現在のフィルター名が初期表示されません"
+                    )
+                field.setText("Type Editor Renamed")
+                dialog.accept()
+
+            single_shot = cast(
+                Callable[[int, Callable[[], None]], None],
+                getattr(qt.QTimer, "singleShot"),
+            )
+            single_shot(0, accept_rename)
+            panel.rename_button.click()
+            self._flush_gui()
+            if (
+                panel.target_combo.currentText() != "Type Editor Renamed *"
+                or source.read_bytes() != saved_name_content
+            ):
+                raise AssertionError("改名が下書きに限定されていません")
+            self._capture("56-custom-filter-rename-draft.png")
+            panel.discard_button.click()
+            if panel.target_combo.currentText() != "Type Editor":
+                raise AssertionError("表示名を破棄できません")
+            single_shot(0, accept_rename)
+            panel.rename_button.click()
+            panel.save_button.click()
+            if (
+                json.loads(source.read_text(encoding="utf-8"))["name"]
+                != "Type Editor Renamed"
+                or panel.save_button.isEnabled()
+            ):
+                raise AssertionError("名前変更を保存できません")
+            self.steps.append("rename_custom_filter_draft_discard_and_save")
+            # 型削除は下書きだけに反映し、JSONの空配列と他型を保つ
+            saved_content = source.read_bytes()
+            panel.clear_type_button.click()
+            self._flush_gui()
+            if (
+                panel.node_type_combo.currentIndex() != 0
+                or panel.clear_type_button.isEnabled()
+            ):
+                raise AssertionError("型削除後に選択ノードへ戻りません")
+            if (
+                panel.draft is None
+                or panel.draft.has_node_type("transform")
+                or not panel.draft.has_node_type("joint")
+            ):
+                raise AssertionError("型の削除が別型にも影響しました")
+            if source.read_bytes() != saved_content:
+                raise AssertionError("型削除だけでJSONへ保存されました")
+            panel.discard()
+            self._select_combo_item(
+                panel.node_type_combo,
+                panel.node_type_combo.findData("transform"),
+            )
             cmds.select(self.nodes[0], replace=True)
             self._flush_gui()
             if panel.node_type_combo.currentData() != "transform":
@@ -2219,6 +2335,7 @@ class _MayaSmokeSession:
             self.steps.append(
                 "edit_custom_filter_type_without_nodes_and_inspect_icons"
             )
+
         finally:
             # 後続の基準ノード検証へ、元の登録と選択追従を戻す
             panel.discard()
@@ -2231,6 +2348,118 @@ class _MayaSmokeSession:
             self._select_combo_item(
                 widget.mode_combo, widget.mode_combo.findData(saved_mode)
             )
+
+    def _inspect_common_header(self) -> None:
+        """実画面でモードと検索の有無によらないヘッダー配置と区切りを確認する。"""
+        from bd_util.ui import qt
+
+        widget = self._require_window().widget
+        saved_mode = widget.controller.mode
+        saved_filter = widget.controller.values_attribute_filter
+        expected = (
+            widget.mode_combo.geometry(),
+            widget.filter_combo.geometry(),
+        )
+        for mode in ("states", "custom_filter_setup", "values"):
+            widget.controller.set_mode(mode)
+            for value in ("all", "visible"):
+                widget.controller.set_attribute_filter(value)
+                self._flush_gui()
+                if (
+                    widget.mode_combo.geometry(),
+                    widget.filter_combo.geometry(),
+                ) != expected:
+                    raise AssertionError(
+                        "モードまたは検索の切替でヘッダー幅が変わりました"
+                    )
+                separator = widget.header_separator
+                if (
+                    not separator.isVisible()
+                    or separator.frameShape() != qt.QFrame.Shape.HLine
+                    or separator.y() <= widget.filter_combo.geometry().bottom()
+                ):
+                    raise AssertionError(
+                        "共通ヘッダーの下に区切り線がありません"
+                    )
+                if (
+                    widget.search_edit.isVisible()
+                    and widget.search_edit.y() <= separator.geometry().bottom()
+                ):
+                    raise AssertionError("検索欄が区切り線の下にありません")
+        widget.controller.set_attribute_filter(saved_filter)
+        widget.controller.set_mode(saved_mode)
+        self.steps.append("common_header_geometry_across_modes_and_search")
+
+    def _custom_filter_radio(
+        self, path: str, included: bool
+    ) -> qt.QRadioButton:
+        """設定候補の正式pathと所属方向から現在のラジオを取得する。"""
+        from bd_util.ui import qt
+
+        panel = self._require_window().widget.setup_panel
+        find_buttons = cast(
+            Callable[[type[qt.QRadioButton]], list[qt.QRadioButton]],
+            getattr(panel, "findChildren"),
+        )
+        label = "含める" if included else "含めない"
+        for button in find_buttons(qt.QRadioButton):
+            if (
+                button.toolTip().splitlines()[0] == path
+                and button.text() == label
+            ):
+                return button
+        raise AssertionError(f"候補ラジオがありません: {path}/{label}")
+
+    def _inspect_value_filter_preferences(self) -> None:
+        """別モードから閉じたツールを再表示し、値編集の標準・カスタム選択を復元する。"""
+        from bd_tools import bd_channel_box
+        from bd_tools.bd_channel_box.custom_filters import (
+            CustomFilterSelection,
+        )
+
+        widget = self._require_window().widget
+        saved = widget.controller.values_attribute_filter
+        self._select_combo_item(widget.mode_combo, 0)
+        self._select_combo_item(widget.filter_combo, 5)
+        selected = widget.controller.attribute_filter
+        if not isinstance(selected, CustomFilterSelection):
+            raise AssertionError("保存するカスタムフィルターを選べません")
+        self._select_combo_item(widget.mode_combo, 1)
+        bd_channel_box.close()
+        self._flush_gui()
+        self.window = bd_channel_box.show()
+        self._flush_gui()
+        widget = self._require_window().widget
+        restored = widget.controller.attribute_filter
+        if (
+            widget.controller.mode != "values"
+            or not isinstance(restored, CustomFilterSelection)
+            or restored.path != selected.path
+        ):
+            raise AssertionError(
+                "別モードからの再表示でカスタム選択が復元されません"
+            )
+
+        self._select_combo_item(
+            widget.filter_combo, widget.filter_combo.findData("hidden")
+        )
+        self._select_combo_item(widget.mode_combo, 2)
+        bd_channel_box.close()
+        self._flush_gui()
+        self.window = bd_channel_box.show()
+        self._flush_gui()
+        widget = self._require_window().widget
+        if (
+            widget.controller.attribute_filter != "hidden"
+            or widget.filter_combo.currentData() != "hidden"
+        ):
+            raise AssertionError(
+                "設定モードからの再表示で値編集の標準選択が復元されません"
+            )
+        widget.controller.set_attribute_filter(saved)
+        self.steps.append(
+            "restore_values_filter_after_reopen_from_other_modes"
+        )
 
     def _inspect_reference_only_custom_filter_setup(self) -> None:
         """千ノードの混在選択でも基準型だけの設定画面を操作できるか確認する。"""

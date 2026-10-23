@@ -680,10 +680,10 @@ def test_setup_order_multi_selection_moves_and_removes_as_one_action(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
-def test_setup_splitter_and_bulk_actions_use_filtered_candidates(
+def test_setup_splitter_and_selected_candidates_keep_other_definitions(
     editor: ChannelBoxWidget, tmp_path: Path
 ) -> None:
-    """分割幅と検索候補の一括操作をUIから確認し、候補外の定義を守る。"""
+    """分割幅と候補の範囲選択をUIから確認し、候補外の定義を守る。"""
     node = cmds.createNode("transform", name="bulkSetupBase")
     batch_paths = tuple(f"batch{index:02d}" for index in range(30))
     for path in (*batch_paths, "hiddenOther"):
@@ -730,7 +730,16 @@ def test_setup_splitter_and_bulk_actions_use_filtered_candidates(
     assert upper_large[1] < lower_large[1]
     assert panel.candidate_scroll.verticalScrollBar().maximum() > 0
 
-    panel.include_all_button.click()
+    first = _candidate_label(panel, batch_paths[0])
+    last = _candidate_label(panel, batch_paths[-1])
+    panel.candidate_scroll.ensureWidgetVisible(first)
+    _events()
+    _mouse_candidate(first)
+    panel.candidate_scroll.ensureWidgetVisible(last)
+    _events()
+    _mouse_candidate(last, qt.Qt.KeyboardModifier.ShiftModifier)
+    assert panel.selected_candidate_paths() == batch_paths
+    _candidate_radio(panel, batch_paths[-1], True).click()
     _events()
     assert panel.draft is not None
     assert panel.draft.paths("transform") == (
@@ -744,7 +753,7 @@ def test_setup_splitter_and_bulk_actions_use_filtered_candidates(
     assert cmds.getAttr(f"{node}.batch00") == 0.0
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
-    panel.exclude_all_button.click()
+    _candidate_radio(panel, batch_paths[-1], False).click()
     _events()
     assert panel.draft.paths("transform") == ("legacyMissing", "hiddenOther")
     assert panel.draft.paths("joint") == ("jointOnly",)
@@ -758,7 +767,7 @@ def test_setup_splitter_and_bulk_actions_use_filtered_candidates(
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 
-def test_setup_bulk_exclusion_saves_explicit_empty_type(
+def test_setup_radio_exclusion_saves_explicit_empty_type(
     editor: ChannelBoxWidget, tmp_path: Path
 ) -> None:
     """候補をすべて除外しても空の型定義を保存し、標準表示へ戻さない。"""
@@ -787,7 +796,7 @@ def test_setup_bulk_exclusion_saves_explicit_empty_type(
     editor.filter_combo.setCurrentIndex(editor.filter_combo.findData("hidden"))
     panel.search_edit.setText("bulkHidden")
     _events()
-    panel.exclude_all_button.click()
+    _candidate_radio(panel, "bulkHidden", False).click()
     _events()
     assert panel.draft is not None
     assert panel.draft.has_node_type("transform")
@@ -913,7 +922,7 @@ def test_setup_radio_sweep_preserves_selection_and_batches_display(
     original_apply = draft.set_many_included
     original_order = cast(Callable[[], None], getattr(panel, "_refresh_order"))
     original_status = cast(
-        Callable[[], None], getattr(panel, "_refresh_status")
+        Callable[[], None], getattr(panel, "_refresh_target_label")
     )
 
     def record_apply(
@@ -936,7 +945,7 @@ def test_setup_radio_sweep_preserves_selection_and_batches_display(
 
     monkeypatch.setattr(draft, "set_many_included", record_apply)
     monkeypatch.setattr(panel, "_refresh_order", refresh_order)
-    monkeypatch.setattr(panel, "_refresh_status", refresh_status)
+    monkeypatch.setattr(panel, "_refresh_target_label", refresh_status)
     include_a = _candidate_radio(panel, "sweepA", True)
     include_c = _candidate_radio(panel, "sweepC", True)
     exclude_a = _candidate_radio(panel, "sweepA", False)
@@ -1177,6 +1186,10 @@ def test_manager_creates_and_selects_new_filter(
 
     def choose_path(*_args: object) -> tuple[str, str]:
         """保存ダイアログから検証用の新規pathを返す。"""
+        assert Path(cast(str, _args[2])) == (
+            tmp_path / "bd_channel_box" / "custom_filter" / "New Rig.json"
+        )
+        assert Path(cast(str, _args[2])).parent.is_dir()
         return str(path), "JSON ファイル (*.json)"
 
     def accept_name() -> None:
@@ -1220,7 +1233,13 @@ def test_manager_creates_and_selects_new_filter(
     )
 
 
-def _queue_filter_name(expected: str, replacement: str | None = None) -> None:
+def _queue_filter_name(
+    expected: str,
+    replacement: str | None = None,
+    *,
+    field_name: str = "newCustomFilterName",
+    accepted: bool = True,
+) -> None:
     """次の名前ダイアログの初期値を確認し、指定名で確定する。"""
 
     def accept() -> None:
@@ -1230,12 +1249,15 @@ def _queue_filter_name(expected: str, replacement: str | None = None) -> None:
             getattr(qt.QApplication, "activeModalWidget"),
         )()
         assert isinstance(active, qt.QDialog)
-        field = active.findChild(qt.QLineEdit, "newCustomFilterName")
+        field = active.findChild(qt.QLineEdit, field_name)
         assert isinstance(field, qt.QLineEdit)
         assert field.text() == expected
         if replacement is not None:
             field.setText(replacement)
-        active.accept()
+        if accepted:
+            active.accept()
+        else:
+            active.reject()
 
     cast(
         Callable[[int, Callable[[], None]], None],
@@ -1254,6 +1276,9 @@ def test_setup_creates_filter_without_opening_manager(
 
     def choose_path(*_args: object) -> tuple[str, str]:
         """設定画面で新規JSONの保存先を選択する。"""
+        assert Path(cast(str, _args[2])) == (
+            tmp_path / "bd_channel_box" / "custom_filter" / "From Setup.json"
+        )
         return str(destination), ""
 
     monkeypatch.setattr(qt.QFileDialog, "getSaveFileName", choose_path)
@@ -1268,6 +1293,86 @@ def test_setup_creates_filter_without_opening_manager(
     assert (
         json.loads(destination.read_text(encoding="utf-8"))["node_types"] == {}
     )
+
+
+def test_setup_rename_is_draft_only_until_save_and_can_be_discarded(
+    editor: ChannelBoxWidget, tmp_path: Path
+) -> None:
+    """名前だけの編集を選択欄へ表示し、保存・破棄と他型の保持を確認する。"""
+    source = tmp_path / "rig.json"
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "Rig",
+                "node_types": {"transform": ["visibility"], "joint": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+    editor.custom_filter_registry.add_paths((source,))
+    editor.controller.set_mode("custom_filter_setup")
+    panel = editor.setup_panel
+    panel.set_target(str(source))
+    before = source.read_bytes()
+    cmds.flushUndo()
+    assert panel.rename_button.isEnabled()
+    assert not panel.save_button.isEnabled()
+    _queue_filter_name("Rig", "Renamed", field_name="renameCustomFilterName")
+    panel.rename_button.click()
+    assert panel.target_combo.currentText() == "Renamed *"
+    assert panel.save_button.isEnabled() and panel.discard_button.isEnabled()
+    assert source.read_bytes() == before
+    assert editor.custom_filter_registry.entries[0].definition is not None
+    assert editor.custom_filter_registry.entries[0].definition.name == "Rig"
+    # 登録一覧を再構築しても、下書きの表示名と未保存印を維持する
+    panel.refresh_entries()
+    assert panel.target_combo.currentText() == "Renamed *"
+    panel.discard_button.click()
+    assert panel.target_combo.currentText() == "Rig"
+    assert not panel.save_button.isEnabled()
+    _queue_filter_name("Rig", " Saved ", field_name="renameCustomFilterName")
+    panel.rename_button.click()
+    panel.save_button.click()
+    assert panel.target_combo.currentText() == "Saved"
+    assert not panel.save_button.isEnabled()
+    assert not panel.discard_button.isEnabled()
+    saved = json.loads(source.read_text(encoding="utf-8"))
+    assert saved["name"] == "Saved"
+    assert saved["node_types"] == {"transform": ["visibility"], "joint": []}
+    assert tuple(tmp_path.glob("*.json")) == (source,)
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize(
+    ("replacement", "accepted"),
+    (("Cancelled", False), ("", True), ("Rig", True)),
+)
+def test_setup_rename_cancel_invalid_and_unchanged_keep_clean_draft(
+    editor: ChannelBoxWidget, tmp_path: Path, replacement: str, accepted: bool
+) -> None:
+    """取消・不正入力・同名確定はJSONと未保存状態を変更しない。"""
+    source = tmp_path / "rig.json"
+    create_custom_filter(source, "Rig")
+    editor.custom_filter_registry.add_paths((source,))
+    editor.controller.set_mode("custom_filter_setup")
+    panel = editor.setup_panel
+    panel.set_target(str(source))
+    before = source.read_bytes()
+    _queue_filter_name(
+        "Rig",
+        replacement,
+        field_name="renameCustomFilterName",
+        accepted=accepted,
+    )
+    panel.rename_button.click()
+    assert panel.draft is not None and panel.draft.name == "Rig"
+    assert not panel.draft.is_dirty
+    assert panel.target_combo.currentText() == "Rig"
+    assert not panel.save_button.isEnabled()
+    assert source.read_bytes() == before
+    if accepted and not replacement:
+        assert "名前は空でない" in editor.message_label.text()
 
 
 def test_manager_duplicates_saved_changes_and_all_types_with_copy_suffix(
@@ -1288,7 +1393,10 @@ def test_manager_duplicates_saved_changes_and_all_types_with_copy_suffix(
     panel.draft.set_many_included("joint", ("visibility", "rigMode"), True)
     panel.draft.ensure_node_type("network")
     panel.draft.set_many_included("transform", ("rotateOrder",), True)
-    panel.name_edit.setText("Updated Rig")
+    _queue_filter_name(
+        "Rig", "Updated Rig", field_name="renameCustomFilterName"
+    )
+    panel.rename_button.click()
     destination = tmp_path / "copy.json"
 
     def save_changes(*_args: object) -> qt.QMessageBox.StandardButton:
@@ -1335,7 +1443,8 @@ def test_creation_cancelled_before_dialogs_keeps_draft_and_registration(
     editor.controller.set_mode("custom_filter_setup")
     panel = editor.setup_panel
     panel.set_target(str(source))
-    panel.name_edit.setText("Unsaved")
+    _queue_filter_name("Rig", "Unsaved", field_name="renameCustomFilterName")
+    panel.rename_button.click()
     before = source.read_bytes()
 
     def cancel(*_args: object) -> qt.QMessageBox.StandardButton:
@@ -1364,7 +1473,8 @@ def test_creation_cancelled_before_dialogs_keeps_draft_and_registration(
     assert tuple(tmp_path.glob("*.json")) == (source,)
     assert source.read_bytes() == before
     assert panel.draft is not None and panel.draft.is_dirty
-    assert panel.name_edit.text() == "Unsaved"
+    assert panel.draft.name == "Unsaved"
+    assert panel.target_combo.currentText() == "Unsaved *"
 
 
 def test_setup_type_editor_works_without_nodes_and_preserves_saved_candidates(
@@ -1467,10 +1577,11 @@ def test_fixed_type_ignores_selection_and_uses_standard_filter_flags(
     _events()
     assert _candidate_label(panel, "translate.translateX")
     panel.search_edit.setText("rigMode")
-    assert not panel.include_all_button.isEnabled()
+    assert panel.selected_candidate_paths() == ()
+    assert not _candidate_label(panel, "translate.translateX").isVisible()
     editor.controller.set_attribute_filter("all")
     _events()
-    assert panel.include_all_button.isEnabled()
+    assert _candidate_label(panel, "rigMode").isVisible()
     panel.node_type_combo.setCurrentIndex(0)
     assert "joint 型" in panel.node_label.text()
 
@@ -1502,7 +1613,7 @@ def test_unknown_type_keeps_saved_paths_editable_without_loading_plugin(
     _candidate_radio(panel, "mode", True).click()
     assert panel.draft is not None
     assert panel.draft.paths("bdUnavailablePluginType") == ("amount", "mode")
-    assert "型情報を取得できない" in panel.status_label.text()
+    assert "型の情報を取得できない" in editor.message_label.text()
     assert panel.save()
     saved = json.loads(source.read_text(encoding="utf-8"))["node_types"]
     assert saved == {

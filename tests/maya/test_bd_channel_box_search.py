@@ -110,6 +110,33 @@ def search_editor(
     _new_scene()
 
 
+@pytest.mark.parametrize("width", (340, 520))
+def test_common_header_stays_aligned_across_modes_and_search_visibility(
+    search_editor: ChannelBoxWidget, width: int
+) -> None:
+    """同じWindow幅ではモードや検索の有無を変えても共通2行の配置を保つ。"""
+    editor = search_editor
+    editor.resize(width, 720)
+    _events()
+    expected = (editor.mode_combo.geometry(), editor.filter_combo.geometry())
+    for mode in ("states", "custom_filter_setup", "values"):
+        editor.controller.set_mode(mode)
+        for value in ("all", "visible"):
+            _set_filter(editor, value)
+            assert editor.mode_combo.geometry() == expected[0]
+            assert editor.filter_combo.geometry() == expected[1]
+            separator = editor.header_separator
+            assert separator.isVisible()
+            assert separator.frameShape() == qt.QFrame.Shape.HLine
+            assert separator.y() > editor.filter_combo.geometry().bottom()
+            if editor.search_edit.isVisible():
+                assert editor.search_edit.y() > separator.geometry().bottom()
+    editor.resize(width + 100, 720)
+    _events()
+    assert editor.mode_combo.width() > expected[0].width()
+    assert editor.filter_combo.width() > expected[1].width()
+
+
 def test_search_visibility_has_three_exclusive_modes(
     search_editor: ChannelBoxWidget,
 ) -> None:

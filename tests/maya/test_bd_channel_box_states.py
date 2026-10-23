@@ -402,7 +402,7 @@ def test_filter_uses_last_selected_node_after_order_change(
 def test_filters_remember_each_mode_through_refresh_and_selection(
     state_editor: ChannelBoxWidget,
 ) -> None:
-    """初期値を維持しつつ、各モードの最終フィルターをWindow内だけに保持する。"""
+    """各モードの選択を保持し、値編集の最終フィルターだけを次回へ復元する。"""
     editor = state_editor
     assert editor.filter_combo.currentData() == "visible"
     _filter(editor, "keyable")
@@ -420,7 +420,7 @@ def test_filters_remember_each_mode_through_refresh_and_selection(
     assert editor.filter_combo.currentData() == "hidden"
     fresh = ChannelBoxWidget()
     try:
-        assert fresh.controller.attribute_filter == "visible"
+        assert fresh.controller.attribute_filter == "keyable"
         fresh.controller.set_mode("states")
         assert fresh.controller.attribute_filter == "all"
     finally:

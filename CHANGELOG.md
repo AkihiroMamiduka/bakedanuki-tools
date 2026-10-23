@@ -7,6 +7,29 @@
 
 ## [Unreleased]
 
+### Changed
+
+- bdChannelBoxのMode・Attribute Filterを全モード共通のヘッダーへ分離し、直下へ横線を追加。
+  Attribute Searchを線の下へ移し、モードや検索表示の切替で上2行の幅が変わらない配置にする。
+- カスタムフィルター設定の選択行右端に、新規作成・表示名変更・保存・破棄の20×20アイコンを集約。
+  表示名変更は`fileTextureEdit.png`、保存は`fileSave.png`、破棄は`redo_s.png`を使用する。
+  名前変更はダイアログから下書きへ反映し、JSONのファイル名・pathは維持する。
+  保存前の名前と未保存印`*`を編集用ComboBoxに表示し、保存・破棄は変更時だけ有効にする。
+  常設の名前入力欄・状態ラベルと下部ボタン行は廃止し、型調査失敗は共通通知欄へ移す。
+  UI直接参照では`setup_panel.name_edit`から`rename_button`経由の操作へ移行する。
+  `status_label`は廃止し、保存・破棄ボタンの型は`QToolButton`へ変更する。JSON・設定の移行は不要。
+- bdChannelBoxの新規カスタムフィルターの初期保存先を、使用中Mayaの
+  `prefs/bakedanuki/tools/bd_channel_box/custom_filter`へ変更。未作成ならフォルダーを用意する。
+  任意の保存先と、複製時に元JSONのフォルダーを開く動作は維持する。既存JSONの移動は不要。
+- 値編集モードのAttribute Filter選択をMaya version別に自動保存し、再表示・reload・再起動で復元する。
+  標準IDまたはカスタムJSON pathを`ui.ini`の`preferences/main/values_attribute_filter`へ保存する。
+  利用不能なカスタムと不正・未設定の保存値は`keyable + channelbox`へ戻す。
+  ほかのモードの選択・Mode自体・検索文字列は保存しない。既存設定の移行は不要。
+- カスタムフィルター設定の新規作成をComboBox右隣の`fileNew.png`、型定義削除を
+  ノード型ComboBox右隣の`RS_delete.png`の20×20ボタンへ変更。
+  候補全件の含める／含めないボタンと0件定義ボタンを削除する。
+  複数選択した候補への所属操作と、既存JSONの空配列の意味は維持する。JSON・sceneの移行は不要。
+
 ### Fixed
 
 - Maya 2027のQt型定義差で、bdChannelBoxの一括数値入力に出るPyright警告を修正。
@@ -656,7 +679,8 @@
 - bdChannelBoxへ両モード共通の表示フィルターComboBoxを追加。
   全て／keyable + channelbox／keyable／channelbox／hideの5種類を、基準ノードで判定する。
   channelbox単独は非keyableの表示属性を指す。値編集はkeyable + channelbox、
-  表示・ロックは全てを初期値とし、モードごとの最終選択をWindow内だけで保持する。
+  表示・ロックは全てを初期値とし、モードごとの最終選択を独立して保持する。
+  値編集の選択は次回起動時にも復元する。
   Hide属性の値入力にも対応し、従来のロック・入力接続による編集制限を維持する。
   絞り込み中の状態変更は全対象への操作完了後に表示へ反映し、Undo／Redoにも追従する。
   `controller.attribute_filter`、`set_attribute_filter()`、`ChannelAttributeFilter`、

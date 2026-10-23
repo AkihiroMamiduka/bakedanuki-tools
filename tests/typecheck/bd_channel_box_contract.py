@@ -42,6 +42,7 @@ from bd_tools.bd_channel_box.custom_filter_editor import (
     duplicate_custom_filter,
 )
 from bd_tools.bd_channel_box.custom_filter_setup import CustomFilterSetupPanel
+from bd_tools.bd_channel_box.filter_preferences import ValueFilterPreferences
 from bd_tools.bd_channel_box.widget import (
     AttributeRowMenu,
     AttributeRowWidget,
@@ -58,8 +59,31 @@ assert_type(
     bd_channel_box.show().widget.setup_panel.node_type_combo, qt.QComboBox
 )
 assert_type(
-    bd_channel_box.show().widget.setup_panel.new_button, qt.QPushButton
+    bd_channel_box.show().widget.setup_panel.new_button, qt.QToolButton
 )
+assert_type(bd_channel_box.show().widget.header_separator, qt.QFrame)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.rename_button, qt.QToolButton
+)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.save_button, qt.QToolButton
+)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.discard_button, qt.QToolButton
+)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.clear_type_button, qt.QToolButton
+)
+assert_type(
+    bd_channel_box.show().widget.controller.values_attribute_filter,
+    ChannelDisplayFilter,
+)
+assert_type(
+    bd_channel_box.show().widget.value_filter_preferences,
+    ValueFilterPreferences,
+)
+assert_type(ValueFilterPreferences().restore({}), ChannelDisplayFilter)
+assert_type(ValueFilterPreferences().save("all"), bool)
 assert_type(bd_channel_box.show().widget.setup_panel.up_button, qt.QToolButton)
 assert_type(duplicate_custom_filter("rig.json", "copy.json", "Rig_copy"), str)
 assert_type(CustomFilterDraft("rig.json").move_many("joint", ("a",), -1), bool)

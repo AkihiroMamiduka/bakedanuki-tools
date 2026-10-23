@@ -368,6 +368,11 @@ class ChannelBoxController(qt.QObject):
         return self._filters[self._mode]
 
     @property
+    def values_attribute_filter(self) -> ChannelDisplayFilter:
+        """ほかのモードを表示中でも、値編集用に保持している選択を返す。"""
+        return self._filters["values"]
+
+    @property
     def custom_filter_fallback_node_type(self) -> str | None:
         """現在のカスタム定義が未指定の基準ノード型を返す。"""
         return self._custom_filter_fallback_node_type

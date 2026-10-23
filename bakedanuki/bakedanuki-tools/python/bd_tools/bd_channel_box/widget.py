@@ -57,6 +57,7 @@ from .custom_filter_registry import CustomFilterRegistry
 from .custom_filter_dialogs import create_registered_filter
 from .custom_filter_setup import CustomFilterSetupPanel
 from .custom_filters import CustomFilterSelection
+from .filter_preferences import ValueFilterPreferences
 from .table import ChannelTableView, TableRow
 
 __all__ = [
@@ -1498,6 +1499,7 @@ class ChannelBoxWidget(qt.QWidget):
         """画面を作成してから選択監視を開始する。"""
         super().__init__(parent)
         self.custom_filter_registry = CustomFilterRegistry(self)
+        self.value_filter_preferences = ValueFilterPreferences()
         self.custom_filter_dialog: CustomFilterManagerDialog | None = None
         self._active_custom_filters: dict[str, CustomFilterSelection] = {}
         self._setup_mode_active = False
@@ -1660,7 +1662,7 @@ class ChannelBoxWidget(qt.QWidget):
             "Nice Name・属性名・正式pathを、大文字小文字を区別せず検索します。\n"
             "空白で区切った語は、すべて含む属性だけを表示します。"
         )
-        # 説明を右揃えの共通列に置き、残りの幅を選択欄へ配分する
+        # 共通ヘッダーを検索欄から分離し、表示切替による列幅の変化を防ぐ
         controls_layout = qt.QGridLayout()
         controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setSpacing(6)
@@ -1669,7 +1671,6 @@ class ChannelBoxWidget(qt.QWidget):
             (
                 (self.mode_label, self.mode_combo),
                 (self.filter_label, self.filter_combo),
-                (self.search_label, self.search_edit),
             )
         ):
             label.setAlignment(
@@ -1677,8 +1678,21 @@ class ChannelBoxWidget(qt.QWidget):
                 | qt.Qt.AlignmentFlag.AlignVCenter
             )
             label.setBuddy(control)
+            control.setSizePolicy(
+                qt.QSizePolicy.Policy.Ignored, qt.QSizePolicy.Policy.Fixed
+            )
             controls_layout.addWidget(label, index, 0)
             controls_layout.addWidget(control, index, 1)
+        self.header_separator = qt.QFrame(self)
+        self.header_separator.setObjectName("channelBoxHeaderSeparator")
+        self.header_separator.setFrameShape(qt.QFrame.Shape.HLine)
+        self.header_separator.setFrameShadow(qt.QFrame.Shadow.Sunken)
+        search_layout = qt.QHBoxLayout()
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(6)
+        self.search_label.setBuddy(self.search_edit)
+        search_layout.addWidget(self.search_label)
+        search_layout.addWidget(self.search_edit, 1)
         self.header_label = qt.QLabel("ノードを選択してください", self)
         self.header_label.setTextInteractionFlags(
             qt.Qt.TextInteractionFlag.TextSelectableByMouse
@@ -1743,6 +1757,8 @@ class ChannelBoxWidget(qt.QWidget):
         layout.setSpacing(6)
         layout.setMenuBar(self.menu_bar)
         layout.addLayout(controls_layout)
+        layout.addWidget(self.header_separator)
+        layout.addLayout(search_layout)
         layout.addWidget(self.filter_fallback_label)
         layout.addLayout(self.header_layout)
         layout.addWidget(self.empty_label)
@@ -1816,8 +1832,15 @@ class ChannelBoxWidget(qt.QWidget):
             self._show_custom_filter_manager
         )
         self.search_edit.textChanged.connect(self._queue_search_filter)
-        self._sync_filter()
-        self.controller.refresh()
+        # 登録一覧が揃ってから値編集の選択を復元し、最初の属性一覧へ適用する
+        initial_filter = self.value_filter_preferences.restore(
+            self._active_custom_filters
+        )
+        if initial_filter == self.controller.attribute_filter:
+            self._sync_filter()
+            self.controller.refresh()
+        else:
+            self.controller.set_attribute_filter(initial_filter)
 
     def _populate_filter_combo(self) -> None:
         """既定の5件に続き、有効で正常な共有フィルターを登録順に並べる。"""
@@ -2079,6 +2102,14 @@ class ChannelBoxWidget(qt.QWidget):
         finally:
             self.filter_combo.blockSignals(blocked)
         self._sync_search_visibility()
+
+        # 表示中のモードに関係なく値編集の保持値だけを保存する
+        if not self.value_filter_preferences.save(
+            self.controller.values_attribute_filter
+        ):
+            self._show_error(
+                "値編集の属性フィルター選択を保存できませんでした"
+            )
 
     def _sync_filter_fallback_notice(self) -> None:
         """カスタム定義に基準ノード型がない場合だけ代替条件を示す。"""

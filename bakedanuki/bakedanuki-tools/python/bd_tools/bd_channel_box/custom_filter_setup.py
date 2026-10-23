@@ -78,7 +78,6 @@ class CustomFilterSetupPanel(qt.QWidget):
         self._display_filter: ScalarAttributeDisplayFilter = "all"
         self._type_info_node_type: str | None = None
         self._type_attributes: tuple[ScalarAttributeInfo, ...] = ()
-        self._type_error: str | None = None
         self._known_paths: dict[str, dict[str, None]] = {}
         self._attributes: tuple[
             ScalarAttributeInfo | _SavedAttribute, ...
@@ -101,11 +100,17 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.target_combo = qt.QComboBox(self)
         self.target_combo.setObjectName("customFilterSetupTarget")
         self.target_combo.setAccessibleName("編集するカスタムフィルター")
-        self.new_button = qt.QPushButton("新規作成...", self)
+        self.new_button = qt.QToolButton(self)
         self.new_button.setObjectName("createCustomFilterInSetupButton")
-        self.name_label = qt.QLabel("表示名:", self)
-        self.name_edit = qt.QLineEdit(self)
-        self.name_edit.setObjectName("customFilterSetupName")
+        self.rename_button = qt.QToolButton(self)
+        self.rename_button.setObjectName("customFilterSetupRename")
+        self.save_button = qt.QToolButton(self)
+        self.save_button.setObjectName("customFilterSetupSave")
+        self.discard_button = qt.QToolButton(self)
+        self.discard_button.setObjectName("customFilterSetupDiscard")
+        self.target_combo.setSizePolicy(
+            qt.QSizePolicy.Policy.Ignored, qt.QSizePolicy.Policy.Fixed
+        )
         self.search_edit = qt.QLineEdit(self)
         self.search_edit.setObjectName("customFilterSetupSearch")
         self.search_edit.setPlaceholderText("候補属性を検索")
@@ -118,9 +123,8 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.node_type_combo.setObjectName("customFilterSetupNodeType")
         self.node_type_combo.setAccessibleName("編集するノード型")
         self.node_type_combo.addItem("選択ノード", None)
-        self.status_label = qt.QLabel(self)
-        self.status_label.setObjectName("customFilterSetupStatus")
-        self.status_label.setWordWrap(True)
+        self.clear_type_button = qt.QToolButton(self)
+        self.clear_type_button.setObjectName("customFilterSetupClearType")
         self.order_label = qt.QLabel("フィルターの表示順:", self)
         self.order_list = qt.QListWidget(self)
         self.order_list.setObjectName("customFilterSetupOrder")
@@ -135,6 +139,31 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.down_button = qt.QToolButton(self)
         self.remove_button = qt.QToolButton(self)
         for button, label, icon_name, fallback in (
+            (
+                self.new_button,
+                "カスタムフィルターを新規作成",
+                "fileNew.png",
+                "fileNew.png",
+            ),
+            (
+                self.rename_button,
+                "フィルターの表示名を変更",
+                "fileTextureEdit.png",
+                "fileTextureEdit.png",
+            ),
+            (self.save_button, "JSONに保存", "fileSave.png", "fileSave.png"),
+            (
+                self.discard_button,
+                "保存済みの内容に戻す（変更を破棄）",
+                "redo_s.png",
+                "redo_s.png",
+            ),
+            (
+                self.clear_type_button,
+                "この型のフィルター定義を削除して標準表示に戻す",
+                "RS_delete.png",
+                "RS_delete.png",
+            ),
             (self.up_button, "上へ", "nodeGrapherArrowUp.png", "arrowUp.png"),
             (
                 self.down_button,
@@ -152,26 +181,7 @@ class CustomFilterSetupPanel(qt.QWidget):
             button.setFixedSize(20, 20)
             button.setToolTip(label)
             button.setAccessibleName(label)
-        self.define_type_button = qt.QPushButton("この型を0件で定義", self)
-        self.clear_type_button = qt.QPushButton("この型の定義を削除", self)
-        self.save_button = qt.QPushButton("JSONに保存", self)
-        self.save_button.setObjectName("customFilterSetupSave")
-        self.discard_button = qt.QPushButton("変更を破棄", self)
         self.candidates_label = qt.QLabel("属性をフィルターに含める:", self)
-        self.include_all_button = qt.QPushButton("候補をすべて含める", self)
-        self.include_all_button.setObjectName(
-            "customFilterIncludeAllCandidates"
-        )
-        self.exclude_all_button = qt.QPushButton("候補をすべて含めない", self)
-        self.exclude_all_button.setObjectName(
-            "customFilterExcludeAllCandidates"
-        )
-        bulk_tooltip = (
-            "現在のAttribute Filterと属性検索に一致する候補全件に適用します。"
-            "スクロール外の候補も対象です。"
-        )
-        self.include_all_button.setToolTip(bulk_tooltip)
-        self.exclude_all_button.setToolTip(bulk_tooltip)
         self.candidate_scroll = qt.QScrollArea(self)
         self.candidate_scroll.setObjectName("customFilterSetupAttributes")
         self.candidate_scroll.setMinimumHeight(28)
@@ -194,13 +204,27 @@ class CustomFilterSetupPanel(qt.QWidget):
         grid = qt.QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setColumnStretch(1, 1)
+        # フィルター操作と型操作の横幅を別々に配分する
+        filter_controls = qt.QHBoxLayout()
+        filter_controls.setContentsMargins(0, 0, 0, 0)
+        filter_controls.setSpacing(4)
+        filter_controls.addWidget(self.target_combo, 1)
+        for button in (
+            self.new_button,
+            self.rename_button,
+            self.save_button,
+            self.discard_button,
+        ):
+            filter_controls.addWidget(button)
+        type_controls = qt.QHBoxLayout()
+        type_controls.setContentsMargins(0, 0, 0, 0)
+        type_controls.setSpacing(4)
+        type_controls.addWidget(self.node_type_combo, 1)
+        type_controls.addWidget(self.clear_type_button)
         grid.addWidget(self.target_label, 0, 0)
-        grid.addWidget(self.target_combo, 0, 1)
-        grid.addWidget(self.new_button, 0, 2)
-        grid.addWidget(self.name_label, 1, 0)
-        grid.addWidget(self.name_edit, 1, 1, 1, 2)
-        grid.addWidget(self.node_type_label, 2, 0)
-        grid.addWidget(self.node_type_combo, 2, 1, 1, 2)
+        grid.addLayout(filter_controls, 0, 1)
+        grid.addWidget(self.node_type_label, 1, 0)
+        grid.addLayout(type_controls, 1, 1)
         order_buttons = qt.QVBoxLayout()
         order_buttons.setSpacing(2)
         for button in (self.up_button, self.down_button, self.remove_button):
@@ -216,15 +240,11 @@ class CustomFilterSetupPanel(qt.QWidget):
         order_layout.setSpacing(4)
         order_layout.addWidget(self.order_label)
         order_layout.addLayout(order_content, 1)
-        bulk_buttons = qt.QHBoxLayout()
-        bulk_buttons.addWidget(self.include_all_button)
-        bulk_buttons.addWidget(self.exclude_all_button)
         candidate_pane = qt.QWidget(self)
         candidate_layout = qt.QVBoxLayout(candidate_pane)
         candidate_layout.setContentsMargins(0, 0, 0, 0)
         candidate_layout.setSpacing(4)
         candidate_layout.addWidget(self.candidates_label)
-        candidate_layout.addLayout(bulk_buttons)
         search_layout = qt.QHBoxLayout()
         search_layout.addWidget(qt.QLabel("属性検索:", self))
         search_layout.addWidget(self.search_edit, 1)
@@ -245,40 +265,24 @@ class CustomFilterSetupPanel(qt.QWidget):
             getattr(self.list_splitter, "setSizes"),
         )
         set_sizes([140, 280])
-        type_buttons = qt.QHBoxLayout()
-        type_buttons.addWidget(self.define_type_button)
-        type_buttons.addWidget(self.clear_type_button)
-        save_buttons = qt.QHBoxLayout()
-        save_buttons.addWidget(self.save_button)
-        save_buttons.addWidget(self.discard_button)
         layout = qt.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         layout.addLayout(grid)
         layout.addWidget(self.node_label)
-        layout.addWidget(self.status_label)
         layout.addWidget(self.list_splitter, 1)
-        layout.addLayout(type_buttons)
-        layout.addLayout(save_buttons)
 
         self.target_combo.currentIndexChanged.connect(self._change_target)
         self.new_button.clicked.connect(self._request_create)
+        self.rename_button.clicked.connect(self._rename_filter)
         self.node_type_combo.currentIndexChanged.connect(
             self._change_node_type
         )
-        self.name_edit.textChanged.connect(self._change_name)
         self.search_edit.textChanged.connect(self._change_search)
         self.order_list.itemSelectionChanged.connect(self._sync_buttons)
         self.up_button.clicked.connect(partial(self._move_selected, -1))
         self.down_button.clicked.connect(partial(self._move_selected, 1))
         self.remove_button.clicked.connect(self._remove_selected)
-        self.include_all_button.clicked.connect(
-            partial(self._apply_bulk_included, True)
-        )
-        self.exclude_all_button.clicked.connect(
-            partial(self._apply_bulk_included, False)
-        )
-        self.define_type_button.clicked.connect(self._define_type)
         self.clear_type_button.clicked.connect(self._clear_type)
         self.save_button.clicked.connect(self.save)
         self.discard_button.clicked.connect(self.discard)
@@ -315,6 +319,7 @@ class CustomFilterSetupPanel(qt.QWidget):
             self.target_combo.setCurrentIndex(index if index >= 0 else 0)
         finally:
             self.target_combo.blockSignals(blocked)
+        self._refresh_target_label()
         self._sync_buttons()
 
     def _index_for_path(self, path: str | None) -> int:
@@ -443,14 +448,16 @@ class CustomFilterSetupPanel(qt.QWidget):
         # 型の標準属性は型切替時に一度だけ読み、選択変更では再取得しない
         if self._type_info_node_type != fixed_type:
             self._type_info_node_type = fixed_type
-            self._type_error = None
             try:
                 self._type_attributes = inspect_scalar_attributes_by_type(
                     fixed_type
                 )
             except (ValueError, RuntimeError) as error:
                 self._type_attributes = ()
-                self._type_error = str(error)
+                self.error_occurred.emit(
+                    f"{fixed_type} 型の情報を取得できないため、"
+                    f"保存済み属性を編集します。\n{error}"
+                )
         priorities = {
             path: index
             for index, path in enumerate(
@@ -723,13 +730,7 @@ class CustomFilterSetupPanel(qt.QWidget):
         """定義、型、候補属性に合わせて順序と2択を描き直す。"""
         self._refresh_node_types()
         self._refresh_context()
-        draft = self.draft
         node_type = self._node_type
-        blocked = self.name_edit.blockSignals(True)
-        try:
-            self.name_edit.setText(draft.name if draft is not None else "")
-        finally:
-            self.name_edit.blockSignals(blocked)
         if self.node_type_combo.currentData() is not None:
             self.node_label.setText(
                 f"基準: {node_type} 型（標準属性と保存済み属性）"
@@ -745,38 +746,38 @@ class CustomFilterSetupPanel(qt.QWidget):
                 else "Maya ノードを選択してください"
             )
             self.node_label.setToolTip("")
-        self._refresh_status()
+        self._refresh_target_label()
         self._refresh_order()
         self._refresh_candidates()
         self._sync_buttons()
 
-    def _refresh_status(self) -> None:
-        """未定義型の代替表示と未保存状態を明示する。"""
+    def _refresh_target_label(self) -> None:
+        """編集用の名前と未保存印を更新し、ほかの項目は保存済み表示へ戻す。"""
         draft = self.draft
-        node_type = self._node_type
-        if draft is None:
-            message = "編集するフィルターを選択してください"
-        elif node_type is None:
-            message = "基準ノードを選ぶと型ごとの属性を編集できます"
-        elif not draft.has_node_type(node_type):
-            message = (
-                f"{node_type} 型は未定義: 保存後も"
-                "keyable + channelbox を表示します"
-            )
-        else:
-            message = (
-                f"{node_type} 型は{len(draft.paths(node_type))}件を定義中"
-            )
-        if draft is not None and draft.is_dirty:
-            message += "（未保存）"
-        if self.node_type_combo.currentData() is not None and self._type_error:
-            message += "\n型情報を取得できないため、保存済み属性を編集します。"
-        self.status_label.setToolTip(
-            self._type_error or ""
-            if self.node_type_combo.currentData() is not None
-            else ""
-        )
-        self.status_label.setText(message)
+        entries = {entry.path: entry for entry in self.registry.entries}
+        # 選択項目だけに下書き名を使い、切替前の未保存印を残さない
+        blocked = self.target_combo.blockSignals(True)
+        try:
+            for index in range(1, self.target_combo.count()):
+                path = self.target_combo.itemData(index)
+                entry = entries.get(path) if isinstance(path, str) else None
+                if draft is not None and path == draft.path:
+                    label = draft.name
+                    if entry is None or entry.definition is None:
+                        label += "（登録・読込状態を確認）"
+                    elif not entry.enabled:
+                        label += "（一覧ではOFF）"
+                    if draft.is_dirty:
+                        label += " *"
+                elif entry is not None and entry.definition is not None:
+                    label = entry.definition.name
+                    if not entry.enabled:
+                        label += "（一覧ではOFF）"
+                else:
+                    continue
+                self.target_combo.setItemText(index, label)
+        finally:
+            self.target_combo.blockSignals(blocked)
 
     def _refresh_order(self) -> None:
         """全登録pathを並べ、複数選択と現在行を正式pathで復元する。"""
@@ -927,12 +928,12 @@ class CustomFilterSetupPanel(qt.QWidget):
         self._flush_radio_sweep()
 
     def _flush_radio_sweep(self) -> None:
-        """なぞりで保留した表示順と状態表示を、一回だけ同期する。"""
+        """なぞりで保留した表示順と未保存印を、一回だけ同期する。"""
         if not self._radio_sweep_pending:
             return
         self._radio_sweep_pending = False
         self._refresh_order()
-        self._refresh_status()
+        self._refresh_target_label()
 
     def _sweep_radio_included(self, path: str, included: bool) -> None:
         """選択集合を展開せず、通過した候補一行の所属だけを変更する。"""
@@ -993,14 +994,8 @@ class CustomFilterSetupPanel(qt.QWidget):
             self._radio_sweep_pending = True
             return
         self._refresh_order()
-        self._refresh_status()
+        self._refresh_target_label()
         self._sync_buttons()
-
-    def _apply_bulk_included(self, included: bool) -> None:
-        """現在候補の所属を一括変更し、行と表示順を一度ずつ更新する。"""
-        paths = self._candidate_paths()
-        # 候補外pathを保持したまま、検索結果だけを作業中の定義へ反映する
-        self._set_paths_included(paths, included)
 
     def _move_selected(self, offset: int) -> None:
         """選択した全pathをJSONの表示順で同時に一段移動する。"""
@@ -1011,7 +1006,7 @@ class CustomFilterSetupPanel(qt.QWidget):
             return
         if draft.move_many(node_type, paths, offset):
             self._refresh_order()
-            self._refresh_status()
+            self._refresh_target_label()
 
     def _remove_selected(self) -> None:
         """ノードにないpathも含め、選択した全pathをまとめて除外する。"""
@@ -1023,13 +1018,6 @@ class CustomFilterSetupPanel(qt.QWidget):
         draft.remove_many(node_type, paths)
         self._refresh_view()
 
-    def _define_type(self) -> None:
-        """属性0件の明示的なノード型定義を作る。"""
-        if self.draft is None or self._node_type is None:
-            return
-        self.draft.ensure_node_type(self._node_type)
-        self._refresh_view()
-
     def _clear_type(self) -> None:
         """現在の型定義を削除して標準条件への切替に戻す。"""
         if self.draft is None or self._node_type is None:
@@ -1037,12 +1025,44 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.draft.remove_node_type(self._node_type)
         self._refresh_view()
 
-    def _change_name(self, text: str) -> None:
-        """表示名の入力を保存前の作業中データへ保持する。"""
-        if self.draft is None:
+    def _rename_filter(self) -> None:
+        """表示名をダイアログで検証して下書きへ反映し、保存先は変更しない。"""
+        self._finish_radio_sweep()
+        draft = self.draft
+        if draft is None:
             return
-        self.draft.name = text
-        self._refresh_status()
+        # 現在の下書き名を初期値にして、取消時には変更しない
+        dialog = qt.QDialog(self)
+        dialog.setWindowTitle("フィルターの表示名を変更")
+        name_edit = qt.QLineEdit(dialog)
+        name_edit.setObjectName("renameCustomFilterName")
+        name_edit.setText(draft.name)
+        name_edit.selectAll()
+        buttons = qt.QDialogButtonBox(
+            qt.QDialogButtonBox.StandardButton.Ok
+            | qt.QDialogButtonBox.StandardButton.Cancel,
+            dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout = qt.QVBoxLayout(dialog)
+        layout.addWidget(qt.QLabel("フィルター名:", dialog))
+        layout.addWidget(name_edit)
+        layout.addWidget(buttons)
+        name_edit.setFocus()
+        accepted = dialog.exec() == qt.QDialog.DialogCode.Accepted
+        name = name_edit.text()
+        dialog.deleteLater()
+        if not accepted:
+            return
+        # 検証済みの表示名だけを下書きへ反映する
+        try:
+            draft.set_name(name)
+        except CustomFilterError as error:
+            self.error_occurred.emit(str(error))
+            return
+        self._refresh_target_label()
+        self._sync_buttons()
 
     def _sync_buttons(self) -> None:
         """現在の型・選択・未保存状態に応じて操作を有効化する。"""
@@ -1056,18 +1076,13 @@ class CustomFilterSetupPanel(qt.QWidget):
         has_order = (
             draft is not None and node_type is not None and bool(selected_rows)
         )
-        self.name_edit.setEnabled(draft is not None)
+        self.rename_button.setEnabled(draft is not None)
         self.node_type_combo.setEnabled(draft is not None)
         self.up_button.setEnabled(has_order and selected_rows[0] > 0)
         self.down_button.setEnabled(
             has_order and selected_rows[-1] < self.order_list.count() - 1
         )
         self.remove_button.setEnabled(has_order)
-        self.define_type_button.setEnabled(
-            draft is not None
-            and node_type is not None
-            and not draft.has_node_type(node_type)
-        )
         self.clear_type_button.setEnabled(
             draft is not None
             and node_type is not None
@@ -1075,16 +1090,6 @@ class CustomFilterSetupPanel(qt.QWidget):
         )
         self.save_button.setEnabled(draft is not None and draft.is_dirty)
         self.discard_button.setEnabled(draft is not None and draft.is_dirty)
-        has_candidates = (
-            draft is not None
-            and node_type is not None
-            and any(
-                self._matches_search(attribute)
-                for attribute in self._attributes
-            )
-        )
-        self.include_all_button.setEnabled(has_candidates)
-        self.exclude_all_button.setEnabled(has_candidates)
 
     def save(self) -> bool:
         """共有JSONへ保存し、通常モードの登録定義を再読込する。"""
@@ -1093,14 +1098,13 @@ class CustomFilterSetupPanel(qt.QWidget):
         if draft is None:
             return False
         try:
-            draft.set_name(self.name_edit.text())
             if draft.is_dirty:
                 draft.save()
                 self.registry.reload(draft.path)
                 self.saved.emit(draft.path)
         except CustomFilterError as error:
             self.error_occurred.emit(str(error))
-            self._refresh_status()
+            self._refresh_target_label()
             self._sync_buttons()
             return False
         self._refresh_view()

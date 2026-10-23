@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from bd_util.maya.ui import get_ui_settings_file
 from bd_util.ui import qt
 
 from .custom_filter_editor import create_custom_filter, duplicate_custom_filter
@@ -66,9 +67,23 @@ def create_registered_filter(
             parent, "作成できません", "名前は空でない1行にしてください。"
         )
         return None
-    suggested = Path(name + ".json")
-    if source is not None:
-        suggested = Path(source).parent / suggested
+    # 新規作成はMaya version別のprefs内、複製は元JSONのフォルダーを開く
+    directory = (
+        get_ui_settings_file("bd_channel_box/preferences/main").parent
+        / "custom_filter"
+        if source is None
+        else Path(source).parent
+    )
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        qt.QMessageBox.warning(
+            parent,
+            "作成できません",
+            f"保存先フォルダーを用意できません: {directory}（{error}）",
+        )
+        return None
+    suggested = directory / (name + ".json")
     path, _selected_filter = qt.QFileDialog.getSaveFileName(
         parent,
         "カスタムフィルター定義の保存先",

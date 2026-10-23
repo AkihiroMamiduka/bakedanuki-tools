@@ -464,6 +464,42 @@ def test_custom_filter_registrations_survive_reopen_reload_and_layout_reset(
     ) == ((second_path, True), (first_path, False))
 
 
+def test_value_filter_survives_reopen_reload_and_reset_without_losing_ui_preferences(
+    dock_host: _WorkspaceHost,
+) -> None:
+    """値編集の選択と既存の操作設定を、別モードで閉じても再生成後に保つ。"""
+    import bd_tools
+
+    from bd_tools import bd_channel_box
+
+    window = bd_channel_box.show()
+    _events()
+    window.widget.controller.set_attribute_filter("hidden")
+    window.widget.wheel_editing_action.setChecked(True)
+    window.widget.controller.set_mode("states")
+    window.widget.controller.set_attribute_filter("keyable")
+    bd_channel_box.close()
+    _events()
+    reopened = bd_channel_box.show()
+    _events()
+    assert reopened.widget.controller.mode == "values"
+    assert reopened.widget.controller.attribute_filter == "hidden"
+    assert reopened.widget.filter_combo.currentData() == "hidden"
+    assert reopened.widget.wheel_editing_action.isChecked()
+    reset = bd_channel_box.reset_layout()
+    _events()
+    assert reset.widget.controller.attribute_filter == "hidden"
+    bd_channel_box.close()
+    _events()
+    bd_tools.reload_package()
+    from bd_tools import bd_channel_box as reloaded
+
+    current = reloaded.show()
+    _events()
+    assert current.widget.filter_combo.currentData() == "hidden"
+    assert current.widget.wheel_editing_action.isChecked()
+
+
 def test_custom_filter_reload_updates_selection_and_fallback_notice(
     dock_host: _WorkspaceHost,
     tmp_path: Path,

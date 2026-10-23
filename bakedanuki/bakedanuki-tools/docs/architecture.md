@@ -99,7 +99,10 @@ Mode先頭・初期選択は値編集で、値編集には選択数上限を設�
 属性・識別情報の取得と構成監視も基準に限定し、その型の共有JSON定義を編集します。
 別の型の定義と未保存データは保持し、Mayaの選択は変更しません。
 値編集・表示とロックへ戻ると現在の全選択を取得し直します。どのモードも選択数上限はありません。
-旧`bulk_values`の呼出しは`values`へ移行します。モードとフィルターはWindow内だけの状態です。
+旧`bulk_values`の呼出しは`values`へ移行します。Mode自体はWindow内で保持し、
+値編集のフィルター選択だけを個人設定へ保存します。
+ModeとAttribute Filterは独立した共通ヘッダーに配置し、その下を横線で区切ります。
+検索欄は線の下へ分離し、表示切替やモード固有UIが共通2行の列幅を変えない構造にします。
 bdChannelBoxは `MayaDockableWindowController` を使い、固定workspaceControl IDと
 `bd_tools.bd_channel_box.ui.restore` を維持します。初回は右ドック、close時は完全破棄とし、
 workspace配置の復元・resetはutil、入力と選択監視の終了はtoolsが所有します。
@@ -154,6 +157,13 @@ drawOverride内では設定に含めたoverrideEnabledを先頭にし、残り�
 カスタム項目の順序にだけ適用します。
 共有JSONの新規作成・複製は`custom_filter_dialogs.py`で名前・保存先・登録の経路を
 共有し、管理画面と設定画面から利用します。未保存確認はファイル作成前に行います。
+設定画面の操作は編集用ComboBox右隣に新規作成・名前変更・保存・破棄の20×20アイコンを置きます。
+名前変更はダイアログで`CustomFilterDraft.set_name()`へ渡し、JSON名やpathを変更せずに
+表示名の下書きだけを更新します。編集用ComboBoxへ下書き名と未保存印を反映し、
+registryの保存済み名は保存後に更新します。常設の状態ラベルは置かず、型調査失敗は
+既存の共通通知へ流します。ノード型のComboBoxは4アイコンの幅に制約されない別行に配置します。
+新規作成の初期保存先はutilの設定path解決から求めたMaya version別prefs内の
+`bd_channel_box/custom_filter`です。複製の初期保存先は元JSONのフォルダーを使います。
 複製は元ファイルを読み直して全型を別JSONへ保存し、元ファイルを変更しません。
 設定画面は選択ノードに追従する編集と、JSON内のノード型を固定した編集を持ちます。
 型の標準scalar候補の取得はutilの`inspect_scalar_attributes_by_type()`へ委譲し、
@@ -161,7 +171,7 @@ drawOverride内では設定に含めたoverrideEnabledを先頭にし、残り�
 推測せず専用の候補として保持し、標準表示条件が「全て」のときだけ提示します。
 編集対象は同じ`CustomFilterDraft`内で切り替え、全型の未保存データを維持します。
 設定モードでは表示順と候補を縦の分割領域に配置し、Qt側の境界移動で各領域の高さを
-調整します。候補の一括変更は現在の標準フィルターと検索に一致する属性pathをまとめて
+調整します。複数選択した候補の変更は選択中の属性pathをまとめて
 作業中のJSON定義へ反映し、候補行の表示更新を操作後に行います。候補外の既存pathと
 別ノード型の定義は保持し、sceneのBindingとUndoは使用しません。
 候補の複数選択はUI内に正式pathの集合として持ち、属性名への入力だけで更新します。
@@ -174,6 +184,13 @@ drawOverride内では設定に含めたoverrideEnabledを先頭にし、残り�
 確認を通さず作業中データを捨てます。この経路を変更する場合はworkspaceControlの終了、
 配置reset、reloadの各lifecycleとcallbackの解除を併せて検証します。
 通常の値変更では並べ替えや行の再構築を行いません。
+値編集のAttribute Filter選択はtoolsの`ValueFilterPreferences`が担当します。
+controllerの`values_attribute_filter`を正本とし、ほかのモードの表示中もその保持値だけを
+`bd_channel_box/ui.ini`の`preferences/main/values_attribute_filter`へ同期します。
+保存値は標準ID、または`custom:`に正規化JSON pathを続けた文字列です。
+登録一覧を読んでから選択を復元し、カスタムは登録・ON・正常読込済みの定義だけを採用します。
+利用不能・不正・未設定は`visible`へ戻します。既存のUiStateManagerが管理する
+ホイール・Stepなどのキーとは分け、sceneのBindingとUndoには参加しません。
 今後対応型を追加するときも、toolsで汎用BindingやViewを複製せずutilを拡張します。
 空の directory は作りません。個別ツール同士の
 暗黙の import は避け、共有処理は責務に応じた場所へ抽出します。

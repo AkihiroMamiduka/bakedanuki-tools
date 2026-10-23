@@ -54,3 +54,17 @@ def qt_application() -> qt.QApplication:
     if _qt_application is None:
         raise RuntimeError("Maya UI testのQApplicationが初期化されていません")
     return _qt_application
+
+
+@pytest.fixture(autouse=True)
+def isolated_ui_preferences(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """設定をテストごとに分離し、フィルター選択の保存がほかの検証へ漏れるのを防ぐ。"""
+    from bd_util.maya.ui import settings as maya_settings
+
+    def settings_root() -> Path:
+        """現在のテストだけが使用する設定フォルダーを返す。"""
+        return tmp_path / "tool-preferences"
+
+    monkeypatch.setattr(maya_settings, "get_ui_settings_root", settings_root)
