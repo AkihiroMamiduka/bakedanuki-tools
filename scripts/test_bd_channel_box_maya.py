@@ -197,6 +197,7 @@ class _MayaSmokeSession:
                 self._setup_scene,
                 self._show,
                 self._inspect_custom_filters,
+                self._inspect_custom_filter_manager_operations,
                 self._inspect_custom_filter_sweep,
                 self._inspect_custom_filter_type_editor,
                 self._inspect_custom_filter_context_menus,
@@ -1695,20 +1696,112 @@ class _MayaSmokeSession:
             or not dialog.isVisible()
         ):
             raise AssertionError("カスタムフィルター管理画面が表示されません")
-        items = tuple(dialog.list_widget.item(index) for index in range(2))
-        if dialog.list_widget.count() != 2 or any(
+        tree = dialog.tree_widget
+        items = tuple(tree.topLevelItem(index) for index in range(2))
+        if tree.topLevelItemCount() != 2 or any(
             item is None for item in items
         ):
             raise AssertionError("管理画面の登録件数が不正です")
-        if tuple(item.text() for item in items if item is not None) != (
+        if tuple(item.text(0) for item in items if item is not None) != (
             "Rig",
             "Controls",
         ):
             raise AssertionError("管理画面の登録順が不正です")
-        if paths[0] not in dialog.details_label.text():
-            raise AssertionError(
-                "管理画面に共有ファイルのパスが表示されません"
+        if (
+            tree.columnCount() != 3
+            or tuple(item.text(1) for item in items if item is not None)
+            != paths
+            or any(
+                item.text(2) != "読込済み"
+                for item in items
+                if item is not None
             )
+            or not dialog.storage_error_label.isHidden()
+        ):
+            raise AssertionError("管理画面のパス・読込状態の列表示が不正です")
+
+        # 名前と状態の内容幅を保ち、Windowの拡縮をパス列だけに配分する
+        original_size = dialog.size()
+        widths: list[tuple[int, int, int, int]] = []
+        try:
+            for width in (520, 900):
+                dialog.resize(width, original_size.height())
+                self._flush_gui()
+                columns = tuple(
+                    tree.columnWidth(column) for column in range(3)
+                )
+                viewport_width = tree.viewport().width()
+                if (
+                    abs(sum(columns) - viewport_width) > 1
+                    or tree.horizontalScrollBar().maximum() != 0
+                    or tree.topLevelItem(0).toolTip(1) != paths[0]
+                ):
+                    raise AssertionError(
+                        "管理一覧が右端まで広がらないかパス全文が失われました"
+                    )
+                widths.append((viewport_width, *columns))
+                image_path = self.output / f"43-manager-columns-{width}.png"
+                if not dialog.grab().save(str(image_path)):
+                    raise RuntimeError(
+                        "列幅を変更した管理画面を撮影できません"
+                    )
+                self.screenshots.append(str(image_path))
+            narrow, wide = widths
+            if (
+                narrow[1] != wide[1]
+                or narrow[3] != wide[3]
+                or wide[2] <= narrow[2]
+                or abs((wide[2] - narrow[2]) - (wide[0] - narrow[0])) > 1
+            ):
+                raise AssertionError(
+                    "Windowの拡縮にパス列だけが追従していません"
+                )
+            self.diagnostics.append(
+                {"custom_filter_manager_column_widths": widths}
+            )
+        finally:
+            dialog.resize(original_size)
+            self._flush_gui()
+        self.steps.append("custom_filter_manager_columns_fill_resized_window")
+
+        # 管理画面の指定アイコンを実際のMayaリソースで確認する
+        resources: dict[str, bool] = {}
+        toolbar = (
+            (dialog.new_button, "fileNew.png"),
+            (dialog.add_button, "item_add.png"),
+            (dialog.duplicate_button, "polyCopyUV.png"),
+            (dialog.remove_button, "RS_delete.png"),
+            (dialog.move_up_button, "nodeGrapherArrowUp.png"),
+            (dialog.move_down_button, "nodeGrapherArrowDown.png"),
+            (dialog.reload_all_button, "UVTkRotateCW.png"),
+        )
+        for button, icon_name in toolbar:
+            available = not qt.QIcon(f":/{icon_name}").pixmap(16, 16).isNull()
+            resources[icon_name] = available
+            if (
+                not available
+                or button.size() != qt.QSize(20, 20)
+                or button.iconSize() != qt.QSize(16, 16)
+                or button.icon().pixmap(16, 16).isNull()
+                or button.text()
+                or not button.toolTip()
+            ):
+                raise AssertionError(
+                    f"管理画面のアイコン表示が不正です: {icon_name}"
+                )
+        if (
+            any(
+                left.x() >= right.x() or left.y() != right.y()
+                for (left, _), (right, _) in zip(toolbar, toolbar[1:])
+            )
+            or dialog.new_button.geometry().bottom() >= tree.y()
+        ):
+            raise AssertionError(
+                "管理画面のアイコンの上部配置・並び順が不正です"
+            )
+        self.diagnostics.append(
+            {"custom_filter_manager_icon_resources": resources}
+        )
         image_path = self.output / "43-custom-filter-manager.png"
         if not dialog.grab().save(str(image_path)):
             raise RuntimeError("カスタムフィルター管理画面を撮影できません")
@@ -1716,7 +1809,11 @@ class _MayaSmokeSession:
         self.steps.append("inspect_custom_filter_manager_dialog")
 
         # 上下移動とチェック操作を画面から行い、ComboBoxへ即時反映させる
-        dialog.list_widget.setCurrentRow(1)
+        tree.setCurrentItem(
+            tree.topLevelItem(1),
+            0,
+            qt.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
         dialog.move_up_button.click()
         self._flush_gui()
         if tuple(entry.path for entry in registry.entries) != paths[::-1]:
@@ -1730,20 +1827,37 @@ class _MayaSmokeSession:
         self._flush_gui()
         if tuple(entry.path for entry in registry.entries) != paths:
             raise AssertionError("管理画面の下移動が登録順へ反映されません")
-        dialog.list_widget.setCurrentRow(0)
-        first_item = dialog.list_widget.item(0)
+        tree.setCurrentItem(
+            tree.topLevelItem(0),
+            0,
+            qt.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        first_item = tree.topLevelItem(0)
         if first_item is None:
             raise AssertionError("管理画面の先頭登録がありません")
-        first_item.setCheckState(qt.Qt.CheckState.Unchecked)
+        first_item.setCheckState(0, qt.Qt.CheckState.Unchecked)
         self._flush_gui()
         if registry.entries[0].enabled or combo.count() != 6:
             raise AssertionError(
                 "OFFにした登録がAttribute Filterから消えません"
             )
-        restored_item = dialog.list_widget.item(0)
+        dialog.reload_all_button.click()
+        self._flush_gui()
+        if (
+            tuple(entry.path for entry in registry.entries) != paths
+            or registry.entries[0].enabled
+            or not registry.entries[1].enabled
+            or combo.count() != 6
+            or tree.currentItem() is not tree.topLevelItem(0)
+        ):
+            raise AssertionError(
+                "全て再読込で登録順・ON/OFF・選択が変わりました"
+            )
+        self.steps.append("reload_all_custom_filter_registrations")
+        restored_item = tree.topLevelItem(0)
         if restored_item is None:
             raise AssertionError("OFFにした登録を再選択できません")
-        restored_item.setCheckState(qt.Qt.CheckState.Checked)
+        restored_item.setCheckState(0, qt.Qt.CheckState.Checked)
         self._flush_gui()
         if not registry.entries[0].enabled or combo.count() != 7:
             raise AssertionError(
@@ -2030,6 +2144,148 @@ class _MayaSmokeSession:
         ):
             raise AssertionError("保存したjoint型の属性が表示されません")
         self.steps.append("author_custom_filter_for_joint")
+
+    def _inspect_custom_filter_manager_operations(self) -> None:
+        """管理画面の作成後表示と、複数行の移動・再読込・登録解除を確認する。"""
+        from bd_tools.bd_channel_box.custom_filters import (
+            normalize_filter_path,
+        )
+        from bd_util.ui import qt
+
+        widget = self._require_window().widget
+        registry = widget.custom_filter_registry
+        panel = widget.setup_panel
+        saved_mode = widget.controller.mode
+        saved_target = panel.draft.path if panel.draft is not None else None
+        original_paths = tuple(entry.path for entry in registry.entries)
+        files = tuple(
+            self.output / name
+            for name in (
+                "Managed New.json",
+                "Managed New_copy.json",
+                "broken.json",
+            )
+        )
+        temporary_paths = tuple(normalize_filter_path(path) for path in files)
+        destinations = iter(files[:2])
+        get_save_file = qt.QFileDialog.getSaveFileName
+
+        def choose_path(*_args: object) -> tuple[str, str]:
+            """保存先選択だけを固定し、作成完了後の実Windowを検証する。"""
+            return str(next(destinations)), "JSON ファイル (*.json)"
+
+        widget.manage_custom_filters_action.trigger()
+        manager = widget.custom_filter_dialog
+        if manager is None:
+            raise AssertionError("管理画面を再表示できません")
+        tree = manager.tree_widget
+        try:
+            # 保存先ダイアログの戻り値を渡し、新規・複製の完了経路を通す
+            qt.QFileDialog.getSaveFileName = choose_path
+            for button, expected_path in (
+                (manager.new_button, temporary_paths[0]),
+                (manager.duplicate_button, temporary_paths[1]),
+            ):
+                button.click()
+                self._flush_gui()
+                current = tree.currentItem()
+                if (
+                    not manager.isVisible()
+                    or current is None
+                    or current.data(0, qt.Qt.ItemDataRole.UserRole)
+                    != expected_path
+                    or not current.isSelected()
+                    or len(tree.selectedItems()) != 1
+                    or panel.draft is None
+                    or panel.draft.path != expected_path
+                ):
+                    raise AssertionError(
+                        "新規・複製後に管理画面か作成行の選択が失われました"
+                    )
+            qt.QFileDialog.getSaveFileName = get_save_file
+            self.steps.append("manager_create_duplicate_keeps_window_open")
+
+            # 読込失敗も独立した状態列へ残し、離れた2行を操作対象にする
+            files[2].write_text("{", encoding="utf-8")
+            registry.add_paths((files[2],))
+            tree.setCurrentItem(
+                tree.topLevelItem(2),
+                0,
+                qt.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+            )
+            tree.topLevelItem(4).setSelected(True)
+            tree.topLevelItem(2).setCheckState(0, qt.Qt.CheckState.Unchecked)
+            selected = (temporary_paths[0], temporary_paths[2])
+            if (
+                manager.duplicate_button.isEnabled()
+                or tree.topLevelItem(2).text(2) != "読込済み"
+                or tree.topLevelItem(4).text(2) != "読込エラー"
+                or not tree.topLevelItem(4).toolTip(2)
+            ):
+                raise AssertionError(
+                    "複数選択時の操作可否か読込状態の表示が不正です"
+                )
+            image_path = self.output / "43b-custom-filter-manager-multiple.png"
+            if not manager.grab().save(str(image_path)):
+                raise RuntimeError("複数選択した管理画面を撮影できません")
+            self.screenshots.append(str(image_path))
+            manager.move_up_button.click()
+            self._flush_gui()
+            if tuple(entry.path for entry in registry.entries) != (
+                original_paths[0],
+                temporary_paths[0],
+                original_paths[1],
+                temporary_paths[2],
+                temporary_paths[1],
+            ):
+                raise AssertionError(
+                    "離れた複数登録をまとめて上移動できません"
+                )
+            manager.move_down_button.click()
+            manager.reload_all_button.click()
+            self._flush_gui()
+            if (
+                tuple(entry.path for entry in registry.entries)
+                != original_paths + temporary_paths
+                or tuple(
+                    tree.topLevelItem(index).data(
+                        0, qt.Qt.ItemDataRole.UserRole
+                    )
+                    for index in range(tree.topLevelItemCount())
+                    if tree.topLevelItem(index).isSelected()
+                )
+                != selected
+                or registry.entries[2].enabled
+                or tree.currentItem().data(0, qt.Qt.ItemDataRole.UserRole)
+                != temporary_paths[0]
+                or manager.move_down_button.isEnabled()
+            ):
+                raise AssertionError(
+                    "移動・再読込で複数選択か表示チェックが変わりました"
+                )
+            manager.remove_button.click()
+            self._flush_gui()
+            if tuple(
+                entry.path for entry in registry.entries
+            ) != original_paths + (temporary_paths[1],) or not all(
+                path.is_file() for path in files
+            ):
+                raise AssertionError(
+                    "複数登録の解除結果かJSONファイルの保持が不正です"
+                )
+            self.steps.append(
+                "manager_multiselection_moves_reloads_and_removes"
+            )
+        finally:
+            qt.QFileDialog.getSaveFileName = get_save_file
+            panel.discard()
+            registry.remove_many(temporary_paths)
+            if saved_target is not None:
+                panel.set_target(saved_target)
+            self._select_combo_item(
+                widget.mode_combo, widget.mode_combo.findData(saved_mode)
+            )
+            manager.hide()
 
     def _inspect_custom_filter_sweep(self) -> None:
         """設定候補の同列をなぞり、所属だけを変更してsceneとUndoを維持する。"""

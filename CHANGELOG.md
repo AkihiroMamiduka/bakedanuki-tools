@@ -9,6 +9,23 @@
 
 ### Changed
 
+- bdChannelBoxのカスタムフィルター管理で、名前と読込状態の列幅を内容に合わせ、
+  ファイルパス列は残りの幅いっぱいに広げる。Windowの拡縮時もパス列だけが追従する。
+  JSON・登録設定の移行は不要。
+- bdChannelBoxのカスタムフィルター管理を、説明・操作アイコン・3列一覧の順に配置。
+  階層なしのQTreeWidgetでフィルター名・ファイルパス・読込状態を表示し、列幅調整と
+  Ctrl／Shiftによる行の複数選択に対応する。表示チェックと操作対象の行選択は独立する。
+  登録削除と上下移動は選択全件を対象とし、相対順を保って1段移動する。選択に端を含む方向は
+  移動不可とし、複製は正常な1件選択時だけ有効にする。再読込・移動・チェックで選択とcurrentを維持する。
+  パス全文と読込エラー理由は各行のtooltipで確認し、下部には登録設定自体の読込・保存エラーだけを表示する。
+  UI直接参照は`list_widget`（QListWidget）から`tree_widget`（QTreeWidget）へ移行し、
+  `details_label`を廃止して`storage_error_label`を追加する。
+  registryへ`remove_many()`・`move_many()`を追加。JSON・個人設定の形式と既存登録の移行は不要。
+- bdChannelBoxのカスタムフィルター管理の操作を、設定画面と同じ20×20のアイコンボタンへ変更。
+  新規作成・追加・複製・登録削除・上へ・下へ・全て再読込を左寄せで並べ、操作名をtooltipに表示。
+  追加は`item_add.png`、複製は`polyCopyUV.png`、全て再読込は`UVTkRotateCW.png`を使用する。
+  個別の再読込ボタンを廃止し、UI直接参照は`reload_button`から`reload_all_button`へ移行する。
+  管理ボタン7個の型は`QPushButton`から`QToolButton`へ変更。JSON・個人設定の移行は不要。
 - bdChannelBoxのカスタムフィルター設定でQToolBoxの背景をMayaのWindow配色へ統一。
   操作行の右端に`QR_settings.png`の管理ボタンを追加し、未保存編集を保持して
   メニューと同じ管理ウィンドウを開く。フィルター未選択でも使用可能。設定・JSONの移行は不要。
@@ -52,6 +69,8 @@
 
 ### Fixed
 
+- bdChannelBoxの管理画面から新規作成・複製した後に、管理画面まで閉じる挙動を修正。
+  管理画面は開いたまま作成行を選択し、設定モードの編集対象にも引き続き反映する。
 - Maya 2027のQt型定義差で、bdChannelBoxの一括数値入力に出るPyright警告を修正。
   `findChild()`の呼出し境界に型を明示し、入力動作・scene・設定は変更しない。
 - `overrideColor`など、byte属性の下限0または上限255を持つ狭い範囲で

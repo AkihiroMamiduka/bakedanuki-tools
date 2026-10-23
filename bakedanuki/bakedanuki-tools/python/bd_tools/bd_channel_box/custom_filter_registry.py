@@ -83,10 +83,17 @@ class CustomFilterRegistry(qt.QObject):
 
     def remove(self, path: str) -> bool:
         """登録のみを削除し、参照先の共有ファイルは残す。"""
-        index = self._index_of(path)
-        if index is None:
+        return self.remove_many((path,))
+
+    def remove_many(self, paths: Iterable[str]) -> bool:
+        """選択登録を一括解除し、共有ファイルを残して一度だけ保存・通知する。"""
+        selected = set(paths)
+        remaining = [
+            entry for entry in self._entries if entry.path not in selected
+        ]
+        if len(remaining) == len(self._entries):
             return False
-        del self._entries[index]
+        self._entries = remaining
         self._save()
         self.changed.emit()
         return True
@@ -136,15 +143,29 @@ class CustomFilterRegistry(qt.QObject):
 
     def move(self, path: str, offset: int) -> bool:
         """登録を一段上下へ移動し、順序を個人設定へ保存する。"""
+        return self.move_many((path,), offset)
+
+    def move_many(self, paths: Iterable[str], offset: int) -> bool:
+        """選択登録の相対順を保ち、全件を一段移動して一度だけ保存・通知する。"""
         if offset not in (-1, 1):
             raise ValueError("移動量には-1または1を指定してください")
-        index = self._index_of(path)
-        if index is None or not 0 <= index + offset < len(self._entries):
-            return False
-        self._entries[index], self._entries[index + offset] = (
-            self._entries[index + offset],
-            self._entries[index],
+        selected = set(paths)
+        indices = tuple(
+            index
+            for index, entry in enumerate(self._entries)
+            if entry.path in selected
         )
+        if not indices or not 0 <= indices[
+            0 if offset < 0 else -1
+        ] + offset < len(self._entries):
+            return False
+
+        # 上方向は前から、下方向は後ろから入れ替えて選択間の順序を保つ
+        for index in indices if offset < 0 else reversed(indices):
+            self._entries[index], self._entries[index + offset] = (
+                self._entries[index + offset],
+                self._entries[index],
+            )
         self._save()
         self.changed.emit()
         return True

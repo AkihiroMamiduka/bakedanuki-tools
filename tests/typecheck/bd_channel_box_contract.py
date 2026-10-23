@@ -56,6 +56,17 @@ from bd_tools.bd_channel_box.table import ChannelTableView
 assert_type(bd_channel_box.show(), bd_channel_box.ChannelBoxWindow)
 assert_type(bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
 assert_type(bd_channel_box.show().widget, ChannelBoxWidget)
+manager = bd_channel_box.show().widget.custom_filter_dialog
+if manager is not None:
+    assert_type(manager.tree_widget, qt.QTreeWidget)
+    assert_type(manager.storage_error_label, qt.QLabel)
+    assert_type(manager.new_button, qt.QToolButton)
+    assert_type(manager.add_button, qt.QToolButton)
+    assert_type(manager.duplicate_button, qt.QToolButton)
+    assert_type(manager.remove_button, qt.QToolButton)
+    assert_type(manager.move_up_button, qt.QToolButton)
+    assert_type(manager.move_down_button, qt.QToolButton)
+    assert_type(manager.reload_all_button, qt.QToolButton)
 assert_type(bd_channel_box.show().widget.setup_panel, CustomFilterSetupPanel)
 assert_type(
     bd_channel_box.show().widget.setup_panel.tool_box, qt.QtWidgets.QToolBox
@@ -108,6 +119,10 @@ assert_type(filter_file_name("Rig.json"), str)
 assert_type(CustomFilterDraft("rig.json").destination_path, str)
 assert_type(CustomFilterDraft("rig.json").rename("Renamed"), None)
 assert_type(CustomFilterRegistry().replace_path("old.json", "new.json"), bool)
+assert_type(CustomFilterRegistry().remove_many(("one.json", "two.json")), bool)
+assert_type(
+    CustomFilterRegistry().move_many(("one.json", "two.json"), -1), bool
+)
 assert_type(
     bd_channel_box.show().widget.controller.replace_custom_filter(
         CustomFilterSelection("new.json", CustomFilterDefinition("New", {})),

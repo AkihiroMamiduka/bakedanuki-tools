@@ -89,6 +89,27 @@ def _write_custom_filter(
     )
 
 
+def _select_registration_rows(
+    tree: qt.QTreeWidget, indexes: tuple[int, ...]
+) -> None:
+    """指定した行を選択し、先頭の指定行を現在行にする。"""
+    tree.clearSelection()
+    if indexes:
+        tree.setCurrentItem(tree.topLevelItem(indexes[0]))
+        for index in indexes:
+            tree.topLevelItem(index).setSelected(True)
+
+
+def _selected_registration_paths(tree: qt.QTreeWidget) -> tuple[str, ...]:
+    """選択された登録のパスを表示順に返す。"""
+    return tuple(
+        path
+        for index in range(tree.topLevelItemCount())
+        if (item := tree.topLevelItem(index)).isSelected()
+        if isinstance(path := item.data(0, qt.Qt.ItemDataRole.UserRole), str)
+    )
+
+
 @pytest.fixture
 def dock_host(
     qt_application: qt.QApplication,
@@ -376,12 +397,24 @@ def test_custom_filter_manager_keeps_errors_and_controls_visibility(
     widget.manage_custom_filters_action.trigger()
     dialog = widget.custom_filter_dialog
     assert dialog is not None and dialog.isVisible()
-    assert dialog.list_widget.count() == 3
-    assert "読込エラー" in dialog.list_widget.item(2).text()
+    tree = dialog.tree_widget
+    assert tree.topLevelItemCount() == 3
+    assert tree.columnCount() == 3
+    assert not tree.rootIsDecorated()
+    assert not tree.isSortingEnabled()
+    assert tree.topLevelItem(0).text(0) == "Rig"
+    assert tree.topLevelItem(0).text(1) == paths[0]
+    assert tree.topLevelItem(0).toolTip(1) == paths[0]
+    assert tree.topLevelItem(0).text(2) == "読込済み"
+    assert tree.topLevelItem(2).text(2) == "読込エラー"
+    read_error = widget.custom_filter_registry.entries[2].error
+    assert read_error is not None
+    assert read_error in tree.topLevelItem(2).toolTip(2)
+    assert dialog.storage_error_label.isHidden()
     widget.filter_combo.setCurrentIndex(5)
     widget.mode_combo.setCurrentIndex(1)
     widget.filter_combo.setCurrentIndex(5)
-    dialog.list_widget.item(0).setCheckState(qt.Qt.CheckState.Unchecked)
+    tree.topLevelItem(0).setCheckState(0, qt.Qt.CheckState.Unchecked)
     assert widget.controller.attribute_filter == "all"
     widget.mode_combo.setCurrentIndex(0)
     assert widget.controller.attribute_filter == "visible"
@@ -391,26 +424,171 @@ def test_custom_filter_manager_keeps_errors_and_controls_visibility(
     widget.filter_combo.setCurrentIndex(5)
     selected = widget.controller.attribute_filter
     assert isinstance(selected, CustomFilterSelection)
-    dialog.list_widget.setCurrentRow(1)
+    _select_registration_rows(tree, (1,))
     dialog.move_up_button.click()
     assert widget.custom_filter_registry.entries[0].path == paths[1]
     assert widget.filter_combo.itemData(5).path == paths[1]
     assert widget.controller.attribute_filter == selected
     assert widget.filter_combo.currentIndex() == 5
     _write_custom_filter(broken, "Fixed")
-    dialog.list_widget.setCurrentRow(2)
-    dialog.reload_button.click()
+    _select_registration_rows(tree, (2,))
+    dialog.reload_all_button.click()
     assert widget.custom_filter_registry.entries[2].error is None
+    assert tree.topLevelItem(2).text(2) == "読込済み"
+    assert "読込エラー" not in tree.topLevelItem(2).toolTip(2)
     assert widget.filter_combo.count() == 7
-    dialog.list_widget.item(1).setCheckState(qt.Qt.CheckState.Checked)
+    tree.topLevelItem(1).setCheckState(0, qt.Qt.CheckState.Checked)
     assert widget.filter_combo.count() == 8
     assert widget.filter_combo.itemData(6).path == paths[0]
-    dialog.list_widget.setCurrentRow(1)
+    _select_registration_rows(tree, (1,))
     dialog.remove_button.click()
     assert first.is_file()
     assert tuple(
         entry.path for entry in widget.custom_filter_registry.entries
     ) == (paths[1], paths[2])
+
+
+def test_custom_filter_manager_multiselection_reorders_reloads_and_removes(
+    dock_host: _WorkspaceHost, tmp_path: Path
+) -> None:
+    """複数行の一括移動・登録解除と、表示チェックから独立した選択を保つ。"""
+    from bd_tools import bd_channel_box
+
+    files = tuple(tmp_path / f"{name}.json" for name in "ABCDE")
+    for path in files:
+        _write_custom_filter(path, path.stem)
+    widget = bd_channel_box.show().widget
+    registry = widget.custom_filter_registry
+    paths = registry.add_paths(files)
+    widget.manage_custom_filters_action.trigger()
+    dialog = widget.custom_filter_dialog
+    assert dialog is not None and dialog.isVisible()
+    tree = dialog.tree_widget
+    assert (
+        tree.selectionMode()
+        == qt.QAbstractItemView.SelectionMode.ExtendedSelection
+    )
+    assert (
+        tree.selectionBehavior()
+        == qt.QAbstractItemView.SelectionBehavior.SelectRows
+    )
+
+    # 離れた選択も元の相対順を保ち、端に達したら全体を動かさない
+    _select_registration_rows(tree, (1, 3))
+    assert _selected_registration_paths(tree) == (paths[1], paths[3])
+    assert not dialog.duplicate_button.isEnabled()
+    assert dialog.move_up_button.isEnabled()
+    assert dialog.move_down_button.isEnabled()
+    dialog.move_up_button.click()
+    assert tuple(entry.path for entry in registry.entries) == (
+        paths[1],
+        paths[0],
+        paths[3],
+        paths[2],
+        paths[4],
+    )
+    assert _selected_registration_paths(tree) == (paths[1], paths[3])
+    assert not dialog.move_up_button.isEnabled()
+    dialog.move_up_button.click()
+    assert registry.entries[0].path == paths[1]
+    dialog.move_down_button.click()
+    assert tuple(entry.path for entry in registry.entries) == paths
+
+    # チェックと全件再読込は、複数の操作対象と現在行を変更しない
+    current_item = tree.currentItem()
+    checkbox_item = tree.topLevelItem(4)
+    checkbox_item.setCheckState(0, qt.Qt.CheckState.Unchecked)
+    assert tree.topLevelItem(4) is checkbox_item
+    assert tree.currentItem() is current_item
+    assert not registry.entries[4].enabled
+    assert _selected_registration_paths(tree) == (paths[1], paths[3])
+    assert tree.currentItem().data(0, qt.Qt.ItemDataRole.UserRole) == paths[1]
+    _write_custom_filter(files[1], "Updated B")
+    dialog.reload_all_button.click()
+    assert tree.currentItem() is current_item
+    assert tree.topLevelItem(1).text(0) == "Updated B"
+    assert not registry.entries[4].enabled
+    assert _selected_registration_paths(tree) == (paths[1], paths[3])
+    assert tree.currentItem().data(0, qt.Qt.ItemDataRole.UserRole) == paths[1]
+
+    # 連続行もひとまとまりで移動し、複製は単一選択時だけ許可する
+    _select_registration_rows(tree, (1,))
+    assert dialog.duplicate_button.isEnabled()
+    _select_registration_rows(tree, (1, 2))
+    assert not dialog.duplicate_button.isEnabled()
+    dialog.move_down_button.click()
+    assert tuple(entry.path for entry in registry.entries) == (
+        paths[0],
+        paths[3],
+        paths[1],
+        paths[2],
+        paths[4],
+    )
+    dialog.move_down_button.click()
+    assert tuple(entry.path for entry in registry.entries) == (
+        paths[0],
+        paths[3],
+        paths[4],
+        paths[1],
+        paths[2],
+    )
+    assert _selected_registration_paths(tree) == (paths[1], paths[2])
+    assert not dialog.move_down_button.isEnabled()
+    dialog.move_down_button.click()
+    assert registry.entries[-1].path == paths[2]
+
+    dialog.remove_button.click()
+    assert tuple(entry.path for entry in registry.entries) == (
+        paths[0],
+        paths[3],
+        paths[4],
+    )
+    assert all(path.is_file() for path in files)
+    tree.clearSelection()
+    assert not dialog.duplicate_button.isEnabled()
+    assert not dialog.remove_button.isEnabled()
+    assert not dialog.move_up_button.isEnabled()
+    assert not dialog.move_down_button.isEnabled()
+
+
+def test_custom_filter_manager_shows_only_registration_storage_errors(
+    dock_host: _WorkspaceHost,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """正常な読込状態は各行へ表示し、登録設定のエラーだけを別途提示する。"""
+    from bd_tools import bd_channel_box
+    from bd_tools.bd_channel_box.custom_filter_registry import (
+        CustomFilterRegistry,
+    )
+
+    widget = bd_channel_box.show().widget
+    registry = widget.custom_filter_registry
+    path = tmp_path / "rig.json"
+    _write_custom_filter(path, "Rig")
+    registry.add_paths((path,))
+    widget.manage_custom_filters_action.trigger()
+    dialog = widget.custom_filter_dialog
+    assert dialog is not None and dialog.isVisible()
+    assert dialog.storage_error_label.isHidden()
+    storage_failure: str | None = (
+        "カスタムフィルター登録設定を保存できませんでした"
+    )
+
+    def storage_error(_registry: CustomFilterRegistry) -> str | None:
+        """個人設定だけのエラーを再現する。"""
+        return storage_failure
+
+    monkeypatch.setattr(
+        CustomFilterRegistry, "storage_error", property(storage_error)
+    )
+    registry.changed.emit()
+    assert dialog.storage_error_label.isVisible()
+    assert dialog.storage_error_label.text() == storage_failure
+    assert dialog.tree_widget.topLevelItem(0).text(2) == "読込済み"
+    storage_failure = None
+    registry.changed.emit()
+    assert dialog.storage_error_label.isHidden()
 
 
 def test_custom_filter_registrations_survive_reopen_reload_and_layout_reset(

@@ -1221,11 +1221,19 @@ def test_manager_creates_and_selects_new_filter(
     monkeypatch.setattr(qt.QFileDialog, "getSaveFileName", choose_path)
     editor.manage_custom_filters_action.trigger()
     manager = editor.custom_filter_dialog
-    assert manager is not None
+    assert manager is not None and manager.isVisible()
     manager.new_button.click()
     _events()
 
     assert path.exists()
+    assert manager.isVisible()
+    assert manager.tree_widget.topLevelItemCount() == 1
+    created_item = manager.tree_widget.topLevelItem(0)
+    assert manager.tree_widget.currentItem() is created_item
+    assert created_item.isSelected()
+    assert created_item.data(0, qt.Qt.ItemDataRole.UserRole) == (
+        editor.custom_filter_registry.entries[-1].path
+    )
     assert editor.custom_filter_registry.entries[-1].definition is not None
     assert (
         editor.custom_filter_registry.entries[-1].definition.name == "New Rig"
@@ -1418,10 +1426,20 @@ def test_manager_duplicates_saved_changes_and_all_types_with_copy_suffix(
     monkeypatch.setattr(qt.QFileDialog, "getSaveFileName", choose_path)
     editor.manage_custom_filters_action.trigger()
     manager = editor.custom_filter_dialog
-    assert manager is not None and manager.duplicate_button.isEnabled()
+    assert manager is not None and manager.isVisible()
+    assert manager.duplicate_button.isEnabled()
     manager.duplicate_button.click()
     _events()
 
+    assert manager.isVisible()
+    assert manager.tree_widget.topLevelItemCount() == 2
+    duplicated_item = manager.tree_widget.topLevelItem(1)
+    assert manager.tree_widget.currentItem() is duplicated_item
+    assert duplicated_item.isSelected()
+    assert len(manager.tree_widget.selectedItems()) == 1
+    assert duplicated_item.data(0, qt.Qt.ItemDataRole.UserRole) == (
+        registry.entries[-1].path
+    )
     assert not source.exists()
     original = json.loads(
         (tmp_path / "Updated Rig.json").read_text(encoding="utf-8")

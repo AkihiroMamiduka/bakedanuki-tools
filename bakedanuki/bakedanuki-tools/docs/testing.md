@@ -159,6 +159,21 @@ QToolBoxのページ切替と選択・検索・スクロール位置の保持、
 Maya本体のrunnerで`QR_settings.png`の取得と、アイコン・メニューから同じ管理画面を開き、
 未保存編集を維持することを確認します。QToolBox内部のページと候補領域が周囲のWindow配色を
 継承することも確認します。
+管理ウィンドウの7ボタンはMaya本体で指定リソース、20×20のサイズ、順序、tooltipを確認します。
+説明ラベルと一覧の間に左寄せで並び、新規作成・複製後も管理画面が開いたまま作成行を選択し、
+設定モードの編集対象へ反映することも確認します。
+3列のQTreeWidgetはフィルター名・ファイルパス・読込状態とソート無効を検証します。
+Maya本体ではWindow幅520／900pxで名前・読込状態の内容幅が変わらず、パス列だけが伸縮して
+一覧の右端まで使用することと、パス全文をtooltipで確認できることを検証します。
+Ctrl／Shiftの行選択と表示チェックの独立性、連続・非連続選択の上下移動と相対順保持、
+端を含む方向の無効化、複数登録の削除後にも元JSONが残ることを確認します。
+複製は正常な1件選択でだけ有効とし、複数選択や読込エラーを含む選択では無効であることを確認します。
+全て再読込後の登録順・ON/OFFと、再読込・移動・チェック後の選択集合・currentの維持も検証します。
+読込エラーからの復旧は既存のdock testで全て再読込の操作から確認します。
+パス全文・エラー理由のtooltipと、登録設定自体の読込・保存失敗だけを別ラベルに表示することも検証します。
+registryの一括解除・移動は`test_bd_channel_box_custom_filter_registry.py`で境界・相対順・
+保存と通知の回数・設定復元を確認し、UIとMaya本体でも対応を確認します。
+チェック変更と再読込では既存行とcurrentを保持し、Qtの通知処理中に行を破棄しないことも検証します。
 名前変更の初期値・取消・空欄・同名、保存前のJSON不変、未保存印、保存・破棄後の表示を検証します。
 `test_bd_channel_box_filter_file_dialogs.py`では保存先選択への一本化、実ファイル名からの表示名生成、
 衝突時の再選択・取消、改名入力中のOK無効化、保存直前の衝突、同名候補の識別を確認します。
@@ -201,6 +216,33 @@ Maya 2026／2027本体の画面操作は今回実施していません。
 全versionのPyright、Black checkが成功しました。Maya 2025本体は21工程が成功し、
 Window配色の継承、`QR_settings.png`の描画、未選択時の管理起動、メニューとのWindow共有と
 未保存編集の保持を確認しました。結果は`%TEMP%/bd-channel-box-maya2025-3eo3m3j_`です。
+`success: true`・`error: null`で、今回はrunner・Mayaとも正常終了し、終了codeは0です。
+
+管理ウィンドウのアイコン化ではMaya 2025／2026／2027の関連test各7件、全versionのPyright、
+Black checkが成功しました。Maya 2025本体でも指定7アイコンをすべて取得でき、22工程が成功しました。
+全て再読込で登録順・ON/OFF・選択が保たれることと、左寄せの配置も確認しています。
+結果は`%TEMP%/bd-channel-box-maya2025-echmk0qy`で、`success: true`・`error: null`です。
+操作結果保存後の終了待ちは既知の90秒タイムアウトが再発し、runnerが専用processを終了したため
+終了codeは1でした。操作成功とアプリケーションの正常終了を分けて記録します。
+
+2026-10-24の管理一覧の3列化・複数選択では、Maya 2025／2026／2027の全runtime test各673件、
+unit 79件、全versionのPyright、Black checkが成功しました。
+チェック変更・再読込時に既存行を保持する修正後、
+Maya 2025の関連82件も再実行して成功しています。
+Maya 2025本体は24工程が成功し、上部の7アイコンと3列一覧、読込エラーの行表示、
+複数登録の移動・再読込・解除、表示チェックと選択の維持を確認しました。
+保存先選択の戻り値だけを固定して新規作成・複製の完了経路を通し、管理画面が開いたまま
+作成行を選択し、設定モードの編集対象へ反映することも確認しました。
+画像は`43-custom-filter-manager.png`と`43b-custom-filter-manager-multiple.png`です。
+結果は`%TEMP%/bd-channel-box-maya2025-qgwri6hx`で、`success: true`・`error: null`です。
+操作結果保存後の終了待ちは既知の120秒タイムアウトとなり、runnerが専用processを停止して
+終了code 1を返しました。専用processが残っていないことも確認しています。
+
+続く列幅の自動配分では、Maya 2025／2026／2027の管理画面関連test各3件、全versionのPyright、
+Black checkが成功しました。Maya 2025本体は25工程が成功し、Window幅520／900pxで
+一覧の表示幅494／874pxを右端まで使用することを確認しました。名前列61px・状態列52pxを保ち、
+パス列だけが381pxから761pxへ伸縮しています。パスの省略表示と全文tooltipも確認しました。
+結果と画像は`%TEMP%/bd-channel-box-maya2025-s7g1m231`です。
 `success: true`・`error: null`で、今回はrunner・Mayaとも正常終了し、終了codeは0です。
 
 runnerは別の `maya.exe` を起動し、一時ディレクトリの `MAYA_APP_DIR`、Maya.env探索先、
@@ -718,6 +760,8 @@ Maya 2027の`QSplitter.setSizes()`は同梱stubから引数型を取得できな
 使用箇所で`getattr()`と局所的な`cast(Callable[[list[int]], None], ...)`を使い、
 整数リストを受け取るQt APIの境界で型を確定します。
 分割領域の設定値と実際のQt呼び出しは同じままです。
+同様にMaya 2027の`QTreeWidget.setHeaderLabels()`も引数型が未定義のため、
+`getattr()`と局所的な`cast(Callable[[list[str]], None], ...)`で見出し文字列の境界を確定します。
 `QLayout.itemAt()`など項目がない場合に`None`を返すAPIは、
 戻り値を変数へ受けて存在を確認してから利用します。
 
