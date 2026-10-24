@@ -287,10 +287,13 @@ interactive起動時だけ`maya.utils.executeDeferred()`へメニュー登録を
 `bd_util.maya.ui.register_menu_item()`で`bakedanuki > tools`に`bdChannelBox`、
 「移動・回転をセット（子を維持）」、
 「回転をセット（姿勢を維持）」をこの順に追加します。各ツール本体はクリックされるまで
-読み込みません。上部メニューからは引数なしの公開`show()`を呼び、既存の配置と
+読み込みません。上部メニューには毎回importして引数なしの公開`show()`を呼ぶ
+MEL文字列を`source_type="mel"`で登録し、既存の配置と
 選択タブ・設定先を尊重します。登録のownerは`bd_tools`、
 categoryは`tools`とし、将来のrig・physicsは別owner/categoryで同じ`bakedanuki`を共有します。
 メニューのMaya UI構築と他ownerを保つ解除処理はutilが所有します。
+rootと各categoryはMaya標準の`tearOff=True`で作成し、切り離し側も同じ項目を操作します。
+切り離しWindowの同期と終了はMayaへ任せ、最後の項目を解除して元メニューを削除すると閉じます。
 画像は各ツールpackageの`icon/<package名>.png`に置き、各`icon/__init__.py`が
 `MENU: Final[Path]`で実配置から絶対pathを解決します。パス解決は共通の
 `bd_util.py.path.resolve_relative_path(__file__, 画像名)`を利用し、util側へ集約します。
@@ -301,7 +304,11 @@ categoryは`tools`とし、将来のrig・physicsは別owner/categoryで同じ`b
 型検査時は公開型を明示し、`__all__`と`__dir__()`で公開入口を保持します。
 画像pathや属性候補の取得ではUI本体をimportしません。画像の読込み検証とMayaへの設定はutilが
 担当し、画像不備では警告して画像なしの項目を登録します。
-toolsのreload前には所有項目を解除し、reload後に新しいcallbackで再登録します。
+MayaのShelf転送はコマンドと言語をそのまま引き継ぎ、標準マーキングメニューにも
+同じMEL文字列を使用できます。コマンドはprivateな補助関数やメニューのUI pathを
+参照せず、メニュー未登録時やtoolsのreload後も公開APIを現在のmoduleから取得します。
+具体的なコマンドは[起動コマンド一覧](../README.md#shelf-とマーキングメニュー)を参照してください。
+toolsのreload前には所有項目を解除し、reload後にMELコマンドで再登録します。
 起動時のdeferred処理だけがutilの共有設定を読み、OFFなら登録をスキップします。
 明示的な`install_menu()`と開発reload時の復元は設定の影響を受けません。
 

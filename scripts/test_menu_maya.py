@@ -24,6 +24,12 @@ _TOOL_LABELS = (
     "移動・回転をセット（子を維持）",
     "回転をセット（姿勢を維持）",
 )
+_TOOL_PACKAGES = (
+    "bd_channel_box",
+    "bd_child_compensated_set",
+    "bd_rotation_preserving_pose",
+)
+_COMMAND_SHELF = "BakedanukiCommandQA"
 
 
 def _find_labeled_menu(parent: str, label: str) -> str:
@@ -81,6 +87,127 @@ def _run_in_maya() -> None:
 
     output = Path(os.environ[_OUTPUT_VARIABLE])
     phase = os.environ[_PHASE_VARIABLE]
+
+    def check_commands(items: tuple[str, ...], *, shelf: bool) -> None:
+        """メニューとShelfが同じ自己完結MELとその言語を保持するか確認する。"""
+        for item, package in zip(items, _TOOL_PACKAGES, strict=True):
+            if shelf:
+                command = cmds.shelfButton(item, query=True, command=True)
+                language = cmds.shelfButton(
+                    item, query=True, command=True, sourceType=True
+                )
+            else:
+                command = cmds.menuItem(item, query=True, command=True)
+                language = cmds.menuItem(
+                    item, query=True, command=True, sourceType=True
+                )
+            expected = (
+                f'python("import bd_tools.{package}; '
+                f'bd_tools.{package}.show()");'
+            )
+            if command != expected or language != "mel":
+                raise AssertionError(
+                    f"{package} のコマンドが不正です: {language}, {command!r}"
+                )
+
+    def save_command_shelf(items: tuple[str, ...]) -> None:
+        """標準のメニュー転送処理でShelfへ登録し、MELファイルへ保存する。"""
+        from maya.app.general.menuItemToShelf import menuItemToShelf
+
+        check_commands(items, shelf=False)
+        top = mel.eval("$bdCommandShelfTop=$gShelfTopLevel")
+        shelf = cmds.shelfLayout(_COMMAND_SHELF, parent=top)
+        buttons = tuple(menuItemToShelf(shelf, item) for item in items)
+        check_commands(buttons, shelf=True)
+        destination = output / f"shelf_{_COMMAND_SHELF}"
+        cmds.saveShelf(shelf, destination.as_posix())
+        saved = destination.with_suffix(".mel")
+        if not saved.is_file() or b"<function" in saved.read_bytes():
+            raise AssertionError("Shelfへ実行可能な文字列を保存できません")
+
+    def check_saved_shelf() -> None:
+        """再起動とreload後もメニュー登録なしで保存したShelfから起動する。"""
+        try:
+            import importlib
+
+            import bd_tools
+
+            def check_no_menu() -> None:
+                """起動設定OFFのまま共有メニューが作成されていないか確認する。"""
+                main = mel.eval("$bdCommandMain=$gMainWindow")
+                menus = cmds.window(main, query=True, menuArray=True) or []
+                if any(
+                    cmds.menu(menu, query=True, label=True) == "bakedanuki"
+                    for menu in menus
+                ):
+                    raise AssertionError("Shelf起動にメニュー登録は不要です")
+
+            def click_buttons(buttons: tuple[str, ...]) -> None:
+                """保存済みボタンをクリックし、各ツールが表示されたか確認する。"""
+                check_commands(buttons, shelf=True)
+                for button in buttons:
+                    pointer = omui.MQtUtil.findControl(button)
+                    if not pointer:
+                        raise AssertionError(
+                            f"Shelfボタンがありません: {button}"
+                        )
+                    widget = qt.wrapInstance(int(pointer), qt.QWidget)
+                    position = qt.QPointF(widget.rect().center())
+                    screen_position = qt.QPointF(
+                        widget.mapToGlobal(position.toPoint())
+                    )
+                    # Maya独自のShelf widgetへ実クリックと同じマウス入力を送る
+                    for event_type, buttons_state in (
+                        (
+                            qt.QEvent.Type.MouseButtonPress,
+                            qt.Qt.MouseButton.LeftButton,
+                        ),
+                        (
+                            qt.QEvent.Type.MouseButtonRelease,
+                            qt.Qt.MouseButton.NoButton,
+                        ),
+                    ):
+                        qt.QApplication.sendEvent(
+                            widget,
+                            qt.QtGui.QMouseEvent(
+                                event_type,
+                                position,
+                                screen_position,
+                                qt.Qt.MouseButton.LeftButton,
+                                buttons_state,
+                                qt.Qt.KeyboardModifier.NoModifier,
+                            ),
+                        )
+                qt.QApplication.processEvents()
+                for name in _TOOL_PACKAGES:
+                    package = importlib.import_module(f"bd_tools.{name}")
+                    if not cmds.workspaceControl(
+                        package.WORKSPACE_CONTROL_NAME,
+                        query=True,
+                        visible=True,
+                    ):
+                        raise AssertionError(f"{name} がShelfから開きません")
+
+            check_no_menu()
+            # Maya標準の読込みで、前のprocessが保存したShelfを再構築する
+            if cmds.shelfLayout(_COMMAND_SHELF, exists=True):
+                cmds.deleteUI(_COMMAND_SHELF)
+            path = (output / f"shelf_{_COMMAND_SHELF}.mel").as_posix()
+            mel.eval(f'loadNewShelf "{path}";')
+            buttons = tuple(
+                cmds.shelfLayout(_COMMAND_SHELF, query=True, childArray=True)
+                or []
+            )
+            click_buttons(buttons)
+            for name in _TOOL_PACKAGES:
+                importlib.import_module(f"bd_tools.{name}").close()
+            bd_tools.reload_package(reload_util=True)
+            check_no_menu()
+            click_buttons(buttons)
+            check_no_menu()
+            finish(True, "saved MEL shelf, restart, no menu, reload: passed")
+        except Exception:
+            finish(False, traceback.format_exc())
 
     def check_icons(items: tuple[str, ...], stage: str) -> None:
         """3画像の設定と読込み、Maya表示設定ON/OFFの実画面を確認する。"""
@@ -307,6 +434,7 @@ def _run_in_maya() -> None:
             bd_tools.reload_package(reload_util=True)
             root, items = _menu_state()
             check_icons(items, "reloaded")
+            save_command_shelf(items)
             _find_labeled_menu(root, "rig")
             from bd_util.maya.ui import unregister_menu_owner
 
@@ -515,6 +643,8 @@ def _run_in_maya() -> None:
             category = _find_labeled_menu(root, "tools")
             for label in _TOOL_LABELS:
                 _find_labeled_menu(category, label)
+            torn_root = tear_off_menu(root, 80)
+            torn_tools = tear_off_menu(category, 400)
             from bd_util.maya.ui import set_menu_auto_install_enabled
 
             set_menu_auto_install_enabled(True)
@@ -525,6 +655,7 @@ def _run_in_maya() -> None:
                 )
 
             bd_tools.uninstall_menu()
+            check_tear_off_closed(torn_root, torn_tools)
             menu_exists = cmds.menu(root, exists=True)
             item_exists = cmds.menuItem(root, exists=True)
             if menu_exists or item_exists:
@@ -557,6 +688,120 @@ def _run_in_maya() -> None:
                 raise AssertionError("既存の親メニューが削除されました")
             check_parent_items(installed=False)
             finish(True, "nested placement, reload, owner cleanup: passed")
+        except Exception:
+            finish(False, traceback.format_exc())
+
+    def tear_off_menu(path: str, x: int) -> qt.QtWidgets.QMenu:
+        """Maya標準の切り離しを表示し、元と同じ項目を持つWindowを取得する。"""
+        pointer = omui.MQtUtil.findControl(path)
+        if not pointer:
+            raise AssertionError(f"メニューのQt UIがありません: {path}")
+        original = qt.wrapInstance(int(pointer), qt.QMenu)
+        if not original.isTearOffEnabled():
+            raise AssertionError(f"切り離しが有効ではありません: {path}")
+        before = set(qt.QApplication.topLevelWidgets())
+        original.showTearOffMenu(qt.QPoint(x, 110))
+        qt.QApplication.processEvents()
+        copies = [
+            widget
+            for widget in qt.QApplication.topLevelWidgets()
+            if widget not in before
+            and isinstance(widget, qt.QtWidgets.QMenu)
+            and widget.isVisible()
+        ]
+        if len(copies) != 1 or copies[0].actions() != original.actions():
+            raise AssertionError(f"切り離したメニューの項目が不正です: {path}")
+        return copies[0]
+
+    def check_tear_off_closed(*menus: qt.QtWidgets.QMenu) -> None:
+        """元メニューの破棄で切り離しWindowも終了するか確認する。"""
+        qt.QApplication.processEvents()
+        qt.QApplication.sendPostedEvents(None, qt.QEvent.Type.DeferredDelete)
+        for menu in menus:
+            if qt.isValid(menu) and menu.isVisible():
+                raise AssertionError("古い切り離しメニューが残っています")
+
+    def check_tear_off() -> None:
+        """切り離し側の起動・設定同期・owner別解除とreloadを確認する。"""
+        try:
+            import importlib
+
+            import bd_tools
+
+            from bd_util.maya.ui import (
+                is_menu_auto_install_enabled,
+                register_menu_item,
+                set_menu_auto_install_enabled,
+                unregister_menu_owner,
+            )
+
+            bd_tools.install_menu()
+            root, items = _menu_state()
+            category = items[0].rpartition("|")[0]
+            torn_root = tear_off_menu(root, 80)
+            torn_tools = tear_off_menu(category, 400)
+            for name, menu in (("root", torn_root), ("tools", torn_tools)):
+                if not menu.grab().save(str(output / f"tearoff-{name}.png")):
+                    raise AssertionError("切り離しメニューを撮影できません")
+
+            # 切り離し側のチェック操作と外部APIによる変更を双方向に同期する
+            enabled = is_menu_auto_install_enabled()
+            option = _find_labeled_menu(root, _OPTION_LABEL)
+            check = next(
+                action
+                for action in torn_root.actions()
+                if action.isCheckable()
+            )
+            check.trigger()
+            if is_menu_auto_install_enabled() == enabled or (
+                cmds.menuItem(option, query=True, checkBox=True) == enabled
+            ):
+                raise AssertionError("切り離し側のチェックが保存されません")
+            set_menu_auto_install_enabled(enabled)
+            if check.isChecked() != enabled:
+                raise AssertionError(
+                    "切り離し側のチェック表示が更新されません"
+                )
+
+            # 切り離したtoolsから3つの公開起動入口を実行する
+            for action in torn_tools.actions():
+                action.trigger()
+            qt.QApplication.processEvents()
+            for name in _TOOL_PACKAGES:
+                package = importlib.import_module(f"bd_tools.{name}")
+                if not cmds.workspaceControl(
+                    package.WORKSPACE_CONTROL_NAME, query=True, visible=True
+                ):
+                    raise AssertionError(f"切り離し側から{name}が開きません")
+                package.close()
+
+            # 同じcategoryの別ownerだけを残し、最後のowner解除で両Windowを閉じる
+            register_menu_item(
+                owner="bd_tearoff_qa",
+                category="tools",
+                item_id="sample",
+                label="Tear-off QA",
+                command='print("Tear-off QA");',
+                source_type="mel",
+            )
+            bd_tools.uninstall_menu()
+            if not torn_tools.isVisible() or [
+                action.text() for action in torn_tools.actions()
+            ] != ["Tear-off QA"]:
+                raise AssertionError("別ownerの切り離し項目が維持されません")
+            unregister_menu_owner("bd_tearoff_qa")
+            check_tear_off_closed(torn_root, torn_tools)
+
+            # toolsだけのreloadとutilを含むreloadで古い切り離しを残さない
+            for reload_util in (False, True):
+                bd_tools.install_menu()
+                root, items = _menu_state()
+                torn_root = tear_off_menu(root, 80)
+                torn_tools = tear_off_menu(items[0].rpartition("|")[0], 400)
+                bd_tools.reload_package(reload_util=reload_util)
+                check_tear_off_closed(torn_root, torn_tools)
+                _menu_state()
+            finish(True, "tear-off, launch, settings, owners, reload: passed")
         except Exception:
             finish(False, traceback.format_exc())
 
@@ -667,8 +912,10 @@ def _run_in_maya() -> None:
     # Maya の起動処理が完了してからメニューを検査する
     checks = {
         "initial": check_startup,
+        "shelf": check_saved_shelf,
         "disabled": check_disabled,
         "reenabled": check_reenabled,
+        "tearoff": check_tear_off,
         "nested": check_nested,
         "native": check_native_menu,
     }
@@ -888,12 +1135,28 @@ def main() -> int:
     parser.add_argument(
         "--phase",
         action="append",
-        choices=("initial", "disabled", "reenabled", "nested", "native"),
+        choices=(
+            "initial",
+            "shelf",
+            "disabled",
+            "reenabled",
+            "tearoff",
+            "nested",
+            "native",
+        ),
     )
     arguments = parser.parse_args()
     phases = tuple(
         arguments.phase
-        or ("initial", "disabled", "reenabled", "nested", "native")
+        or (
+            "initial",
+            "shelf",
+            "disabled",
+            "reenabled",
+            "tearoff",
+            "nested",
+            "native",
+        )
     )
     return _run_launcher(
         arguments.maya_version,

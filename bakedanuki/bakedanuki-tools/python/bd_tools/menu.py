@@ -16,27 +16,6 @@ _ROTATION_SET_ID = "bdRotationPreservingPose"
 _installed = False
 
 
-def _show_channel_box() -> None:
-    """メニュー操作時にbdChannelBoxを読み込んで表示する。"""
-    from .bd_channel_box import show
-
-    show()
-
-
-def _show_child_compensated_set() -> None:
-    """メニュー操作時に子維持ツールを読み込んで表示する。"""
-    from .bd_child_compensated_set import show
-
-    show()
-
-
-def _show_rotation_preserving_pose() -> None:
-    """メニュー操作時に姿勢維持ツールを読み込んで表示する。"""
-    from .bd_rotation_preserving_pose import show
-
-    show()
-
-
 def install_menu() -> bool:
     """設定された配置先の``bakedanuki > tools``へ3ツールを登録する。
 
@@ -54,19 +33,22 @@ def install_menu() -> bool:
         (
             _CHANNEL_BOX_ID,
             "bdChannelBox",
-            _show_channel_box,
+            'python("import bd_tools.bd_channel_box; '
+            'bd_tools.bd_channel_box.show()");',
             channel_box_icon.MENU,
         ),
         (
             _CHILD_SET_ID,
             "移動・回転をセット（子を維持）",
-            _show_child_compensated_set,
+            'python("import bd_tools.bd_child_compensated_set; '
+            'bd_tools.bd_child_compensated_set.show()");',
             child_set_icon.MENU,
         ),
         (
             _ROTATION_SET_ID,
             "回転をセット（姿勢を維持）",
-            _show_rotation_preserving_pose,
+            'python("import bd_tools.bd_rotation_preserving_pose; '
+            'bd_tools.bd_rotation_preserving_pose.show()");',
             rotation_set_icon.MENU,
         ),
     )
@@ -80,6 +62,7 @@ def install_menu() -> bool:
                 item_id=item_id,
                 label=label,
                 command=command,
+                source_type="mel",
                 icon_path=icon_path,
             ):
                 if registered:

@@ -35,19 +35,16 @@ def menu_icon_paths(
     return paths
 
 
-def test_menu_registration_is_owned_by_tools_and_lazily_opens_each_tool(
+def test_menu_registration_uses_reusable_mel_commands(
     monkeypatch: pytest.MonkeyPatch,
     menu_icon_paths: dict[str, Path],
 ) -> None:
-    """3項目の再登録・解除とクリック時の遅延importを確認する。"""
-    registrations: list[tuple[str, str, str, str, Callable[[], object]]] = []
+    """3項目の再登録・解除と自己完結したMELの登録を確認する。"""
+    registrations: list[tuple[str, str, str, str, str]] = []
     removed_owners: list[str] = []
-    shown: list[str] = []
     icon_paths: list[Path] = []
+    source_types: list[str] = []
     fake_ui = ModuleType("bd_util.maya.ui")
-    fake_channel_box = sys.modules["bd_tools.bd_channel_box"]
-    fake_child_set = sys.modules["bd_tools.bd_child_compensated_set"]
-    fake_rotation_set = sys.modules["bd_tools.bd_rotation_preserving_pose"]
 
     def register_menu_item(
         *,
@@ -55,29 +52,19 @@ def test_menu_registration_is_owned_by_tools_and_lazily_opens_each_tool(
         category: str,
         item_id: str,
         label: str,
-        command: Callable[[], object],
+        command: str,
+        source_type: str,
         icon_path: Path,
     ) -> bool:
         """登録引数を保持する偽の共通メニューAPI。"""
         registrations.append((owner, category, item_id, label, command))
         icon_paths.append(icon_path)
+        source_types.append(source_type)
         return True
 
     def unregister_menu_owner(owner: str) -> None:
         """解除対象の所有者を記録する。"""
         removed_owners.append(owner)
-
-    def show_channel_box() -> None:
-        """クリックでだけ呼び出される偽のbdChannelBox。"""
-        shown.append("bdChannelBox")
-
-    def show_child_set() -> None:
-        """クリックでだけ呼び出される偽の子維持ツール。"""
-        shown.append("bdChildCompensatedSet")
-
-    def show_rotation_set() -> None:
-        """クリックでだけ呼び出される偽の姿勢維持ツール。"""
-        shown.append("bdRotationPreservingPose")
 
     monkeypatch.setitem(sys.modules, "bd_util.maya.ui", fake_ui)
     monkeypatch.setattr(
@@ -86,14 +73,6 @@ def test_menu_registration_is_owned_by_tools_and_lazily_opens_each_tool(
     monkeypatch.setattr(
         fake_ui, "unregister_menu_owner", unregister_menu_owner, raising=False
     )
-    monkeypatch.setattr(
-        fake_channel_box, "show", show_channel_box, raising=False
-    )
-    monkeypatch.setattr(fake_child_set, "show", show_child_set, raising=False)
-    monkeypatch.setattr(
-        fake_rotation_set, "show", show_rotation_set, raising=False
-    )
-
     try:
         assert bd_tools.install_menu()
         assert bd_tools.install_menu()
@@ -117,15 +96,16 @@ def test_menu_registration_is_owned_by_tools_and_lazily_opens_each_tool(
         assert [registration[:4] for registration in registrations[3:]] == [
             registration[:4] for registration in registrations[:3]
         ]
-        assert not shown
         expected_icons = list(menu_icon_paths.values())
         assert icon_paths == expected_icons * 2
-        for registration in registrations[3:]:
-            registration[4]()
-        assert shown == [
-            "bdChannelBox",
-            "bdChildCompensatedSet",
-            "bdRotationPreservingPose",
+        assert source_types == ["mel"] * 6
+        assert [registration[4] for registration in registrations[3:]] == [
+            'python("import bd_tools.bd_channel_box; '
+            'bd_tools.bd_channel_box.show()");',
+            'python("import bd_tools.bd_child_compensated_set; '
+            'bd_tools.bd_child_compensated_set.show()");',
+            'python("import bd_tools.bd_rotation_preserving_pose; '
+            'bd_tools.bd_rotation_preserving_pose.show()");',
         ]
     finally:
         bd_tools.uninstall_menu()
@@ -149,7 +129,8 @@ def test_menu_registration_cleans_up_after_partial_failure(
         category: str,
         item_id: str,
         label: str,
-        command: Callable[[], object],
+        command: str,
+        source_type: str,
         icon_path: Path,
     ) -> bool:
         """2項目目だけUI未生成として失敗させる。"""

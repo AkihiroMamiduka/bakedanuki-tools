@@ -48,15 +48,26 @@ Maya 本体でも操作確認します。
 再登録とreload後の再登録を確認します。各項目のクリックで対応するdockable Windowが
 開くことも確認します。専用profileにもユーザー側の
 `userSetup.py`を配置し、Module側のhookと両方が実行されたことを確認します。
-同じprofileでMayaを4回起動し、初回の個人用`config.toml`作成、チェックOFF後の次回起動では
+同じprofileでMayaを順に起動し、初回の個人用`config.toml`作成、チェックOFF後の次回起動では
 `bakedanuki`がないこと、共通installerによる再有効化、その次の起動での再表示を
-確認します。4回目の起動では、外部TOMLで指定した既存メニュー配下へ登録し、Pythonの
+確認します。`nested`の起動では、外部TOMLで指定した既存メニュー配下へ登録し、Pythonの
 `postMenuCommand`による遅延生成を先に完了させ、既存項目の末尾へ追加されることを
 確認します。実際に親メニューを開いても一度だけのcallbackが再実行されないこと、
 reload後の再登録、表示設定の変更、tools所有項目の解除後も親と既存項目が残ることも
 確認します。
 初回起動時は各ツールのUI本体が未読込みであることも確認します。
 3ツールの起動後にtoolsだけをreloadし、開いていたWindowの復元と公開APIの切替を確認します。
+初回は標準`menuItemToShelf()`で3項目をShelfへ転送し、自己完結したコマンドと
+言語`mel`を照会して`shelf_BakedanukiCommandQA.mel`へ保存します。
+次の`shelf`起動では、メニュー自動登録OFFのまま保存ファイルを標準のShelf読込みで
+再構築し、3ボタンのクリックで各Windowが表示されることを確認します。
+全Windowを閉じてtools・utilをreloadした後も、同じボタンで起動します。
+この確認だけを実行する場合は`--phase initial --phase shelf`を指定します。
+`--phase tearoff`ではrootとtoolsを実際に切り離し、3ツールの起動、設定チェックの
+双方向同期、別ownerの項目維持、最後のowner解除と2種類のreloadでのWindow終了を確認します。
+切り離しWindowは`tearoff-root.png`と`tearoff-tools.png`へ保存します。
+`nested`でも入れ子のrootとtoolsの切り離しと解除時の終了を確認します。
+この2工程だけを実行する場合は`--phase tearoff --phase nested`を指定します。
 初回起動とreload後には3画像の絶対path・64px PNGの読込みと、標準の
 Show icons in menusのON/OFFによる表示変化も確認します。
 `icons-startup-*.png`と`icons-reloaded-*.png`を目視確認用に保存します。

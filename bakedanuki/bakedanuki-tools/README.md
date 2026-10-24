@@ -39,6 +39,9 @@ interactive Mayaの起動後、既定では上部メニューバーの`bakedanuk
 `bdChannelBox`、「移動・回転をセット（子を維持）」、
 「回転をセット（姿勢を維持）」を開けます。各Module内の`userSetup.py`が
 メニュー登録を予約します。
+`bakedanuki`全体と`tools`は、メニュー先頭の点線から独立Windowへ切り離せます。
+切り離し側からも同じツールを起動でき、起動時表示のチェックも元メニューと同期します。
+reloadで元メニューを作り直すと切り離しWindowは閉じるため、必要に応じて再度切り離してください。
 この起動処理はユーザー自身の`userSetup.py`やsceneを書き換えません。
 `prefs/bakedanuki/config.toml`は、初回起動時にコメント例付きで自動作成されます。
 `[menu]`の`parent_menu`で既存メニューのUIパスを
@@ -70,6 +73,35 @@ bd_tools.install_menu()
 対象の `Maya.env` とパスを確認してください。同じ `modules` に同梱した tools・util は
 Maya の再起動後にまとめて読み込まれなくなります。配布ファイルと個人設定は残ります。
 `uninstall_menu()` は現在のセッションの tools メニュー項目だけを外す API です。
+
+## Shelf とマーキングメニュー
+
+上部メニューの3ツールには、MELからPythonの公開`show()`を呼ぶコマンドを登録しています。
+Maya標準の操作でメニューからShelfへ登録すると、コマンドと言語`MEL`が引き継がれます。
+標準マーキングメニューのコマンド欄にも、各ツールの次の1行をそのまま使用できます。
+
+bdChannelBox:
+
+```mel
+python("import bd_tools.bd_channel_box; bd_tools.bd_channel_box.show()");
+```
+
+移動・回転をセット（子を維持）:
+
+```mel
+python("import bd_tools.bd_child_compensated_set; bd_tools.bd_child_compensated_set.show()");
+```
+
+回転をセット（姿勢を維持）:
+
+```mel
+python("import bd_tools.bd_rotation_preserving_pose; bd_tools.bd_rotation_preserving_pose.show()");
+```
+
+Shelfへ直接記入する場合は、コマンドの言語を`MEL`に設定します。
+各コマンドは毎回importするため、事前のスクリプト実行やメニュー登録は不要です。
+toolsとutilがPythonから読み込める環境なら、メニュー自動登録OFFや開発reload後も使用できます。
+既に開いているWindowは、公開`show()`の仕様に従って再利用します。
 
 ## Import Check
 
