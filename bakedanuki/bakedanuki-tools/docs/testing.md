@@ -68,6 +68,17 @@ reload後の再登録、表示設定の変更、tools所有項目の解除後も
 切り離しWindowは`tearoff-root.png`と`tearoff-tools.png`へ保存します。
 `nested`でも入れ子のrootとtoolsの切り離しと解除時の終了を確認します。
 この2工程だけを実行する場合は`--phase tearoff --phase nested`を指定します。
+
+メニューのunit testやutilの`FakeMenus`は、登録文字列・言語・所有権・再登録処理を
+確認します。MELの実行やShelfの保存・再読込み、切り離しWindowの同期・破棄は
+Maya本体runnerで確認し、代替コマンドを使うテストだけで完了と判断しません。
+新しいツールやメニュー基盤の変更時は、関連する工程をMaya 2025 / 2026 / 2027で実行します。
+
+Mayaが保存したShelfの`.mel`は、リポジトリのUTF-8ファイルと同じ文字コードだと
+決めつけないでください。日本語ラベルを含む保存ファイルでも、コマンドと言語はMayaから
+照会し、保存後は標準の`loadNewShelf`で実際に読み込んで確認します。
+現行runnerの`<function`検出はバイト列で行い、UTF-8としての読込みを前提にしません。
+
 初回起動とreload後には3画像の絶対path・64px PNGの読込みと、標準の
 Show icons in menusのON/OFFによる表示変化も確認します。
 `icons-startup-*.png`と`icons-reloaded-*.png`を目視確認用に保存します。

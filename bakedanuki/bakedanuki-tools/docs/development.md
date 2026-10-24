@@ -108,6 +108,24 @@ MayaはModuleの`scripts`を探索し、起動時にそのファイルを実行�
 表示設定、設定ファイルの扱いは、util側の
 `bakedanuki/bakedanuki-util/docs/ui/README.md`の「共有Mayaメインメニュー」を参照してください。
 
+## Tool Menu Commands
+
+ツール起動項目は`bd_tools/menu.py`で定義し、毎回importして公開`show()`を呼ぶ
+自己完結したMEL文字列を`source_type="mel"`で登録します。登録時はツール本体を
+読み込まず、クリック時に初めて公開入口を解決します。具体的なコマンドは
+[起動コマンド一覧](../README.md#shelf-とマーキングメニュー)を参照してください。
+
+Shelfやマーキングメニューへ保存されたコマンドは、上部メニューを更新しても
+書き換わりません。公開module名や`show()`を移動・改名する場合は、旧入口を維持するか、
+新しいコマンドと利用者が更新する手順を`CHANGELOG.md`へ記録します。
+保存先からはprivate関数、関数オブジェクトの表示、メニューのUI pathを参照させません。
+
+メニューの切り離しはutilの標準機能を使用します。`tearOff`は作成時の指定で、
+既存メニューへの`install_menu()`だけでは切り替わりません。変更後は元メニューを
+再生成するか、Mayaを再起動します。別ownerが同じrootを使用している場合、
+toolsだけを解除・reloadしても共有rootは残るため、Maya再起動で反映してください。
+共有root全体をtools側から削除して、他packageのメニューを巻き込まないようにします。
+
 ## Tool Icons
 
 各ツールの画像は`python/bd_tools/<tool_name>/icon/<tool_name>.png`に配置します。
@@ -154,8 +172,8 @@ MayaのScript Editorで`import bd_tools`を実行し、変更内容に応じて�
 
 メニュー未登録の状態でreloadした場合は、必要に応じて`bd_tools.install_menu()`を呼びます。
 reloadは、登録されていたメニューだけを復元します。
-画像の自動監視は行いません。将来シェルフへ対応する際も同じPNGを参照できます。
-シェルフボタンの登録・保存は別途実装する機能です。
+画像の自動監視は行いません。Maya標準のメニューからShelfへの転送では、同じPNGと
+MELコマンドを引き継ぎます。Shelfボタンの作成・保存は利用者がMaya標準の操作で行います。
 
 仮アイコンは指定の改行と文字の縦横比を維持し、文字ブロックの長い方向で
 外周に2〜3px程度の黒い余白が残るように拡大しています。
@@ -167,9 +185,12 @@ reloadは、登録されていたメニューだけを復元します。
 2. ツールの親packageから`icon`を公開します。既存ツールと同様に、
    パス取得だけではそのツールのUI本体を読み込まない構成にします。
 3. `bd_tools/menu.py`の`install_menu()`内で画像情報を読み込み、
-   そのツールの遅延実行callbackと`icon.MENU`を登録項目へ追加します。
+   そのツールをimportして公開`show()`を呼ぶMEL文字列と`icon.MENU`を登録項目へ追加します。
+   `source_type="mel"`を維持し、上記の[登録方針](#tool-menu-commands)に従います。
 4. `tests/typecheck/tool_icons_contract.py`、`tests/maya/test_tool_icons.py`、
    `tests/unit/test_menu.py`、`scripts/test_menu_maya.py`の対象一覧と期待値を更新します。
+   Maya本体runnerの`_TOOL_LABELS`と`_TOOL_PACKAGES`はメニューと同じ順に揃え、
+   既存3ツールを前提としたWindow確認も新しい対象へ拡張します。
 
 配布物にPNGが含まれることと、縮小されたメニュー上での見え方も確認します。
 検証入口と画像サイズを変更する際の注意点は、
