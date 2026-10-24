@@ -133,10 +133,24 @@ class CustomFilterRegistry(qt.QObject):
 
     def set_enabled(self, path: str, enabled: bool) -> bool:
         """登録位置を変えずに ComboBox への表示可否を切り替える。"""
-        index = self._index_of(path)
-        if index is None or self._entries[index].enabled == enabled:
+        return self.set_enabled_many((path,), enabled)
+
+    def set_enabled_many(self, paths: Iterable[str], enabled: bool) -> bool:
+        """対象登録の表示状態を揃え、一度だけ保存して完了状態を通知する。"""
+        selected = set(paths)
+        if not any(
+            entry.path in selected and entry.enabled != enabled
+            for entry in self._entries
+        ):
             return False
-        self._entries[index] = replace(self._entries[index], enabled=enabled)
+        self._entries = [
+            (
+                replace(entry, enabled=enabled)
+                if entry.path in selected
+                else entry
+            )
+            for entry in self._entries
+        ]
         self._save()
         self.changed.emit()
         return True

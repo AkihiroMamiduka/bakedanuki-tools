@@ -57,6 +57,10 @@ from .custom_filter_registry import (
     CustomFilterRegistration,
     CustomFilterRegistry,
 )
+from .custom_filter_manager_view import (
+    CustomFilterRegistrationTree,
+    create_manager_tool_button,
+)
 from .custom_filter_dialogs import create_registered_filter
 from .custom_filter_setup import CustomFilterSetupPanel
 from .custom_filters import CustomFilterSelection
@@ -1284,7 +1288,9 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.setObjectName("bdChannelBoxCustomFilterManager")
         self.setWindowTitle("カスタムフィルター管理")
         self.resize(700, 390)
-        self.tree_widget = qt.QTreeWidget(self)
+        tree = CustomFilterRegistrationTree(self)
+        tree.visibility_clicked.connect(self._toggle_filter_visibility)
+        self.tree_widget: qt.QTreeWidget = tree
         self.tree_widget.setObjectName("customFilterRegistrationTree")
         self.tree_widget.setAccessibleName("カスタムフィルター登録一覧")
         # Maya 2027のstubにない見出し引数の型をQt境界で確定する
@@ -1318,15 +1324,15 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.storage_error_label.setTextInteractionFlags(
             qt.Qt.TextInteractionFlag.TextSelectableByMouse
         )
-        self.new_button = qt.QToolButton(self)
+        self.new_button = create_manager_tool_button(self)
         self.new_button.setObjectName("createCustomFilterButton")
-        self.add_button = qt.QToolButton(self)
-        self.duplicate_button = qt.QToolButton(self)
+        self.add_button = create_manager_tool_button(self)
+        self.duplicate_button = create_manager_tool_button(self)
         self.duplicate_button.setObjectName("duplicateCustomFilterButton")
-        self.remove_button = qt.QToolButton(self)
-        self.move_up_button = qt.QToolButton(self)
-        self.move_down_button = qt.QToolButton(self)
-        self.reload_all_button = qt.QToolButton(self)
+        self.remove_button = create_manager_tool_button(self)
+        self.move_up_button = create_manager_tool_button(self)
+        self.move_down_button = create_manager_tool_button(self)
+        self.reload_all_button = create_manager_tool_button(self)
         buttons = qt.QHBoxLayout()
         buttons.setSpacing(4)
         for button, label, icon_name, fallback in (
@@ -1385,7 +1391,9 @@ class CustomFilterManagerDialog(qt.QDialog):
         buttons.addStretch(1)
         layout = qt.QVBoxLayout(self)
         layout.addWidget(
-            qt.QLabel("チェックした登録を Attribute Filter に表示します", self)
+            qt.QLabel(
+                "目のアイコンで Attribute Filter への表示を切り替えます", self
+            )
         )
         layout.addLayout(buttons)
         layout.addWidget(self.tree_widget, 1)
@@ -1567,6 +1575,18 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.storage_error_label.setText(error or "")
         self.storage_error_label.setToolTip(error or "")
         self.storage_error_label.setVisible(error is not None)
+
+    def _toggle_filter_visibility(self, clicked: object) -> None:
+        """選択内は全件、選択外は一件を、クリックした登録の反対状態へ揃える。"""
+        if not isinstance(clicked, qt.QTreeWidgetItem):
+            return
+        path = self._item_path(clicked)
+        if path is None:
+            return
+        paths = self._selected_paths() if clicked.isSelected() else (path,)
+        self.registry.set_enabled_many(
+            paths, clicked.checkState(0) != qt.Qt.CheckState.Checked
+        )
 
     def _change_enabled(self, item: qt.QTreeWidgetItem, column: int) -> None:
         """名前列のチェック変更だけを個人設定とComboBoxへ反映する。"""

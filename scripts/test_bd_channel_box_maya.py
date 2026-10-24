@@ -198,6 +198,7 @@ class _MayaSmokeSession:
                 self._show,
                 self._inspect_custom_filters,
                 self._inspect_custom_filter_manager_operations,
+                self._inspect_custom_filter_hotbox,
                 self._inspect_custom_filter_sweep,
                 self._inspect_custom_filter_type_editor,
                 self._inspect_custom_filter_context_menus,
@@ -1739,6 +1740,40 @@ class _MayaSmokeSession:
                     raise AssertionError(
                         "管理一覧が右端まで広がらないかパス全文が失われました"
                     )
+                # 実際の描画設定から、末尾を残す左側省略を確認する
+                path_index = tree.model().index(0, 1)
+                option = qt.QtWidgets.QStyleOptionViewItem()
+                delegate = cast(
+                    qt.QStyledItemDelegate, tree.itemDelegateForColumn(1)
+                )
+                delegate.initStyleOption(option, path_index)
+                option.rect = tree.visualRect(path_index)
+                text_rect = tree.style().subElementRect(
+                    qt.QtWidgets.QStyle.SubElement.SE_ItemViewItemText,
+                    option,
+                    tree,
+                )
+                metrics = cast(
+                    qt.QtGui.QFontMetrics, getattr(option, "fontMetrics")
+                )
+                mode = cast(
+                    qt.Qt.TextElideMode, getattr(option, "textElideMode")
+                )
+                visible_path = metrics.elidedText(
+                    paths[0], mode, text_rect.width()
+                )
+                if mode != qt.Qt.TextElideMode.ElideLeft or (
+                    visible_path != paths[0]
+                    and (
+                        not visible_path.startswith("…")
+                        or not paths[0].endswith(visible_path[1:])
+                        or not visible_path.endswith(Path(paths[0]).name)
+                    )
+                ):
+                    raise AssertionError("パスの左側省略で末尾が残りません")
+                self.diagnostics.append(
+                    {"manager_visible_path": visible_path, "width": width}
+                )
                 widths.append((viewport_width, *columns))
                 image_path = self.output / f"43-manager-columns-{width}.png"
                 if not dialog.grab().save(str(image_path)):
@@ -1766,6 +1801,13 @@ class _MayaSmokeSession:
 
         # 管理画面の指定アイコンを実際のMayaリソースで確認する
         resources: dict[str, bool] = {}
+        for icon_name in ("ghostingVisible.png", "ghostingHidden.png"):
+            available = not qt.QIcon(f":/{icon_name}").pixmap(16, 16).isNull()
+            resources[icon_name] = available
+            if not available:
+                raise AssertionError(
+                    f"管理一覧の目アイコンを取得できません: {icon_name}"
+                )
         toolbar = (
             (dialog.new_button, "fileNew.png"),
             (dialog.add_button, "item_add.png"),
@@ -1808,7 +1850,7 @@ class _MayaSmokeSession:
         self.screenshots.append(str(image_path))
         self.steps.append("inspect_custom_filter_manager_dialog")
 
-        # 上下移動とチェック操作を画面から行い、ComboBoxへ即時反映させる
+        # 上下移動と目の一括操作を画面から行い、ComboBoxへ即時反映させる
         tree.setCurrentItem(
             tree.topLevelItem(1),
             0,
@@ -1835,20 +1877,49 @@ class _MayaSmokeSession:
         first_item = tree.topLevelItem(0)
         if first_item is None:
             raise AssertionError("管理画面の先頭登録がありません")
-        first_item.setCheckState(0, qt.Qt.CheckState.Unchecked)
+        tree.topLevelItem(1).setSelected(True)
+        eye_position = tree.visualItemRect(first_item).center()
+        eye_position.setX(tree.visualItemRect(first_item).left() + 12)
+        for kind in (
+            qt.QEvent.Type.MouseButtonPress,
+            qt.QEvent.Type.MouseButtonRelease,
+        ):
+            self._mouse(tree.viewport(), kind, eye_position)
         self._flush_gui()
-        if registry.entries[0].enabled or combo.count() != 6:
+        if (
+            registry.entries[0].enabled
+            or registry.entries[1].enabled
+            or combo.count() != 5
+            or tree.topLevelItem(0) is not first_item
+            or len(tree.selectedItems()) != 2
+            or tree.currentItem() is not first_item
+        ):
             raise AssertionError(
-                "OFFにした登録がAttribute Filterから消えません"
+                "目のクリックで選択全件をOFFにできないか、選択・現在行が変わりました"
             )
+        help_event = qt.QtGui.QHelpEvent(
+            qt.QEvent.Type.ToolTip,
+            eye_position,
+            tree.viewport().mapToGlobal(eye_position),
+        )
+        qt.QApplication.sendEvent(tree.viewport(), help_event)
+        tooltip = qt.QtWidgets.QToolTip.text()
+        if (
+            "OFF" not in tooltip
+            or "選択中の2件をON" not in tooltip
+            or "Space" in tooltip
+        ):
+            raise AssertionError("目のtooltipの状態・一括操作案内が不正です")
+        qt.QtWidgets.QToolTip.hideText()
         dialog.reload_all_button.click()
         self._flush_gui()
         if (
             tuple(entry.path for entry in registry.entries) != paths
             or registry.entries[0].enabled
-            or not registry.entries[1].enabled
-            or combo.count() != 6
+            or registry.entries[1].enabled
+            or combo.count() != 5
             or tree.currentItem() is not tree.topLevelItem(0)
+            or len(tree.selectedItems()) != 2
         ):
             raise AssertionError(
                 "全て再読込で登録順・ON/OFF・選択が変わりました"
@@ -1857,12 +1928,62 @@ class _MayaSmokeSession:
         restored_item = tree.topLevelItem(0)
         if restored_item is None:
             raise AssertionError("OFFにした登録を再選択できません")
-        restored_item.setCheckState(0, qt.Qt.CheckState.Checked)
+        self._key(tree, qt.Qt.Key.Key_Space)
         self._flush_gui()
-        if not registry.entries[0].enabled or combo.count() != 7:
+        if (
+            any(entry.enabled for entry in registry.entries)
+            or combo.count() != 5
+        ):
+            raise AssertionError("Spaceで登録の表示状態が変更されました")
+        tree.setCurrentItem(
+            restored_item,
+            0,
+            qt.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        tree.topLevelItem(1).setSelected(True)
+        for kind in (
+            qt.QEvent.Type.MouseButtonPress,
+            qt.QEvent.Type.MouseButtonRelease,
+        ):
+            self._mouse(tree.viewport(), kind, eye_position)
+        self._flush_gui()
+        if (
+            not registry.entries[0].enabled
+            or not registry.entries[1].enabled
+            or combo.count() != 7
+            or len(tree.selectedItems()) != 2
+            or tree.currentItem() is not restored_item
+        ):
             raise AssertionError(
-                "ONに戻した登録がAttribute Filterへ戻りません"
+                "目のクリックで選択全件をONに戻せないか、選択が失われました"
             )
+
+        # 選択外の目は単独で切り替え、現在行と選択は変えない
+        tree.topLevelItem(1).setSelected(False)
+        outside_rect = tree.visualItemRect(tree.topLevelItem(1))
+        outside_eye = qt.QPoint(
+            outside_rect.left() + 12, outside_rect.center().y()
+        )
+        for expected in (False, True):
+            for kind in (
+                qt.QEvent.Type.MouseButtonPress,
+                qt.QEvent.Type.MouseButtonRelease,
+            ):
+                self._mouse(tree.viewport(), kind, outside_eye)
+            self._flush_gui()
+            if (
+                not registry.entries[0].enabled
+                or registry.entries[1].enabled != expected
+                or tree.selectedItems() != [restored_item]
+                or tree.currentItem() is not restored_item
+            ):
+                raise AssertionError("選択外の目が対象1件だけを切り替えません")
+            if not expected:
+                image_path = self.output / "43c-custom-filter-eye-toggle.png"
+                if not dialog.grab().save(str(image_path)):
+                    raise RuntimeError("ONとOFFの目アイコンを撮影できません")
+                self.screenshots.append(str(image_path))
+        self.steps.append("custom_filter_manager_eye_aligns_selection")
         dialog.close()
         self._flush_gui()
         self.steps.append("move_and_toggle_custom_filter_registrations")
@@ -2214,7 +2335,15 @@ class _MayaSmokeSession:
                 qt.QItemSelectionModel.SelectionFlag.ClearAndSelect,
             )
             tree.topLevelItem(4).setSelected(True)
-            tree.topLevelItem(2).setCheckState(0, qt.Qt.CheckState.Unchecked)
+            eye_position = tree.visualItemRect(tree.topLevelItem(2)).center()
+            eye_position.setX(
+                tree.visualItemRect(tree.topLevelItem(2)).left() + 12
+            )
+            for kind in (
+                qt.QEvent.Type.MouseButtonPress,
+                qt.QEvent.Type.MouseButtonRelease,
+            ):
+                self._mouse(tree.viewport(), kind, eye_position)
             selected = (temporary_paths[0], temporary_paths[2])
             if (
                 manager.duplicate_button.isEnabled()
@@ -2256,6 +2385,7 @@ class _MayaSmokeSession:
                 )
                 != selected
                 or registry.entries[2].enabled
+                or registry.entries[4].enabled
                 or tree.currentItem().data(0, qt.Qt.ItemDataRole.UserRole)
                 != temporary_paths[0]
                 or manager.move_down_button.isEnabled()
@@ -2284,6 +2414,138 @@ class _MayaSmokeSession:
                 panel.set_target(saved_target)
             self._select_combo_item(
                 widget.mode_combo, widget.mode_combo.findData(saved_mode)
+            )
+            manager.hide()
+
+    def _inspect_custom_filter_hotbox(self) -> None:
+        """一覧と操作ボタンのSpaceで標準Hotboxを開閉し、選択を維持する。"""
+        from maya.api import OpenMaya as om
+
+        from bd_util.ui import qt
+
+        widget = self._require_window().widget
+        widget.manage_custom_filters_action.trigger()
+        manager = widget.custom_filter_dialog
+        if manager is None:
+            raise AssertionError("Hotbox検証用の管理画面がありません")
+        tree = manager.tree_widget
+        saved_selected = tuple(tree.selectedItems())
+        saved_current = tree.currentItem()
+        tree.setCurrentItem(
+            tree.topLevelItem(0),
+            0,
+            qt.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        tree.topLevelItem(1).setSelected(True)
+        selected = tuple(tree.selectedItems())
+        current = tree.currentItem()
+        enabled = tuple(
+            entry.enabled for entry in widget.custom_filter_registry.entries
+        )
+        commands: list[str] = []
+
+        def record_command(command: str, _data: object) -> None:
+            """標準ショートカットから実行されたHotboxコマンドを記録する。"""
+            if "hotbox" in command.lower():
+                commands.append(command)
+
+        def send_space(
+            target: qt.QWidget,
+            kind: qt.QEvent.Type,
+            repeated: bool = False,
+        ) -> None:
+            """WindowsのSpace情報を含む押下・解放をQtの配送経路へ送る。"""
+            event = qt.QtGui.QKeyEvent(
+                kind,
+                qt.Qt.Key.Key_Space,
+                qt.Qt.KeyboardModifier.NoModifier,
+                0x39,
+                0x20,
+                0,
+                " ",
+                repeated,
+                1,
+            )
+            qt.QApplication.sendEvent(target, event)
+
+        def visible_hotbox() -> qt.QWidget | None:
+            """Maya本体のHotboxが表示中の場合だけ、そのWindowを返す。"""
+            return next(
+                (
+                    window
+                    for window in qt.QApplication.topLevelWidgets()
+                    if window.objectName() == "hotboxWindow"
+                    and window.isVisible()
+                ),
+                None,
+            )
+
+        callback = om.MCommandMessage.addCommandCallback(record_command)
+        try:
+            for role, target in (
+                ("tree", tree),
+                ("toolbar", manager.reload_all_button),
+            ):
+                commands.clear()
+                manager.raise_()
+                manager.activateWindow()
+                target.setFocus()
+                self._flush_gui()
+                if qt.QApplication.focusWidget() is not target:
+                    raise AssertionError("検証対象へフォーカスが移りません")
+                send_space(target, qt.QEvent.Type.ShortcutOverride)
+                send_space(target, qt.QEvent.Type.KeyPress)
+                try:
+                    # 長押し中も標準Hotboxを維持し、一覧やボタンを操作しない
+                    loop = qt.QtCore.QEventLoop()
+                    qt.QTimer.singleShot(700, loop.quit)
+                    loop.exec()
+                    for _ in range(3):
+                        send_space(target, qt.QEvent.Type.KeyPress, True)
+                    self._flush_gui()
+                    hotbox = visible_hotbox()
+                    if hotbox is None:
+                        raise AssertionError("Space長押しでHotboxが開きません")
+                    image_path = self.output / (
+                        f"43d-manager-hotbox-{role}.png"
+                    )
+                    if not hotbox.grab().save(str(image_path)):
+                        raise RuntimeError("標準Hotboxを撮影できません")
+                    self.screenshots.append(str(image_path))
+                finally:
+                    send_space(target, qt.QEvent.Type.KeyRelease)
+                    self._flush_gui()
+                if (
+                    visible_hotbox() is not None
+                    or not any("-release" in command for command in commands)
+                    or tuple(tree.selectedItems()) != selected
+                    or tree.currentItem() is not current
+                    or tuple(
+                        entry.enabled
+                        for entry in widget.custom_filter_registry.entries
+                    )
+                    != enabled
+                ):
+                    raise AssertionError(
+                        "Hotboxの終了か一覧状態の保持が不正です"
+                    )
+                self.diagnostics.append(
+                    {"manager_hotbox_target": role, "commands": commands[:]}
+                )
+                # 次の入力前に、Hotboxの遅延した終了処理も進める
+                loop = qt.QtCore.QEventLoop()
+                qt.QTimer.singleShot(250, loop.quit)
+                loop.exec()
+            self.steps.append("manager_space_opens_and_releases_native_hotbox")
+        finally:
+            om.MMessage.removeCallback(callback)
+            tree.clearSelection()
+            for item in saved_selected:
+                item.setSelected(True)
+            tree.setCurrentItem(
+                saved_current,
+                0,
+                qt.QItemSelectionModel.SelectionFlag.NoUpdate,
             )
             manager.hide()
 

@@ -110,6 +110,47 @@ def _selected_registration_paths(tree: qt.QTreeWidget) -> tuple[str, ...]:
     )
 
 
+def _registration_eye_position(tree: qt.QTreeWidget, index: int) -> qt.QPoint:
+    """表示されている登録行の目アイコン中央を返す。"""
+    rect = tree.visualItemRect(tree.topLevelItem(index))
+    return qt.QPoint(rect.left() + 12, rect.center().y())
+
+
+def _send_registration_mouse(
+    tree: qt.QTreeWidget,
+    kind: qt.QEvent.Type,
+    position: qt.QPoint,
+    button: qt.Qt.MouseButton = qt.Qt.MouseButton.LeftButton,
+) -> None:
+    """登録一覧のviewportへ押下・移動・解放を個別に送る。"""
+    viewport = tree.viewport()
+    event = qt.QtGui.QMouseEvent(
+        kind,
+        qt.QPointF(position),
+        qt.QPointF(viewport.mapToGlobal(position)),
+        (
+            qt.Qt.MouseButton.NoButton
+            if kind == qt.QEvent.Type.MouseMove
+            else button
+        ),
+        (
+            qt.Qt.MouseButton.NoButton
+            if kind == qt.QEvent.Type.MouseButtonRelease
+            else button
+        ),
+        qt.Qt.KeyboardModifier.NoModifier,
+    )
+    qt.QApplication.sendEvent(viewport, event)
+
+
+def _click_registration_eye(tree: qt.QTreeWidget, index: int) -> None:
+    """登録行の目アイコンを実マウス入力で一度クリックする。"""
+    position = _registration_eye_position(tree, index)
+    _send_registration_mouse(tree, qt.QEvent.Type.MouseButtonPress, position)
+    _send_registration_mouse(tree, qt.QEvent.Type.MouseButtonRelease, position)
+    _events()
+
+
 @pytest.fixture
 def dock_host(
     qt_application: qt.QApplication,
@@ -549,6 +590,429 @@ def test_custom_filter_manager_multiselection_reorders_reloads_and_removes(
     assert not dialog.remove_button.isEnabled()
     assert not dialog.move_up_button.isEnabled()
     assert not dialog.move_down_button.isEnabled()
+
+
+def test_custom_filter_manager_visibility_click_preserves_selection_and_scroll(
+    dock_host: _WorkspaceHost, tmp_path: Path
+) -> None:
+    """目だけの切替は複数選択・現在行・スクロールを保ち、個人設定へ保存する。"""
+    from bd_tools import bd_channel_box
+
+    files = tuple(tmp_path / f"filter_{index:02}.json" for index in range(24))
+    for path in files:
+        _write_custom_filter(path, path.stem)
+    original_bytes = tuple(path.read_bytes() for path in files)
+    widget = bd_channel_box.show().widget
+    registry = widget.custom_filter_registry
+    paths = registry.add_paths(files)
+    widget.manage_custom_filters_action.trigger()
+    dialog = widget.custom_filter_dialog
+    assert dialog is not None
+    tree = dialog.tree_widget
+    _select_registration_rows(tree, (20, 22))
+    tree.scrollToItem(tree.topLevelItem(23))
+    _events()
+    scroll = tree.verticalScrollBar().value()
+    assert scroll > 0
+    current = tree.currentItem()
+    item = tree.topLevelItem(21)
+    assert tree.visualItemRect(item).intersects(tree.viewport().rect())
+    position = _registration_eye_position(tree, 21)
+
+    # 押下中は未確定とし、同じ目の上で解放して一件だけ変更する
+    _send_registration_mouse(tree, qt.QEvent.Type.MouseButtonPress, position)
+    assert registry.entries[21].enabled
+    _send_registration_mouse(tree, qt.QEvent.Type.MouseButtonRelease, position)
+    _events()
+    assert tuple(entry.enabled for entry in registry.entries) == tuple(
+        index != 21 for index in range(len(files))
+    )
+    assert item.checkState(0) == qt.Qt.CheckState.Unchecked
+    assert _selected_registration_paths(tree) == (paths[20], paths[22])
+    assert tree.currentItem() is current
+    assert tree.verticalScrollBar().value() == scroll
+    assert widget.filter_combo.count() == 5 + len(files) - 1
+    assert tuple(path.read_bytes() for path in files) == original_bytes
+
+    # Window再生成でもアイコン操作で保存した表示設定を復元する
+    bd_channel_box.close()
+    _events()
+    reopened = bd_channel_box.show().widget
+    assert tuple(
+        (entry.path, entry.enabled)
+        for entry in reopened.custom_filter_registry.entries
+    ) == tuple((path, index != 21) for index, path in enumerate(paths))
+    assert reopened.filter_combo.count() == 5 + len(files) - 1
+
+
+def test_custom_filter_manager_visibility_cancels_mouse_gestures(
+    dock_host: _WorkspaceHost, tmp_path: Path
+) -> None:
+    """目以外への解放・ドラッグ・右クリックは表示状態を変更しない。"""
+    from bd_tools import bd_channel_box
+
+    files = tuple(tmp_path / f"{name}.json" for name in "ABC")
+    for path in files:
+        _write_custom_filter(path, path.stem)
+    widget = bd_channel_box.show().widget
+    registry = widget.custom_filter_registry
+    paths = registry.add_paths(files)
+    widget.manage_custom_filters_action.trigger()
+    dialog = widget.custom_filter_dialog
+    assert dialog is not None
+    tree = dialog.tree_widget
+    _events()
+    _select_registration_rows(tree, (1, 2))
+    current = tree.currentItem()
+    first = _registration_eye_position(tree, 0)
+    second = _registration_eye_position(tree, 1)
+    name = first + qt.QPoint(14, 0)
+
+    # 同じ行でも名前部分の解放や別行の目への解放では確定しない
+    for release in (name, second):
+        _send_registration_mouse(tree, qt.QEvent.Type.MouseButtonPress, first)
+        _send_registration_mouse(tree, qt.QEvent.Type.MouseMove, release)
+        _send_registration_mouse(
+            tree, qt.QEvent.Type.MouseButtonRelease, release
+        )
+        assert all(entry.enabled for entry in registry.entries)
+    assert _selected_registration_paths(tree) == (paths[1], paths[2])
+    assert tree.currentItem() is current
+
+    # 閾値を越えてドラッグした操作は元の目へ戻っても切り替えない
+    _send_registration_mouse(tree, qt.QEvent.Type.MouseButtonPress, first)
+    _send_registration_mouse(tree, qt.QEvent.Type.MouseMove, name)
+    _send_registration_mouse(tree, qt.QEvent.Type.MouseMove, first)
+    _send_registration_mouse(tree, qt.QEvent.Type.MouseButtonRelease, first)
+    # 他のUIがマウスを取得した後の解放も、古い目の操作として確定しない
+    _send_registration_mouse(tree, qt.QEvent.Type.MouseButtonPress, first)
+    qt.QApplication.sendEvent(
+        tree.viewport(), qt.QEvent(qt.QEvent.Type.UngrabMouse)
+    )
+    _send_registration_mouse(tree, qt.QEvent.Type.MouseButtonRelease, first)
+    for kind in (
+        qt.QEvent.Type.MouseButtonPress,
+        qt.QEvent.Type.MouseButtonRelease,
+    ):
+        _send_registration_mouse(
+            tree, kind, first, qt.Qt.MouseButton.RightButton
+        )
+    assert all(entry.enabled for entry in registry.entries)
+
+    # 名前は従来の行選択、一覧の余白は通常の一覧操作だけを行う
+    for kind in (
+        qt.QEvent.Type.MouseButtonPress,
+        qt.QEvent.Type.MouseButtonRelease,
+    ):
+        _send_registration_mouse(tree, kind, name)
+    assert _selected_registration_paths(tree) == (paths[0],)
+    assert tree.currentItem() is tree.topLevelItem(0)
+    blank = qt.QPoint(
+        12, tree.visualItemRect(tree.topLevelItem(2)).bottom() + 25
+    )
+    assert tree.viewport().rect().contains(blank)
+    for kind in (
+        qt.QEvent.Type.MouseButtonPress,
+        qt.QEvent.Type.MouseButtonRelease,
+    ):
+        _send_registration_mouse(tree, kind, blank)
+    _events()
+    assert all(entry.enabled for entry in registry.entries)
+
+
+@pytest.mark.parametrize("clicked_index", (0, 1))
+def test_custom_filter_manager_visibility_aligns_selection(
+    dock_host: _WorkspaceHost, tmp_path: Path, clicked_index: int
+) -> None:
+    """混在する選択を基準行の反対状態へ揃え、選択外の目は一件だけ切り替える。"""
+    from bd_tools import bd_channel_box
+
+    files = tuple(tmp_path / f"{name}.json" for name in "ABCDE")
+    for path in files:
+        _write_custom_filter(path, path.stem)
+    original_bytes = tuple(path.read_bytes() for path in files)
+    widget = bd_channel_box.show().widget
+    registry = widget.custom_filter_registry
+    paths = registry.add_paths(files)
+    registry.set_enabled_many((paths[1], paths[3]), False)
+    widget.manage_custom_filters_action.trigger()
+    dialog = widget.custom_filter_dialog
+    assert dialog is not None
+    tree = dialog.tree_widget
+    _events()
+    _select_registration_rows(tree, (0, 1, 3))
+    current = tree.currentItem()
+    scroll = tree.verticalScrollBar().value()
+    selected = (paths[0], paths[1], paths[3])
+    enabled = clicked_index == 1
+    observed: list[tuple[bool, ...]] = []
+
+    def record_change() -> None:
+        """一括切替の中間状態が通知されないことを記録する。"""
+        observed.append(tuple(entry.enabled for entry in registry.entries))
+
+    registry.changed.connect(record_change)
+    _click_registration_eye(tree, clicked_index)
+    expected = (enabled, enabled, True, enabled, True)
+    assert observed == [expected]
+    assert tuple(entry.enabled for entry in registry.entries) == expected
+    assert _selected_registration_paths(tree) == selected
+    assert tree.currentItem() is current
+    assert tree.verticalScrollBar().value() == scroll
+
+    # 全件を揃えた後も基準行の反対へ切り替え、選択外の行は巻き込まない
+    _click_registration_eye(tree, clicked_index)
+    expected = (not enabled, not enabled, True, not enabled, True)
+    assert observed[-1] == expected and len(observed) == 2
+    _click_registration_eye(tree, 2)
+    assert tuple(entry.enabled for entry in registry.entries) == (
+        not enabled,
+        not enabled,
+        False,
+        not enabled,
+        True,
+    )
+    assert len(observed) == 3
+    assert _selected_registration_paths(tree) == selected
+    assert tree.currentItem() is current
+    assert tuple(path.read_bytes() for path in files) == original_bytes
+
+
+def test_custom_filter_manager_visibility_double_click_and_space(
+    dock_host: _WorkspaceHost, tmp_path: Path
+) -> None:
+    """二重クリックの切替は一度とし、Spaceでは選択と表示設定を変更しない。"""
+    from bd_tools import bd_channel_box
+
+    files = tuple(tmp_path / f"{name}.json" for name in "ABC")
+    for path in files:
+        _write_custom_filter(path, path.stem)
+    widget = bd_channel_box.show().widget
+    registry = widget.custom_filter_registry
+    paths = registry.add_paths(files)
+    widget.manage_custom_filters_action.trigger()
+    dialog = widget.custom_filter_dialog
+    assert dialog is not None
+    tree = dialog.tree_widget
+    _events()
+    _select_registration_rows(tree, (0, 2))
+    position = _registration_eye_position(tree, 1)
+    for kind in (
+        qt.QEvent.Type.MouseButtonPress,
+        qt.QEvent.Type.MouseButtonRelease,
+        qt.QEvent.Type.MouseButtonDblClick,
+        qt.QEvent.Type.MouseButtonRelease,
+    ):
+        _send_registration_mouse(tree, kind, position)
+    assert tuple(entry.enabled for entry in registry.entries) == (
+        True,
+        False,
+        True,
+    )
+    assert _selected_registration_paths(tree) == (paths[0], paths[2])
+    assert tree.currentItem() is tree.topLevelItem(0)
+
+    # 長押しを含むSpace入力をMaya側へ返し、一覧の選択も変更しない
+    for kind, repeated in (
+        (qt.QEvent.Type.KeyPress, False),
+        (qt.QEvent.Type.KeyRelease, True),
+        (qt.QEvent.Type.KeyPress, True),
+        (qt.QEvent.Type.KeyRelease, True),
+        (qt.QEvent.Type.KeyPress, True),
+        (qt.QEvent.Type.KeyRelease, False),
+    ):
+        qt.QApplication.sendEvent(
+            tree,
+            qt.QtGui.QKeyEvent(
+                kind,
+                qt.Qt.Key.Key_Space,
+                qt.Qt.KeyboardModifier.NoModifier,
+                " ",
+                repeated,
+                1,
+            ),
+        )
+    assert tuple(entry.enabled for entry in registry.entries) == (
+        True,
+        False,
+        True,
+    )
+    assert _selected_registration_paths(tree) == (paths[0], paths[2])
+    assert tree.currentItem() is tree.topLevelItem(0)
+
+
+@pytest.mark.parametrize(
+    "target_name",
+    (
+        "tree_widget",
+        "new_button",
+        "add_button",
+        "duplicate_button",
+        "remove_button",
+        "move_up_button",
+        "move_down_button",
+        "reload_all_button",
+    ),
+)
+def test_custom_filter_manager_space_passes_to_maya(
+    dock_host: _WorkspaceHost, tmp_path: Path, target_name: str
+) -> None:
+    """一覧と全操作ボタンがSpaceを予約せず、押下・解放を受け流す。"""
+    from bd_tools import bd_channel_box
+
+    files = tuple(tmp_path / f"{name}.json" for name in "ABC")
+    for path in files:
+        _write_custom_filter(path, path.stem)
+    widget = bd_channel_box.show().widget
+    registry = widget.custom_filter_registry
+    paths = registry.add_paths(files)
+    widget.manage_custom_filters_action.trigger()
+    dialog = widget.custom_filter_dialog
+    assert dialog is not None
+    tree = dialog.tree_widget
+    _select_registration_rows(tree, (1, 2))
+    tree.setCurrentItem(
+        tree.topLevelItem(0),
+        0,
+        qt.QItemSelectionModel.SelectionFlag.NoUpdate,
+    )
+    target = getattr(dialog, target_name)
+    assert isinstance(target, qt.QWidget)
+    target.setEnabled(True)
+    clicked: list[bool] = []
+    if isinstance(target, qt.QToolButton):
+        target.clicked.connect(clicked.append)
+
+    for modifiers in (
+        qt.Qt.KeyboardModifier.NoModifier,
+        qt.Qt.KeyboardModifier.ShiftModifier,
+        qt.Qt.KeyboardModifier.ControlModifier,
+    ):
+        for kind, repeated in (
+            (qt.QEvent.Type.ShortcutOverride, False),
+            (qt.QEvent.Type.KeyPress, False),
+            (qt.QEvent.Type.KeyPress, True),
+            (qt.QEvent.Type.KeyRelease, False),
+        ):
+            event = qt.QtGui.QKeyEvent(
+                kind, qt.Qt.Key.Key_Space, modifiers, " ", repeated, 1
+            )
+            assert not target.event(event)
+            assert not event.isAccepted()
+    assert not clicked
+    assert _selected_registration_paths(tree) == (paths[1], paths[2])
+    assert tree.currentItem() is tree.topLevelItem(0)
+    assert all(entry.enabled for entry in registry.entries)
+
+
+def test_custom_filter_manager_visibility_follows_registration_path_changes(
+    dock_host: _WorkspaceHost, tmp_path: Path
+) -> None:
+    """並べ替え・再読込・削除・改名後も目が現在の登録パスだけを変更する。"""
+    from bd_tools import bd_channel_box
+    from bd_tools.bd_channel_box.custom_filters import normalize_filter_path
+
+    files = tuple(tmp_path / f"{name}.json" for name in "ABCD")
+    for path in files:
+        _write_custom_filter(path, path.stem)
+    widget = bd_channel_box.show().widget
+    registry = widget.custom_filter_registry
+    paths = registry.add_paths(files)
+    widget.manage_custom_filters_action.trigger()
+    dialog = widget.custom_filter_dialog
+    assert dialog is not None
+    tree = dialog.tree_widget
+    _events()
+
+    _select_registration_rows(tree, (1,))
+    dialog.move_up_button.click()
+    _click_registration_eye(tree, 0)
+    assert tuple(
+        (entry.path, entry.enabled) for entry in registry.entries
+    ) == (
+        (paths[1], False),
+        (paths[0], True),
+        (paths[2], True),
+        (paths[3], True),
+    )
+    _write_custom_filter(files[1], "Updated B")
+    dialog.reload_all_button.click()
+    assert tree.topLevelItem(0).text(0) == "Updated B"
+    _click_registration_eye(tree, 0)
+    assert registry.entries[0].enabled
+
+    _select_registration_rows(tree, (1,))
+    dialog.remove_button.click()
+    _click_registration_eye(tree, 1)
+    assert tuple(
+        (entry.path, entry.enabled) for entry in registry.entries
+    ) == (
+        (paths[1], True),
+        (paths[2], False),
+        (paths[3], True),
+    )
+
+    renamed = tmp_path / "Renamed C.json"
+    files[2].rename(renamed)
+    renamed_path = normalize_filter_path(renamed)
+    assert registry.replace_path(paths[2], renamed_path)
+    assert (
+        tree.topLevelItem(1).data(0, qt.Qt.ItemDataRole.UserRole)
+        == renamed_path
+    )
+    _click_registration_eye(tree, 1)
+    assert tuple(
+        (entry.path, entry.enabled) for entry in registry.entries
+    ) == (
+        (paths[1], True),
+        (renamed_path, True),
+        (paths[3], True),
+    )
+    assert widget.filter_combo.count() == 8
+
+
+def test_custom_filter_manager_visibility_is_independent_of_read_errors(
+    dock_host: _WorkspaceHost, tmp_path: Path
+) -> None:
+    """読込エラーの行も表示設定を切り替え、JSONと読込結果はそのまま維持する。"""
+    from bd_tools import bd_channel_box
+
+    valid = tmp_path / "valid.json"
+    broken = tmp_path / "broken.json"
+    _write_custom_filter(valid, "Valid")
+    broken.write_text("{", encoding="utf-8")
+    original_bytes = broken.read_bytes()
+    widget = bd_channel_box.show().widget
+    registry = widget.custom_filter_registry
+    registry.add_paths((valid, broken))
+    widget.manage_custom_filters_action.trigger()
+    dialog = widget.custom_filter_dialog
+    assert dialog is not None
+    tree = dialog.tree_widget
+    _events()
+    original_error = registry.entries[1].error
+    assert original_error is not None
+    assert widget.filter_combo.count() == 6
+
+    for expected in (False, True):
+        _click_registration_eye(tree, 1)
+        assert registry.entries[1].enabled is expected
+        assert registry.entries[1].error == original_error
+        assert tree.topLevelItem(1).text(2) == "読込エラー"
+        assert tree.topLevelItem(1).toolTip(2) == original_error
+        assert widget.filter_combo.count() == 6
+        assert broken.read_bytes() == original_bytes
+
+    # 修復後の再読込はONを引き継ぎ、OFFにしても読込済み状態を維持する
+    _write_custom_filter(broken, "Repaired")
+    dialog.reload_all_button.click()
+    assert registry.entries[1].enabled
+    assert registry.entries[1].error is None
+    assert widget.filter_combo.count() == 7
+    _click_registration_eye(tree, 1)
+    assert not registry.entries[1].enabled
+    assert tree.topLevelItem(1).text(2) == "読込済み"
+    assert widget.filter_combo.count() == 6
 
 
 def test_custom_filter_manager_shows_only_registration_storage_errors(

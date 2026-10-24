@@ -164,14 +164,25 @@ Maya本体のrunnerで`QR_settings.png`の取得と、アイコン・メニュ�
 設定モードの編集対象へ反映することも確認します。
 3列のQTreeWidgetはフィルター名・ファイルパス・読込状態とソート無効を検証します。
 Maya本体ではWindow幅520／900pxで名前・読込状態の内容幅が変わらず、パス列だけが伸縮して
-一覧の右端まで使用することと、パス全文をtooltipで確認できることを検証します。
-Ctrl／Shiftの行選択と表示チェックの独立性、連続・非連続選択の上下移動と相対順保持、
+一覧の右端まで使用することと、パスの左側省略でファイル名が残り、全文をtooltipで確認できることを検証します。
+Ctrl／Shiftの行選択と目のアイコンによる表示切替の独立性、連続・非連続選択の上下移動と相対順保持、
 端を含む方向の無効化、複数登録の削除後にも元JSONが残ることを確認します。
+目のアイコンはONの`ghostingVisible.png`・OFFの`ghostingHidden.png`の描画と、
+16×16のアイコン・約20×20のクリック領域、表示状態と操作案内のtooltipを検証します。
+選択内の目はON／OFFが混在した非連続選択もクリック行の反対状態へ揃え、
+選択外の目は対象1件だけを変え、複数選択集合とcurrentが保たれることを確認します。
+名前や余白は通常の行選択になること、Spaceで行選択と表示状態が変わらないことも確認します。
+一覧と全7操作ボタンでSpaceの予約・押下・repeat・解放がignoreされることを検証します。
+Maya本体では一覧と操作ボタンへフォーカスを移し、Space長押しで実際のHotboxが表示され、
+解放で閉じること、行選択・current・表示設定が変わらないことを確認します。
+標準ショートカットから実行されるHotboxの開閉コマンドと表示画像も記録します。
+表示切替は既存の登録設定へ保存され、再読込・再表示時も復元されること、
+読込エラーと表示ON/OFFが独立していることを検証します。
 複製は正常な1件選択でだけ有効とし、複数選択や読込エラーを含む選択では無効であることを確認します。
-全て再読込後の登録順・ON/OFFと、再読込・移動・チェック後の選択集合・currentの維持も検証します。
+全て再読込後の登録順・ON/OFFと、再読込・移動・表示切替後の選択集合・currentの維持も検証します。
 読込エラーからの復旧は既存のdock testで全て再読込の操作から確認します。
 パス全文・エラー理由のtooltipと、登録設定自体の読込・保存失敗だけを別ラベルに表示することも検証します。
-registryの一括解除・移動は`test_bd_channel_box_custom_filter_registry.py`で境界・相対順・
+registryの一括表示切替・解除・移動は`test_bd_channel_box_custom_filter_registry.py`で境界・相対順・
 保存と通知の回数・設定復元を確認し、UIとMaya本体でも対応を確認します。
 チェック変更と再読込では既存行とcurrentを保持し、Qtの通知処理中に行を破棄しないことも検証します。
 名前変更の初期値・取消・空欄・同名、保存前のJSON不変、未保存印、保存・破棄後の表示を検証します。
@@ -244,6 +255,42 @@ Black checkが成功しました。Maya 2025本体は25工程が成功し、Wind
 パス列だけが381pxから761pxへ伸縮しています。パスの省略表示と全文tooltipも確認しました。
 結果と画像は`%TEMP%/bd-channel-box-maya2025-s7g1m231`です。
 `success: true`・`error: null`で、今回はrunner・Mayaとも正常終了し、終了codeは0です。
+
+目アイコンへの変更では、Maya 2025／2026／2027の全runtime test各678件、unit 79件、
+全versionのPyright、Black checkが成功しました。最終的なアイコンと本文の間隔調整後も、
+管理画面の関連8件を全versionで再実行して成功しています。
+クリックの確定・中断、ドラッグ・grab解除、ダブルクリック、Spaceの長押し、選択・current・
+スクロールの保持、登録変更後のパス対応、読込エラーとの独立性と設定復元を検証しました。
+Maya 2025本体は26工程が成功し、指定アイコン、クリックとSpaceでの1件切替、複数選択の保持、
+ON/OFFのtooltipを確認しました。`43c-custom-filter-eye-toggle.png`で両状態の描画も確認しています。
+最終結果は`%TEMP%/bd-channel-box-maya2025-_baxgi7r`で、`success: true`・`error: null`です。
+操作後の終了待ちは既知の90秒タイムアウトとなり、runnerが専用processを停止してcode 1を返しました。
+操作の成功と本体の正常終了を分けて記録します。
+
+続く目の一括切替・Space専用処理の撤去・パス左側省略の調整では、
+Maya 2025／2026／2027の全runtime test各682件、unit 79件、全versionのPyright、
+Black checkが成功しました。混在する非連続選択をクリック行の反対状態へ揃えること、
+選択外は1件だけを変えること、保存・通知が各一度で完了することと設定復元を確認しました。
+標準のSpace入力と長押しでは表示設定を変更しません。
+Maya 2025本体も26工程が成功し、一括ON／OFF・選択外の単独切替・選択とcurrentの保持、
+状態と対象件数のtooltipを確認しました。520px幅ではパスの左側を省略してファイル名を残し、
+900px幅では全文を表示しています。両幅の画像とON／OFFのアイコン描画も確認しました。
+結果は`%TEMP%/bd-channel-box-maya2025-jv6to2v7`で、`success: true`・`error: null`です。
+操作後の終了待ちは既知の90秒タイムアウトとなり、runnerはcode 1を返しました。
+専用process（30272）の終了を確認し、操作結果と終了待ちを分けて記録しています。
+
+さらにSpaceをMayaへ受け流す調整では、Maya 2025／2026／2027の全runtime test各690件、
+unit 79件、全versionのPyright、Black checkが成功しました。
+一覧と全7操作ボタンでSpaceのShortcutOverride・押下・repeat・解放を受け流し、
+行選択・現在行・表示設定を変更せず、ボタンも実行されないことを検証しています。
+Maya本体も全versionで各27工程が成功しました。一覧と操作ボタンの両方にフォーカスを移し、
+Space長押しで標準HotboxのWindowが表示され、解放で非表示になることを確認しました。
+Mayaの割当から`hotBox`と`hotBox -release`が実行され、選択・current・ON/OFFが維持されています。
+2025の一覧、2026／2027の操作ボタンから表示したHotboxの保存画像も確認しました。
+結果はそれぞれ`%TEMP%/bd-channel-box-maya2025-2lhsws8w`、
+`%TEMP%/bd-channel-box-maya2026-u8y2vvdl`、`%TEMP%/bd-channel-box-maya2027-j2vvug8d`で、
+全て`success: true`・`error: null`です。各runnerは操作結果の保存後、本体終了待ちで
+90秒の実行上限に達してcode 1を返しました。専用processの終了を確認し、操作成功と分けて記録します。
 
 runnerは別の `maya.exe` を起動し、一時ディレクトリの `MAYA_APP_DIR`、Maya.env探索先、
 project、script pathを使用します。通常のMaya.envを書き換えず、起動済みMayaへ接続しません。
@@ -762,6 +809,8 @@ Maya 2027の`QSplitter.setSizes()`は同梱stubから引数型を取得できな
 分割領域の設定値と実際のQt呼び出しは同じままです。
 同様にMaya 2027の`QTreeWidget.setHeaderLabels()`も引数型が未定義のため、
 `getattr()`と局所的な`cast(Callable[[list[str]], None], ...)`で見出し文字列の境界を確定します。
+目アイコンとパス省略の描画で使う`QStyleOptionViewItem`の公開データ属性も同梱stubに定義がないため、
+用途ごとの局所的なProtocolで使用属性だけを型付けします。
 `QLayout.itemAt()`など項目がない場合に`None`を返すAPIは、
 戻り値を変数へ受けて存在を確認してから利用します。
 

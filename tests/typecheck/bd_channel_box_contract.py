@@ -121,6 +121,10 @@ assert_type(CustomFilterDraft("rig.json").rename("Renamed"), None)
 assert_type(CustomFilterRegistry().replace_path("old.json", "new.json"), bool)
 assert_type(CustomFilterRegistry().remove_many(("one.json", "two.json")), bool)
 assert_type(
+    CustomFilterRegistry().set_enabled_many(("one.json", "two.json"), False),
+    bool,
+)
+assert_type(
     CustomFilterRegistry().move_many(("one.json", "two.json"), -1), bool
 )
 assert_type(

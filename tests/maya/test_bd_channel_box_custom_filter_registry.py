@@ -1,5 +1,5 @@
 # coding: utf-8
-"""複数登録の移動・解除が一度の保存と通知で確定することを検証する。"""
+"""複数登録の表示切替・移動・解除が一度の保存と通知で確定することを検証する。"""
 
 from __future__ import annotations
 
@@ -37,6 +37,38 @@ def _registry(
     registry.set_enabled(paths[1], False)
     registry.save_count = 0
     return registry, files, paths
+
+
+@pytest.mark.parametrize("enabled", (False, True))
+def test_registry_aligns_visibility_once_and_restores_settings(
+    tmp_path: Path, enabled: bool
+) -> None:
+    """混在・重複・読込エラーを含む表示設定を一度で揃え、共有JSONを変更しない。"""
+    registry, files, paths = _registry(tmp_path)
+    files[3].write_text("{", encoding="utf-8")
+    registry.reload(paths[3])
+    read_error = registry.entries[3].error
+    assert read_error is not None
+    before = tuple(path.read_bytes() for path in files)
+    observed: list[tuple[bool, ...]] = []
+
+    def record_change() -> None:
+        """全対象を揃えた結果だけを記録する。"""
+        observed.append(tuple(entry.enabled for entry in registry.entries))
+
+    registry.changed.connect(record_change)
+    selected = (paths[3], paths[0], paths[1], paths[3], "unknown")
+    assert registry.set_enabled_many(iter(selected), enabled)
+    expected = (enabled, enabled, True, enabled, True)
+    assert observed == [expected] and registry.save_count == 1
+    assert tuple(entry.path for entry in registry.entries) == paths
+    assert registry.entries[3].error == read_error
+    restored = CustomFilterRegistry()
+    assert tuple(entry.enabled for entry in restored.entries) == expected
+    assert tuple(path.read_bytes() for path in files) == before
+    for selection in (selected, (), ("unknown",)):
+        assert not registry.set_enabled_many(selection, enabled)
+    assert observed == [expected] and registry.save_count == 1
 
 
 @pytest.mark.parametrize(
