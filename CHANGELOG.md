@@ -9,6 +9,14 @@
 
 ### Changed
 
+- bdChannelBoxの未保存確認、エラー通知、既存JSONの追加画面を、操作開始位置を
+  中心に表示する。画面端ではクリックしたモニターの作業領域へ外枠まで収める。
+  確認を挟む後続画面とQt標準の上書き確認も同じ起点を使い、キーボード操作では
+  操作元の部品付近へ表示する。追加画面は保存画面と同じQt版へ統一する。
+  本体と継続作業用Windowは保存配置を優先する。scene・JSON・個人設定の移行は不要。
+  utilとtoolsを両方更新し、`bd_tools.reload_package(reload_util=True)`で反映する。
+  `CustomFilterManagerDialog`を直接構築する場合、`confirm_create`のcallbackを
+  引数なしから操作起点の`QPoint`を受け取る形へ移行する。
 - 上部の`bakedanuki`と`tools`を、メニュー先頭の点線から切り離して表示可能に変更。
   切り離し側からも各ツールの起動と起動時表示の設定を操作できる。
   対応するutilへ更新し、Maya再起動または`bd_tools.reload_package(reload_util=True)`で

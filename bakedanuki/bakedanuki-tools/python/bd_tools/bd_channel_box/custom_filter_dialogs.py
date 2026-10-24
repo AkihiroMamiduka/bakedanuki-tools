@@ -9,6 +9,7 @@ from typing import Literal, cast
 
 from bd_util.maya.ui import get_ui_settings_file
 from bd_util.ui import exec_dialog_near, get_save_file_name_near, qt
+from bd_util.ui import dialog as ui_dialog
 
 from .custom_filter_editor import (
     create_custom_filter,
@@ -74,10 +75,11 @@ def create_registered_filter(
         entry.path == registry.active_preset and entry.error is None
         for entry in registry.presets
     ):
-        qt.QMessageBox.warning(
+        ui_dialog.warning_near(
             parent,
             "作成できません",
             "正常に読み込めるプリセットを選択してください。",
+            anchor,
         )
         return None
     initial_name = ""
@@ -85,7 +87,9 @@ def create_registered_filter(
         try:
             initial_name = load_custom_filter(source).name + "_copy"
         except CustomFilterError as error:
-            qt.QMessageBox.warning(parent, "複製できません", str(error))
+            ui_dialog.warning_near(
+                parent, "複製できません", str(error), anchor
+            )
             return None
 
     try:
@@ -93,10 +97,11 @@ def create_registered_filter(
             "filter", source if source is not None else reference_path
         )
     except OSError as error:
-        qt.QMessageBox.warning(
+        ui_dialog.warning_near(
             parent,
             "作成できません",
             f"保存先フォルダーを用意できません: {error}",
+            anchor,
         )
         return None
     suggested = directory
@@ -136,7 +141,9 @@ def create_registered_filter(
                 else duplicate_custom_filter(source, path, name)
             )
         except CustomFilterError as error:
-            qt.QMessageBox.warning(parent, "作成できません", str(error))
+            ui_dialog.warning_near(
+                parent, "作成できません", str(error), anchor
+            )
             continue
         break
 
@@ -162,10 +169,11 @@ def create_registered_preset(
         item.path == registry.active_group and item.error is None
         for item in registry.groups
     ):
-        qt.QMessageBox.warning(
+        ui_dialog.warning_near(
             parent,
             "作成できません",
             "正常に読み込めるプリセットグループを選択してください。",
+            anchor,
         )
         return None
     label = "プリセットグループ" if kind == "preset_group" else "プリセット"
@@ -178,7 +186,7 @@ def create_registered_preset(
             kind, source if source is not None else reference_path
         )
     except OSError as error:
-        qt.QMessageBox.warning(parent, "作成できません", str(error))
+        ui_dialog.warning_near(parent, "作成できません", str(error), anchor)
         return None
     suggested = (
         directory if entry is None else directory / (entry.name + "_copy.json")
@@ -206,7 +214,9 @@ def create_registered_preset(
             )
             return create(str(suggested), source=source)
         except (CustomFilterError, OSError) as error:
-            qt.QMessageBox.warning(parent, "作成できません", str(error))
+            ui_dialog.warning_near(
+                parent, "作成できません", str(error), anchor
+            )
 
 
 def rename_registered_preset(
@@ -275,6 +285,8 @@ def rename_registered_preset(
         )
         rename(path, name)
     except CustomFilterError as error:
-        qt.QMessageBox.warning(parent, "名前を変更できません", str(error))
+        ui_dialog.warning_near(
+            parent, "名前を変更できません", str(error), anchor
+        )
         return False
     return True

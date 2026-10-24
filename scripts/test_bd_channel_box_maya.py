@@ -33,6 +33,7 @@ _PREPARE_RESTART_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PREPARE_RESTART"
 _NAME_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_NAME_ONLY"
 _CONNECTIONS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CONNECTIONS_ONLY"
 _CUSTOM_FILTERS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CUSTOM_FILTERS_ONLY"
+_DIALOGS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_DIALOGS_ONLY"
 _CHILD_SET_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CHILD_SET_ONLY"
 _POSE_SET_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_POSE_SET_ONLY"
 _PERSISTED_STEP = 0.5
@@ -192,6 +193,15 @@ class _MayaSmokeSession:
                 self._inspect_node_name_enter,
                 self._finish,
             )
+        elif os.environ.get(_DIALOGS_ONLY_VARIABLE) == "1":
+            self._stages = (
+                self._setup_scene,
+                self._show,
+                self._inspect_custom_filters,
+                self._inspect_custom_filter_modal_placement,
+                self._inspect_custom_filter_overwrite_placement,
+                self._finish,
+            )
         elif os.environ.get(_CUSTOM_FILTERS_ONLY_VARIABLE) == "1":
             self._stages = (
                 self._setup_scene,
@@ -203,6 +213,7 @@ class _MayaSmokeSession:
                 self._inspect_custom_filter_sweep,
                 self._inspect_custom_filter_type_editor,
                 self._inspect_custom_filter_modal_placement,
+                self._inspect_custom_filter_overwrite_placement,
                 self._inspect_custom_filter_context_menus,
                 self._inspect_custom_filter_presets,
                 self._inspect_reference_only_custom_filter_setup,
@@ -3168,8 +3179,11 @@ class _MayaSmokeSession:
             )
 
     def _inspect_custom_filter_modal_placement(self) -> None:
-        """四つのモーダル画面を各モニターの端で開き、外枠まで収まるか確認する。"""
+        """確認・通知・入力・追加を各モニターの端で開き、外枠と起点を確認する。"""
         from bd_util.ui import qt
+        from bd_tools.bd_channel_box.custom_filter_dialogs import (
+            create_registered_filter,
+        )
 
         widget = self._require_window().widget
         panel = widget.setup_panel
@@ -3186,8 +3200,53 @@ class _MayaSmokeSession:
                 if entry.definition is not None
             )
             panel.set_target(target)
+        # 操作方法もマウスへ切り替え、直前のキー操作の起点を引き継がない
+        for event_type in (
+            qt.QEvent.Type.MouseButtonPress,
+            qt.QEvent.Type.MouseButtonRelease,
+        ):
+            self._mouse(
+                panel.manage_button,
+                event_type,
+                panel.manage_button.rect().center(),
+            )
+        manager = widget.custom_filter_dialog
+        if manager is None:
+            raise AssertionError("配置検証の管理画面を開けません")
+        manager.hide()
         failures: list[str] = []
         checked: list[str] = []
+
+        def confirm_unsaved() -> None:
+            """下書きだけを変更して実際の確認を開き、取消後に元へ戻す。"""
+            if panel.draft is None:
+                raise AssertionError("未保存確認の編集対象がありません")
+            panel.draft.set_name(panel.draft.name + " Popup QA")
+            try:
+                panel.confirm_leave()
+            finally:
+                panel.discard()
+
+        def warn_missing_source() -> None:
+            """存在しない複製元を指定し、実際のエラー通知を開く。"""
+            create_registered_filter(
+                widget,
+                registry,
+                source=str(self.output / "missing-popup-source.json"),
+                position=widget._dialog_anchor.position(),
+            )
+
+        operations: tuple[tuple[str, Callable[[], object], bool], ...] = (
+            ("preset-new", panel.preset_new_button.click, True),
+            ("preset-rename", panel.preset_rename_button.click, False),
+            ("filter-new", panel.new_button.click, True),
+            ("filter-rename", panel.rename_button.click, False),
+            ("group-add", manager.group_add_button.click, True),
+            ("preset-add", manager.preset_add_button.click, True),
+            ("filter-add", manager.add_button.click, True),
+            ("unsaved", confirm_unsaved, False),
+            ("error", warn_missing_source, False),
+        )
         try:
             for screen_index, screen in enumerate(
                 qt.QtGui.QGuiApplication.screens()
@@ -3200,12 +3259,7 @@ class _MayaSmokeSession:
                         available.bottomRight() - qt.QPoint(3, 3),
                     ),
                 ):
-                    for key, button, is_file in (
-                        ("preset-new", panel.preset_new_button, True),
-                        ("preset-rename", panel.preset_rename_button, False),
-                        ("filter-new", panel.new_button, True),
-                        ("filter-rename", panel.rename_button, False),
-                    ):
+                    for key, operation, is_file in operations:
 
                         def inspect() -> None:
                             """表示と位置補正が終わった実ダイアログを撮影して閉じる。"""
@@ -3222,6 +3276,33 @@ class _MayaSmokeSession:
                                     failures.append(
                                         f"{key}: 外枠が画面外です {modal.frameGeometry()}"
                                     )
+                                frame = modal.frameGeometry()
+                                expected = qt.QPoint(
+                                    max(
+                                        available.left(),
+                                        min(
+                                            anchor.x() - frame.width() // 2,
+                                            available.right()
+                                            - frame.width()
+                                            + 1,
+                                        ),
+                                    ),
+                                    max(
+                                        available.top(),
+                                        min(
+                                            anchor.y() - frame.height() // 2,
+                                            available.bottom()
+                                            - frame.height()
+                                            + 1,
+                                        ),
+                                    ),
+                                )
+                                if (
+                                    frame.topLeft() - expected
+                                ).manhattanLength() > 2:
+                                    failures.append(
+                                        f"{key}: 操作位置の基準が違います {frame}"
+                                    )
                                 if is_file and (
                                     not isinstance(modal, qt.QFileDialog)
                                     or not modal.testOption(
@@ -3229,7 +3310,7 @@ class _MayaSmokeSession:
                                     )
                                 ):
                                     failures.append(
-                                        f"{key}: Qt版保存画面ではありません"
+                                        f"{key}: Qt版ファイル画面ではありません"
                                     )
                                 checked.append(key)
                                 image_path = (
@@ -3244,30 +3325,231 @@ class _MayaSmokeSession:
                             finally:
                                 modal.reject()
 
+                        # 直前の画面内のキー入力と分け、各操作のマウス解放を再現する
+                        self._mouse(
+                            widget,
+                            qt.QEvent.Type.MouseButtonRelease,
+                            widget.mapFromGlobal(anchor),
+                        )
                         qt.QCursor.setPos(anchor)
                         timer = qt.QTimer(widget)
                         timer.setSingleShot(True)
                         timer.timeout.connect(inspect)
                         timer.start(150)
                         try:
-                            button.click()
+                            operation()
                         finally:
                             timer.stop()
                             timer.deleteLater()
                         if failures:
                             raise AssertionError("／".join(failures))
-            if len(checked) != len(qt.QtGui.QGuiApplication.screens()) * 8:
+            if len(checked) != (
+                len(qt.QtGui.QGuiApplication.screens()) * 2 * len(operations)
+            ):
                 raise AssertionError(
-                    "四つのモーダル画面を検証しきれていません"
+                    "対象のモーダル画面を検証しきれていません"
                 )
             self.steps.append("custom_filter_modal_dialogs_fit_click_screen")
         finally:
+            manager.hide()
             qt.QCursor.setPos(saved_cursor)
             if saved_target is not None:
                 panel.set_target(saved_target)
             else:
                 panel.target_combo.setCurrentIndex(0)
             widget.controller.set_mode(saved_mode)
+
+    def _inspect_custom_filter_overwrite_placement(self) -> None:
+        """Qt内部の上書き確認を各モニターの両端で開き、実際の外枠を確認する。"""
+        from bd_tools._shared.window_position import (
+            centered_position_within_screen,
+        )
+        from bd_util.ui import get_save_file_name_near, qt
+
+        widget = self._require_window().widget
+        saved_cursor = qt.QPoint(qt.QCursor.pos())
+        path = self.output / "overwrite-placement-existing.json"
+        if not path.exists():
+            _write_json(path, {"overwrite_placement_qa": True})
+        original = path.read_bytes()
+        failures: list[str] = []
+        checked: list[str] = []
+        screens = qt.QtGui.QGuiApplication.screens()
+        try:
+            # 標準上書き確認を本当に開き、保存先選択の親画面とは独立に配置を調べる
+            for screen_index, screen in enumerate(screens):
+                available = screen.availableGeometry()
+                for edge, anchor in (
+                    ("top-left", available.topLeft() + qt.QPoint(3, 3)),
+                    (
+                        "bottom-right",
+                        available.bottomRight() - qt.QPoint(3, 3),
+                    ),
+                ):
+                    key = f"overwrite-{screen_index}-{edge}"
+                    file_dialogs: list[qt.QFileDialog] = []
+                    owner = qt.QObject(widget)
+
+                    def reject_file() -> None:
+                        """確認の終了後、次のevent turnで保存先選択も取り消す。"""
+                        for dialog in widget.findChildren(qt.QFileDialog):
+                            if (
+                                qt.isValid(dialog)
+                                and dialog.parentWidget() is widget
+                                and dialog.isVisible()
+                            ):
+                                dialog.reject()
+
+                    def inspect_message() -> None:
+                        """遅延補正後の外枠と起点を記録し、標準のNoボタンを押す。"""
+                        modal = qt.QApplication.activeModalWidget()
+                        if (
+                            not isinstance(modal, qt.QMessageBox)
+                            or modal.parentWidget() not in file_dialogs
+                        ):
+                            failures.append(
+                                f"{key}: 標準上書き確認がありません"
+                            )
+                            reject_timer.start(0)
+                            return
+                        try:
+                            frame = modal.frameGeometry()
+                            expected = centered_position_within_screen(
+                                anchor, frame.size(), available
+                            )
+                            if (
+                                not available.contains(frame)
+                                or (
+                                    frame.topLeft() - expected
+                                ).manhattanLength()
+                                > 2
+                            ):
+                                failures.append(
+                                    f"{key}: 確認の外枠が起点の配置と違います {frame}"
+                                )
+                            if modal.standardButtons() != (
+                                qt.QMessageBox.StandardButton.Yes
+                                | qt.QMessageBox.StandardButton.No
+                            ):
+                                failures.append(
+                                    f"{key}: 標準上書き確認のボタンが違います"
+                                )
+                            image_path = self.output / f"64-dialog-{key}.png"
+                            if not modal.grab().save(str(image_path)):
+                                failures.append(f"{key}: 撮影できません")
+                            self.screenshots.append(str(image_path))
+                            self.diagnostics.append(
+                                {
+                                    "overwrite_placement": key,
+                                    "anchor": (anchor.x(), anchor.y()),
+                                    "frame": (
+                                        frame.x(),
+                                        frame.y(),
+                                        frame.width(),
+                                        frame.height(),
+                                    ),
+                                    "available": (
+                                        available.x(),
+                                        available.y(),
+                                        available.width(),
+                                        available.height(),
+                                    ),
+                                }
+                            )
+                            checked.append(key)
+                        except Exception as error:
+                            failures.append(f"{key}: {error}")
+                        finally:
+                            button = modal.button(
+                                qt.QMessageBox.StandardButton.No
+                            )
+                            if button is None:
+                                failures.append(f"{key}: Noボタンがありません")
+                                modal.reject()
+                            else:
+                                button.click()
+                            reject_timer.start(0)
+
+                    def accept_file() -> None:
+                        """実際の保存画面を確定し、内部確認中に別タイマーを実行する。"""
+                        modal = qt.QApplication.activeModalWidget()
+                        if (
+                            not isinstance(modal, qt.QFileDialog)
+                            or modal.parentWidget() is not widget
+                        ):
+                            failures.append(f"{key}: 保存先選択がありません")
+                            reject_timer.start(0)
+                            return
+                        file_dialogs.append(modal)
+                        inspect_timer.start(200)
+                        modal.accept()
+
+                    def timeout() -> None:
+                        """内部確認が現れない場合も親を閉じ、永久待機を防ぐ。"""
+                        failures.append(
+                            f"{key}: 上書き確認の終了待ちが時間切れです"
+                        )
+                        for message in widget.findChildren(qt.QMessageBox):
+                            if (
+                                qt.isValid(message)
+                                and message.parentWidget() in file_dialogs
+                                and message.isVisible()
+                            ):
+                                message.reject()
+                        reject_timer.start(0)
+
+                    accept_timer = qt.QTimer(owner)
+                    accept_timer.setSingleShot(True)
+                    accept_timer.timeout.connect(accept_file)
+                    inspect_timer = qt.QTimer(owner)
+                    inspect_timer.setSingleShot(True)
+                    inspect_timer.timeout.connect(inspect_message)
+                    reject_timer = qt.QTimer(owner)
+                    reject_timer.setSingleShot(True)
+                    reject_timer.timeout.connect(reject_file)
+                    safety_timer = qt.QTimer(owner)
+                    safety_timer.setSingleShot(True)
+                    safety_timer.timeout.connect(timeout)
+                    qt.QCursor.setPos(anchor)
+                    accept_timer.start(150)
+                    safety_timer.start(3000)
+                    try:
+                        result = get_save_file_name_near(
+                            widget,
+                            "上書き確認の配置検証",
+                            str(path),
+                            "JSON (*.json)",
+                            anchor,
+                            "json",
+                        )
+                        if result != ("", ""):
+                            failures.append(
+                                f"{key}: 保存先選択が取り消されません"
+                            )
+                    finally:
+                        for timer in (
+                            accept_timer,
+                            inspect_timer,
+                            reject_timer,
+                            safety_timer,
+                        ):
+                            timer.stop()
+                        owner.deleteLater()
+                    if path.read_bytes() != original:
+                        failures.append(
+                            f"{key}: 確認だけでJSONが変更されました"
+                        )
+                    if failures:
+                        raise AssertionError("／".join(failures))
+            if not screens or len(checked) != len(screens) * 2:
+                raise AssertionError(
+                    "各モニターの標準上書き確認を検証しきれていません"
+                )
+            self.steps.append(
+                "custom_filter_overwrite_dialog_fits_click_screen"
+            )
+        finally:
+            qt.QCursor.setPos(saved_cursor)
 
     def _inspect_custom_filter_context_menus(self) -> None:
         """設定専用の右クリック、選択範囲、除外と検索の編集キーを実画面で確認する。"""
@@ -6549,6 +6831,7 @@ def _launch(
     name_only: bool = False,
     connections_only: bool = False,
     custom_filters_only: bool = False,
+    dialogs_only: bool = False,
     child_set_only: bool = False,
     pose_set_only: bool = False,
 ) -> int:
@@ -6601,6 +6884,7 @@ def _launch(
     environment[_CUSTOM_FILTERS_ONLY_VARIABLE] = (
         "1" if custom_filters_only else "0"
     )
+    environment[_DIALOGS_ONLY_VARIABLE] = "1" if dialogs_only else "0"
     environment[_CHILD_SET_ONLY_VARIABLE] = "1" if child_set_only else "0"
     environment[_POSE_SET_ONLY_VARIABLE] = "1" if pose_set_only else "0"
     environment["BAKEDANUKI_UTIL_ROOT"] = str(util_root)
@@ -6700,6 +6984,7 @@ def main() -> int:
     restart_group.add_argument("--name-only", action="store_true")
     restart_group.add_argument("--connections-only", action="store_true")
     restart_group.add_argument("--custom-filters-only", action="store_true")
+    restart_group.add_argument("--dialogs-only", action="store_true")
     parser.add_argument("--child-set-only", action="store_true")
     parser.add_argument("--pose-set-only", action="store_true")
     arguments = parser.parse_args()
@@ -6718,6 +7003,7 @@ def main() -> int:
         name_only=arguments.name_only,
         connections_only=arguments.connections_only,
         custom_filters_only=arguments.custom_filters_only,
+        dialogs_only=arguments.dialogs_only,
         child_set_only=arguments.child_set_only,
         pose_set_only=arguments.pose_set_only,
     )

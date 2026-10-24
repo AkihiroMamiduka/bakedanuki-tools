@@ -26,6 +26,7 @@ import しません。この制約により、tools は rig の導入有無に�
 - 値型、node 操作、undo を扱う共通基盤
 - Qt binding facade
 - Window、workspaceControl、callback、UI 状態保存の共通 lifecycle
+- 操作元の入力方法によるダイアログ起点の取得と、画面内への共通配置
 - Maya上部または設定された既存メニュー配下の`bakedanuki`メニュー、categoryと
   ownerごとの項目登録・解除、起動設定TOMLの読込み
 

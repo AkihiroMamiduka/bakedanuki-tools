@@ -14,6 +14,7 @@ from maya import cmds
 from bd_util.maya.node.inspection import ScalarAttributeInfo
 from bd_util.maya.ui import MayaFloatPlugsBinding
 from bd_util.maya.ui import settings as maya_settings
+from bd_util.ui import dialog as ui_dialog
 from bd_util.ui import qt
 from bd_tools.bd_channel_box import custom_filter_dialogs as dialog_module
 
@@ -272,7 +273,7 @@ def editor(
         unexpected_warnings.append(str(_args[2]))
         return qt.QMessageBox.StandardButton.Cancel
 
-    monkeypatch.setattr(qt.QMessageBox, "warning", cancel_unexpected_warning)
+    monkeypatch.setattr(ui_dialog, "warning_near", cancel_unexpected_warning)
     _new_scene()
     widget = ChannelBoxWidget()
     widget.show()
@@ -1442,7 +1443,7 @@ def test_manager_duplicates_saved_changes_and_all_types_with_copy_suffix(
         assert Path(cast(str, args[2])) == tmp_path / "Updated Rig_copy.json"
         return str(destination), ""
 
-    monkeypatch.setattr(qt.QMessageBox, "warning", save_changes)
+    monkeypatch.setattr(ui_dialog, "warning_near", save_changes)
     monkeypatch.setattr(dialog_module, "get_save_file_name_near", choose_path)
     editor.manage_custom_filters_action.trigger()
     manager = editor.custom_filter_dialog
@@ -1504,7 +1505,7 @@ def test_creation_cancelled_before_dialogs_keeps_draft_and_registration(
         """確認を中止した後に作成ダイアログが開いたら失敗させる。"""
         raise AssertionError("作成ダイアログが開きました")
 
-    monkeypatch.setattr(qt.QMessageBox, "warning", cancel)
+    monkeypatch.setattr(ui_dialog, "warning_near", cancel)
 
     def reject_file_dialog(*_args: object) -> tuple[str, str]:
         """未保存確認を中止した後に保存先選択が開いたら失敗させる。"""

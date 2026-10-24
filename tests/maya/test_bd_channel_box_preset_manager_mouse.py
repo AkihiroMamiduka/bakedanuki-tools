@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from bd_util.ui import dialog as ui_dialog
 from bd_util.ui import qt
 
 from bd_tools.bd_channel_box.custom_filter_editor import create_custom_filter
@@ -25,7 +26,7 @@ def editor(
         """保存済みの選択変更で確認が発生した場合は失敗として示す。"""
         raise AssertionError(f"予期しない確認: {args[1:]}")
 
-    monkeypatch.setattr(qt.QMessageBox, "warning", reject_dialog)
+    monkeypatch.setattr(ui_dialog, "warning_near", reject_dialog)
     widget = ChannelBoxWidget()
     widget.resize(760, 800)
     widget.show()
@@ -179,7 +180,7 @@ def test_manager_selection_follows_rename_saved_by_leave_confirmation(
         confirmations.append(str(args[2]))
         return qt.QMessageBox.StandardButton.Save
 
-    monkeypatch.setattr(qt.QMessageBox, "warning", save)
+    monkeypatch.setattr(ui_dialog, "warning_near", save)
     tree.setCurrentItem(
         first, 0, qt.QItemSelectionModel.SelectionFlag.ClearAndSelect
     )

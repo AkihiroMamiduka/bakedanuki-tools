@@ -18,6 +18,7 @@ from bd_util.maya.node.inspection import (
     matches_scalar_attribute_display_filter,
 )
 from bd_util.ui import RadioButtonSweep, exec_dialog_near, qt
+from bd_util.ui import dialog as ui_dialog
 
 from .custom_filter_dialogs import (
     create_registered_preset,
@@ -71,11 +72,16 @@ class CustomFilterSetupPanel(qt.QWidget):
     changes_changed = qt.Signal()
 
     def __init__(
-        self, registry: CustomFilterRegistry, parent: qt.QWidget
+        self,
+        registry: CustomFilterRegistry,
+        parent: qt.QWidget,
+        *,
+        dialog_position: Callable[[], qt.QPoint] | None = None,
     ) -> None:
         """登録一覧と現在ノード型に対する作業中の編集画面を作る。"""
         super().__init__(parent)
         self.registry = registry
+        self._dialog_position = dialog_position
         self.draft: CustomFilterDraft | None = None
         self._preset_path = registry.active_preset
         self._saving = False
@@ -469,8 +475,8 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def _create_preset(self) -> None:
         """編集中プリセットのフォルダーから、空のプリセットを作成する。"""
-        position = qt.QCursor.pos()
-        if not self.confirm_leave():
+        position = self._popup_position()
+        if not self.confirm_leave(position):
             return
         create_registered_preset(
             self,
@@ -484,7 +490,13 @@ class CustomFilterSetupPanel(qt.QWidget):
         """プリセットファイルの改名を共通下書きへ反映する。"""
         path = self.registry.active_preset
         if path is not None:
-            rename_registered_preset(self, self.registry, "preset", path)
+            rename_registered_preset(
+                self,
+                self.registry,
+                "preset",
+                path,
+                position=self._popup_position(),
+            )
 
     def _replace_draft_path(self, old_path: str, new_path: str) -> None:
         """全体保存中の改名通知では作業中の同じ下書きを維持する。"""
@@ -1353,7 +1365,7 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def _rename_filter(self) -> None:
         """ボタンを操作した位置を基準に、フィルター名の入力を開く。"""
-        self.rename_filter_at(qt.QCursor.pos())
+        self.rename_filter_at(self._popup_position())
 
     def rename_filter_at(self, position: qt.QPoint) -> None:
         """同じフォルダーのファイル名と表示名を検証し、改名予定を下書きへ反映する。"""
@@ -1508,15 +1520,29 @@ class CustomFilterSetupPanel(qt.QWidget):
         available = {entry.path for entry in self.registry.entries}
         self._load_target(path if path in available else None)
 
-    def confirm_leave(self) -> bool:
-        """未保存のまま編集対象やモードを離れる操作を確認する。"""
+    def _popup_position(self) -> qt.QPoint:
+        """呼出し元と共有する入力方法から、対話画面の起点を取得する。"""
+        return (
+            self._dialog_position()
+            if self._dialog_position is not None
+            else qt.QCursor.pos()
+        )
+
+    def confirm_leave(self, position: qt.QPoint | None = None) -> bool:
+        """操作位置で未保存の確認を行い、保存・破棄した場合だけ続行する。"""
+        anchor = (
+            qt.QPoint(position)
+            if position is not None
+            else self._popup_position()
+        )
         self._finish_radio_sweep()
         if not self.is_dirty:
             return True
-        choice = qt.QMessageBox.warning(
+        choice = ui_dialog.warning_near(
             self,
             "未保存のカスタムフィルター設定",
             "グループ・プリセットの構成、またはフィルターに未保存の変更があります。",
+            anchor,
             qt.QMessageBox.StandardButton.Save
             | qt.QMessageBox.StandardButton.Discard
             | qt.QMessageBox.StandardButton.Cancel,

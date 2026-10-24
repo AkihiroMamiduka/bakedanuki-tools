@@ -952,3 +952,47 @@ runnerが起動した専用processは停止し、残存していないことを�
 runtime testのpytest cache書込権限警告は非失敗です。
 今回は共通UI基盤も変更するため、utilとtoolsを両方更新し、
 `bd_tools.reload_package(reload_util=True)`で読み直します。
+
+### 確認・通知・JSON追加の起点配置
+
+`tests/maya/test_bd_channel_box_dialog_placement.py`は、管理画面の3段の追加が
+未保存確認前の起点を維持すること、キーボード操作時の部品基準、複製失敗時の
+通知の起点を検証します。既存の保存・破棄・キャンセルと名前変更の回帰テストも
+共通ダイアログAPIを通して確認します。
+
+Maya本体の対象限定検証は、通常の設定・sceneから分離した一時環境で実行できます。
+
+```powershell
+.\.venv-format\Scripts\python.exe -B scripts/test_bd_channel_box_maya.py --maya-version 2025 --util-root ../bakedanuki-util --dialogs-only
+```
+
+`--maya-version`は2026・2027にも対応します。未保存確認、エラー通知、3段の追加、
+プリセット・フィルターの新規作成と名前変更の9画面を、各モニターの左上・右下で
+開きます。外枠が作業領域に収まり、起点を中心とした画面端補正位置にあることを確認し、
+画像と結果を`%TEMP%/bd-channel-box-maya<version>-.../`へ保存します。
+Qt内部の上書き確認も各モニターの左上・右下で別途開き、外枠と起点を検査・撮影し、
+Noで取り消した後に元JSONのbytesが変わっていないことを確認します。
+Yes・No両方の戻り値とファイルの維持は、utilの`tests/ui/test_dialog.py`でも検証します。
+
+2026-10-24の検証では、unit 102件、Maya 2025／2026／2027の全runtime各753件、
+3 versionのPyright、Black、差分検査が成功しました。utilの`verify.cmd`も成功しました。
+runtimeのpytest cache書込権限警告は非失敗です。
+
+本体は各versionで17工程が成功し、2台のモニターで通常9画面×4配置と
+標準上書き確認×4配置の計40通りを確認しました。代表画像も目視確認しています。
+
+| Maya | `%TEMP%`内のディレクトリ | runnerの終了 |
+| --- | --- | --- |
+| 2025 | `bd-channel-box-maya2025-e2dccdgk` | 終了code 0 |
+| 2026 | `bd-channel-box-maya2026-f3xkis_l` | 操作結果保存後のnative終了時にstack trace、終了code 1 |
+| 2027 | `bd-channel-box-maya2027-vkqutgrf` | 操作結果保存後の終了待ちtimeout、終了code 1 |
+
+3 versionとも`result.json`は`success: true`／`error: null`です。
+2027はrunnerが起動した専用processを停止し、2025／2026も含め残存していないことを確認しました。
+操作・配置の成功と、Maya本体の正常終了は分けて記録します。
+終了時の根因と今回の変更との関連は未確定です。通常環境での正常終了まで
+検証済みとは扱いません。
+
+マウス配置のQAでは、プログラムによる`button.click()`の前にマウス解放eventを送ります。
+`click()`だけではマウスeventが発生せず、直前のファイル画面内のキー入力判定が残るためです。
+2026初回でこの不足を検出し、実クリックのevent経路を補ってから再検証しました。

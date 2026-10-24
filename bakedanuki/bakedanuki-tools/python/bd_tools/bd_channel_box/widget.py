@@ -27,6 +27,7 @@ from bd_util.maya.ui import (
 from bd_util.ui import (
     BoolCheckBox,
     CheckBoxSweep,
+    DialogAnchorTracker,
     EnumComboBox,
     FloatStepProfile,
     FloatStepSetting,
@@ -1270,6 +1271,7 @@ class ChannelBoxWidget(qt.QWidget):
         """画面を作成してから選択監視を開始する。"""
         super().__init__(parent)
         self.custom_filter_registry = CustomFilterRegistry(self)
+        self._dialog_anchor = DialogAnchorTracker(self)
         self.value_filter_preferences = ValueFilterPreferences()
         self.custom_filter_dialog: CustomFilterManagerDialog | None = None
         self._active_custom_filters: dict[str, CustomFilterSelection] = {}
@@ -1516,7 +1518,9 @@ class ChannelBoxWidget(qt.QWidget):
         self.table_view = ChannelTableView(self)
         self.scroll_area = self.table_view
         self.setup_panel = CustomFilterSetupPanel(
-            self.custom_filter_registry, self
+            self.custom_filter_registry,
+            self,
+            dialog_position=self._dialog_anchor.position,
         )
         self.setup_panel.create_requested.connect(self._create_filter_in_setup)
         self.setup_panel.manage_requested.connect(
@@ -1699,7 +1703,7 @@ class ChannelBoxWidget(qt.QWidget):
 
     def _show_custom_filter_manager(self) -> None:
         """メニューと歯車の操作位置付近へ、同じ管理ウィンドウを表示する。"""
-        click_position = qt.QCursor.pos()
+        click_position = self._dialog_anchor.position()
         dialog = self.custom_filter_dialog
         if dialog is None or not qt.isValid(dialog):
             dialog = CustomFilterManagerDialog(
@@ -1709,6 +1713,7 @@ class ChannelBoxWidget(qt.QWidget):
                 save_changes=self.setup_panel.save,
                 discard_changes=self.setup_panel.discard,
                 changes_pending=self.setup_panel.has_unsaved_changes,
+                dialog_position=self._dialog_anchor.position,
             )
             self.setup_panel.changes_changed.connect(dialog.refresh_save_state)
             dialog.created.connect(self._edit_created_filter)
@@ -1718,8 +1723,8 @@ class ChannelBoxWidget(qt.QWidget):
 
     def _create_filter_in_setup(self) -> None:
         """設定画面内から、管理画面と同じ手順で新規JSONを作成する。"""
-        position = qt.QCursor.pos()
-        if not self.setup_panel.confirm_leave():
+        position = self._dialog_anchor.position()
+        if not self.setup_panel.confirm_leave(position):
             return
         draft = self.setup_panel.draft
         path = create_registered_filter(
@@ -3458,6 +3463,7 @@ class ChannelBoxWidget(qt.QWidget):
 
     def dispose(self) -> None:
         """画面の入力と監視を即時に終了する。"""
+        self._dialog_anchor.dispose()
         if self.custom_filter_dialog is not None:
             self.custom_filter_dialog.close()
             self.custom_filter_dialog.deleteLater()

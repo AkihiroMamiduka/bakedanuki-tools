@@ -10,6 +10,7 @@ from typing import cast
 
 import pytest
 
+from bd_util.ui import dialog as ui_dialog
 from bd_util.ui import qt
 from bd_tools.bd_channel_box import custom_filter_dialogs as dialog_module
 
@@ -40,7 +41,7 @@ def editor(
         unexpected_warnings.append(str(_args[2]))
         return qt.QMessageBox.StandardButton.Cancel
 
-    monkeypatch.setattr(qt.QMessageBox, "warning", cancel_unexpected_warning)
+    monkeypatch.setattr(ui_dialog, "warning_near", cancel_unexpected_warning)
     widget = ChannelBoxWidget()
     yield widget
     widget.setup_panel.discard()
@@ -114,13 +115,15 @@ def test_existing_destination_is_preserved_and_can_be_reselected(
         """既存pathの後に別pathまたはキャンセルを返す。"""
         return next(choices), ""
 
-    def warn(_parent: qt.QWidget, _title: str, message: str) -> int:
+    def warn(
+        _parent: qt.QWidget, _title: str, message: str, _anchor: qt.QPoint
+    ) -> int:
         """上書き拒否の説明を記録し、再選択へ進める。"""
         messages.append(message)
         return 0
 
     monkeypatch.setattr(dialog_module, "get_save_file_name_near", choose)
-    monkeypatch.setattr(qt.QMessageBox, "warning", warn)
+    monkeypatch.setattr(ui_dialog, "warning_near", warn)
     result = create_registered_filter(editor, editor.custom_filter_registry)
     assert existing.read_bytes() == before
     assert len(messages) == 1 and "存在" in messages[0]

@@ -80,6 +80,11 @@ if manager is not None:
     assert_type(manager.move_down_button, qt.QToolButton)
     assert_type(manager.reload_all_button, qt.QToolButton)
 assert_type(bd_channel_box.show().widget.setup_panel, CustomFilterSetupPanel)
+assert_type(bd_channel_box.show().widget.setup_panel.confirm_leave(), bool)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.confirm_leave(qt.QPoint(10, 20)),
+    bool,
+)
 assert_type(bd_channel_box.show().widget.preset_combo, qt.QComboBox)
 assert_type(
     bd_channel_box.show().widget.setup_panel.preset_combo, qt.QComboBox

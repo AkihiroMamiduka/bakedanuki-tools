@@ -287,10 +287,14 @@ ONで追加します。管理画面を開いたまま作成行を選択し、カ
 グループは`preset_group/`、プリセットは`preset/`、フィルターは`filter/`です。
 必要なprefsフォルダーを作成し、消失した共有先は再作成しません。
 新規作成のファイル名は空欄から入力します。任意の保存先への変更も可能です。
-作成・複製の保存画面と名前変更の入力画面は、操作開始時のカーソル位置を中心に表示します。
+未保存確認・エラー通知・既存JSONの追加・作成・複製・名前変更の画面は、
+操作開始時のカーソル位置を中心に表示します。
 クリックしたモニターの作業領域へタイトルバー・外枠まで収め、必要な場合だけ縮小します。
-未保存確認を挟んでも最初の操作位置を使います。保存画面には位置を制御できるQt版を使用するため、
-Windows標準の保存画面とは見た目が変わります。
+未保存確認を挟んでも最初の操作位置を使い、Qt標準の上書き確認も同じ起点へ配置します。
+キーボード操作では、操作元のフォーカス部品付近へ表示します。
+追加・保存画面には位置を制御できるQt版を使用するため、Windows標準とは見た目が変わります。
+表示後に手で移動した画面をカーソルへ追従させることはありません。
+bdChannelBox本体と、右クリックから開く子補償・回転姿勢維持Windowは保存配置を優先します。
 名前入力は保存ダイアログに一本化し、選んだファイル名から`.json`を除いた文字列を表示名にします。
 既存ファイルを指定した場合は作成せず、保存先を選び直せます。
 「複製...」は「追加...」と「削除」の間にあり、選択した正常なJSONの全ノード型・
@@ -513,8 +517,14 @@ Custom表示へ反映します。空の`"node_types": {}`も有効で、すべ�
 | 管理画面の複数選択と現在行 | `custom_filter_manager.py`・`custom_filter_manager_view.py` | `maya/test_bd_channel_box_preset_manager_mouse.py` |
 | 初期フォルダー・操作位置の引継ぎ | `custom_filter_dialogs.py` | `maya/test_bd_channel_box_filter_dialog_paths.py` |
 
-Qtモーダル画面の配置と保存先選択はutilの`exec_dialog_near()`・`get_save_file_name_near()`を
-使用します。toolsへ重複実装せず、未保存確認の前に取得した起点を渡してください。
+Qtモーダル画面の配置、警告、追加・保存先選択はutilの`exec_dialog_near()`・
+`warning_near()`・`get_open_file_names_near()`・`get_save_file_name_near()`を使用します。
+入力方法による起点は`DialogAnchorTracker`で取得し、未保存確認の前に記録して
+後続へ渡してください。toolsへ配置処理やイベント監視を重複実装しません。
+TrackerはWidgetの終了処理で`dispose()`し、reload後へ入力監視を残しません。
+`CustomFilterManagerDialog`の`confirm_create`は操作起点の`QPoint`を受け取り、
+共通の確認へ同じ位置を渡します。直接構築する場合も`dialog_position`へ起点取得callbackを
+指定すると、設定画面と同じキーボード操作の位置を使用できます。
 今回の版はtools・utilの両方を更新し、`bd_tools.reload_package(reload_util=True)`で反映します。
 検証結果と本体終了待ちの扱いは[Testing](testing.md)の「プリセット対応の検証記録」を
 参照してください。自動検証に加えてMaya 2025／2026／2027本体で操作を確認済みです。

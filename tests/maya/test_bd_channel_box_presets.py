@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from bd_util.ui import dialog as ui_dialog
 from bd_util.ui import qt
 from bd_tools.bd_channel_box import custom_filter_dialogs as dialog_module
 
@@ -36,7 +37,7 @@ def editor(
         """意図しないモーダル画面で検証を停止せず、内容を失敗として示す。"""
         raise AssertionError(f"予期しない確認: {args[1:]}")
 
-    monkeypatch.setattr(qt.QMessageBox, "warning", unexpected_dialog)
+    monkeypatch.setattr(ui_dialog, "warning_near", unexpected_dialog)
     widget = ChannelBoxWidget()
     widget.resize(700, 800)
     widget.show()
@@ -164,7 +165,7 @@ def test_preset_switch_confirms_pending_filter_and_keeps_cancelled_selection(
             else qt.QMessageBox.StandardButton.Cancel
         )
 
-    monkeypatch.setattr(qt.QMessageBox, "warning", choose)
+    monkeypatch.setattr(ui_dialog, "warning_near", choose)
     editor.preset_combo.setCurrentIndex(editor.preset_combo.findData(second))
     expected = second if save else first
     assert len(choices) == 1
@@ -212,7 +213,7 @@ def test_discarded_target_registration_is_not_loaded_after_confirmation(
         choices.append(str(args[2]))
         return qt.QMessageBox.StandardButton.Discard
 
-    monkeypatch.setattr(qt.QMessageBox, "warning", discard)
+    monkeypatch.setattr(ui_dialog, "warning_near", discard)
     combo.setCurrentIndex(index)
     assert len(choices) == 1
     assert not panel.is_dirty
@@ -256,7 +257,7 @@ def test_save_resolves_renamed_target_preset_before_switching(
         choices.append(str(args[2]))
         return qt.QMessageBox.StandardButton.Save
 
-    monkeypatch.setattr(qt.QMessageBox, "warning", save)
+    monkeypatch.setattr(ui_dialog, "warning_near", save)
     editor.preset_combo.setCurrentIndex(editor.preset_combo.findData(second))
     renamed = normalize_filter_path(destination)
     assert len(choices) == 1

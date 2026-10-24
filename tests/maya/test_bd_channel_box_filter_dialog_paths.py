@@ -9,8 +9,10 @@ from typing import Literal
 
 import pytest
 
+from bd_util.ui import dialog as ui_dialog
 from bd_util.ui import qt
 from bd_tools.bd_channel_box import custom_filter_dialogs as dialog_module
+from bd_tools.bd_channel_box import custom_filter_manager as manager_module
 from bd_tools.bd_channel_box import custom_filter_setup as setup_panel_module
 
 from bd_tools.bd_channel_box.custom_filter_dialogs import (
@@ -38,7 +40,7 @@ def editor(
         warnings.append(str(args[2]))
         return qt.QMessageBox.StandardButton.Cancel
 
-    monkeypatch.setattr(qt.QMessageBox, "warning", cancel_warning)
+    monkeypatch.setattr(ui_dialog, "warning_near", cancel_warning)
     widget = ChannelBoxWidget()
     try:
         yield widget
@@ -111,7 +113,7 @@ def _capture_dialogs(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
         return [], ""
 
     monkeypatch.setattr(dialog_module, "get_save_file_name_near", save)
-    monkeypatch.setattr(qt.QFileDialog, "getOpenFileNames", open_files)
+    monkeypatch.setattr(manager_module, "get_open_file_names_near", open_files)
     return calls
 
 
@@ -238,7 +240,7 @@ def test_manager_rechecks_current_row_after_discarding_unsaved_registration(
         """新規作成を続ける前に、未保存の追加登録を破棄する。"""
         return qt.QMessageBox.StandardButton.Discard
 
-    monkeypatch.setattr(qt.QMessageBox, "warning", discard)
+    monkeypatch.setattr(ui_dialog, "warning_near", discard)
     calls = _capture_dialogs(monkeypatch)
     _click(manager, "filter", False)
     assert calls == [saved.parent]
@@ -283,7 +285,7 @@ def test_setup_creation_keeps_click_origin_across_confirmation(
         return "", ""
 
     monkeypatch.setattr(qt.QCursor, "pos", position)
-    monkeypatch.setattr(qt.QMessageBox, "warning", discard)
+    monkeypatch.setattr(ui_dialog, "warning_near", discard)
     monkeypatch.setattr(dialog_module, "get_save_file_name_near", save)
     button = panel.preset_new_button if preset else panel.new_button
     button.click()
@@ -358,7 +360,7 @@ def test_manager_filter_rename_keeps_origin_across_confirmation(
         return int(qt.QDialog.DialogCode.Rejected)
 
     monkeypatch.setattr(qt.QCursor, "pos", position)
-    monkeypatch.setattr(qt.QMessageBox, "warning", discard)
+    monkeypatch.setattr(ui_dialog, "warning_near", discard)
     monkeypatch.setattr(setup_panel_module, "exec_dialog_near", execute)
     manager.rename_button.click()
     assert captured == [origin]

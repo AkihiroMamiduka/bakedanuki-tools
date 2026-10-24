@@ -11,6 +11,7 @@ import pytest
 from maya import cmds
 
 from bd_util.maya.ui import get_ui_settings_file
+from bd_util.ui import dialog as ui_dialog
 from bd_util.ui import qt
 
 from bd_tools.bd_channel_box.controller import (
@@ -43,7 +44,7 @@ def editor_factory(
         unexpected_warnings.append(str(_args[2]))
         return qt.QMessageBox.StandardButton.Cancel
 
-    monkeypatch.setattr(qt.QMessageBox, "warning", cancel_unexpected_warning)
+    monkeypatch.setattr(ui_dialog, "warning_near", cancel_unexpected_warning)
 
     def create() -> ChannelBoxWidget:
         """設定を新しく読み込むWidgetを作成する。"""

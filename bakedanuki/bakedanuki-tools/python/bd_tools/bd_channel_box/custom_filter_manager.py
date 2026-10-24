@@ -7,7 +7,8 @@ from collections.abc import Callable
 from functools import partial
 from typing import Literal, cast
 
-from bd_util.ui import qt
+from bd_util.ui import get_open_file_names_near, qt
+from bd_util.ui import dialog as ui_dialog
 
 from .._shared.window_position import centered_position_within_screen
 from .custom_filter_dialogs import (
@@ -130,15 +131,17 @@ class CustomFilterManagerDialog(qt.QDialog):
         registry: CustomFilterRegistry,
         parent: qt.QWidget,
         *,
-        confirm_create: Callable[[], bool] | None = None,
+        confirm_create: Callable[[qt.QPoint], bool] | None = None,
         save_changes: Callable[[], bool] | None = None,
         discard_changes: Callable[[], None] | None = None,
         changes_pending: Callable[[], bool] | None = None,
+        dialog_position: Callable[[], qt.QPoint] | None = None,
     ) -> None:
         """共通保存と各階層の一覧を作り、登録と選択の変更へ追従する。"""
         super().__init__(parent)
         self.registry = registry
         self._confirm_create = confirm_create
+        self._dialog_position = dialog_position
         self._save_changes = save_changes
         self._discard_changes = discard_changes
         self._changes_pending = changes_pending
@@ -643,9 +646,22 @@ class CustomFilterManagerDialog(qt.QDialog):
         finally:
             tree.blockSignals(blocked)
 
-    def _confirm(self) -> bool:
-        """対象を離れる前に共通の保存・破棄・中止を確認する。"""
-        return self._confirm_create is None or self._confirm_create()
+    def _popup_position(self) -> qt.QPoint:
+        """設定画面と共有する入力方法から、対話画面の起点を取得する。"""
+        return (
+            self._dialog_position()
+            if self._dialog_position is not None
+            else qt.QCursor.pos()
+        )
+
+    def _confirm(self, position: qt.QPoint | None = None) -> bool:
+        """指定した起点で共通の保存・破棄・中止を確認する。"""
+        anchor = (
+            qt.QPoint(position)
+            if position is not None
+            else self._popup_position()
+        )
+        return self._confirm_create is None or self._confirm_create(anchor)
 
     def _change_document_selection(
         self, kind: _PresetKind, *_args: object
@@ -813,7 +829,9 @@ class CustomFilterManagerDialog(qt.QDialog):
         return self._item_path(current)
 
     def _dialog_directory(
-        self, kind: Literal["preset_group", "preset", "filter"]
+        self,
+        kind: Literal["preset_group", "preset", "filter"],
+        position: qt.QPoint,
     ) -> str | None:
         """追加ダイアログの初期フォルダーを用意し、失敗を画面へ伝える。"""
         try:
@@ -821,13 +839,15 @@ class CustomFilterManagerDialog(qt.QDialog):
                 initial_filter_directory(kind, self._initial_reference(kind))
             )
         except OSError as error:
-            qt.QMessageBox.warning(self, "フォルダーを開けません", str(error))
+            ui_dialog.warning_near(
+                self, "フォルダーを開けません", str(error), position
+            )
             return None
 
     def _create_document(self, kind: _PresetKind) -> None:
         """選択中の現在行のフォルダーから、空の上位JSONを新規登録する。"""
-        position = qt.QCursor.pos()
-        if not self._confirm():
+        position = self._popup_position()
+        if not self._confirm(position):
             return
         path = create_registered_preset(
             self,
@@ -841,19 +861,21 @@ class CustomFilterManagerDialog(qt.QDialog):
 
     def _add_documents(self, kind: _PresetKind) -> None:
         """既存のグループまたはプリセットをまとめて登録する。"""
-        if not self._confirm():
+        position = self._popup_position()
+        if not self._confirm(position):
             return
-        directory = self._dialog_directory(kind)
+        directory = self._dialog_directory(kind, position)
         if directory is None:
             return
         label = (
             "プリセットグループ" if kind == "preset_group" else "プリセット"
         )
-        paths, _selected_filter = qt.QFileDialog.getOpenFileNames(
+        paths, _selected_filter = get_open_file_names_near(
             self,
             f"{label}を追加",
             directory,
             "JSON ファイル (*.json);;すべてのファイル (*)",
+            position,
         )
         if not paths:
             return
@@ -867,9 +889,9 @@ class CustomFilterManagerDialog(qt.QDialog):
 
     def _duplicate_document(self, kind: _PresetKind) -> None:
         """一件の上位JSONを同じフォルダーの_copy候補から複製する。"""
-        position = qt.QCursor.pos()
+        position = self._popup_position()
         path = self._single_document_path(kind)
-        if path is None or not self._confirm():
+        if path is None or not self._confirm(position):
             return
         path = self._single_document_path(kind)
         if path is None:
@@ -884,7 +906,13 @@ class CustomFilterManagerDialog(qt.QDialog):
         """保存時の実ファイル改名を下書きとして登録する。"""
         path = self._single_document_path(kind)
         if path is not None:
-            rename_registered_preset(self, self.registry, kind, path)
+            rename_registered_preset(
+                self,
+                self.registry,
+                kind,
+                path,
+                position=self._popup_position(),
+            )
 
     def _remove_documents(self, kind: _PresetKind) -> None:
         """選択した上位登録を解除し、参照先の実ファイルは残す。"""
@@ -927,16 +955,18 @@ class CustomFilterManagerDialog(qt.QDialog):
 
     def _add_files(self) -> None:
         """既存フィルターJSONを選択中のプリセット末尾へ登録する。"""
-        if not self._confirm():
+        position = self._popup_position()
+        if not self._confirm(position):
             return
-        directory = self._dialog_directory("filter")
+        directory = self._dialog_directory("filter", position)
         if directory is None:
             return
-        paths, _selected_filter = qt.QFileDialog.getOpenFileNames(
+        paths, _selected_filter = get_open_file_names_near(
             self,
             "カスタムフィルター定義を追加",
             directory,
             "JSON ファイル (*.json);;すべてのファイル (*)",
+            position,
         )
         if paths:
             added = self.registry.add_paths(paths)
@@ -946,8 +976,8 @@ class CustomFilterManagerDialog(qt.QDialog):
 
     def _create_file(self) -> None:
         """保存先のファイル名で空の定義を作成し、末尾へ登録する。"""
-        position = qt.QCursor.pos()
-        if self._confirm():
+        position = self._popup_position()
+        if self._confirm(position):
             self._register_created(
                 create_registered_filter(
                     self,
@@ -959,9 +989,9 @@ class CustomFilterManagerDialog(qt.QDialog):
 
     def _duplicate_selected(self) -> None:
         """未保存変更を確認し、選択フィルターの全型を別名で複製する。"""
-        position = qt.QCursor.pos()
+        position = self._popup_position()
         path = self._single_selected_path()
-        if path is None or not self._confirm():
+        if path is None or not self._confirm(position):
             return
         path = self._single_selected_path()
         if path is not None:
@@ -973,9 +1003,9 @@ class CustomFilterManagerDialog(qt.QDialog):
 
     def _rename_filter(self) -> None:
         """選択フィルターを編集対象にして共用の改名入力を要求する。"""
-        position = qt.QCursor.pos()
+        position = self._popup_position()
         path = self._single_selected_path()
-        if path is None or not self._confirm():
+        if path is None or not self._confirm(position):
             return
         path = self._single_selected_path()
         if path is not None:
@@ -1002,24 +1032,30 @@ class CustomFilterManagerDialog(qt.QDialog):
 
     def _save(self) -> None:
         """管理画面と設定画面の未保存変更をまとめて保存する。"""
+        position = self._popup_position()
         try:
             if self._save_changes is not None:
                 self._save_changes()
             else:
                 self.registry.save()
         except CustomFilterError as error:
-            qt.QMessageBox.warning(self, "保存できません", str(error))
+            ui_dialog.warning_near(
+                self, "保存できません", str(error), position
+            )
         self._refresh()
 
     def _discard(self) -> None:
         """管理画面と設定画面の未保存変更をまとめて破棄する。"""
+        position = self._popup_position()
         try:
             if self._discard_changes is not None:
                 self._discard_changes()
             else:
                 self.registry.discard()
         except CustomFilterError as error:
-            qt.QMessageBox.warning(self, "読み直せません", str(error))
+            ui_dialog.warning_near(
+                self, "読み直せません", str(error), position
+            )
         self._refresh()
 
     def _reload_all(self) -> None:
