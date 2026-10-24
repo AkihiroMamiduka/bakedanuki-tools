@@ -58,6 +58,7 @@ assert_type(bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
 assert_type(bd_channel_box.show().widget, ChannelBoxWidget)
 manager = bd_channel_box.show().widget.custom_filter_dialog
 if manager is not None:
+    assert_type(manager.show_near(qt.QPoint(100, 100)), None)
     assert_type(manager.tree_widget, qt.QTreeWidget)
     assert_type(manager.storage_error_label, qt.QLabel)
     assert_type(manager.new_button, qt.QToolButton)

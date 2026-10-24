@@ -197,6 +197,7 @@ class _MayaSmokeSession:
                 self._setup_scene,
                 self._show,
                 self._inspect_custom_filters,
+                self._inspect_custom_filter_manager_placement,
                 self._inspect_custom_filter_manager_operations,
                 self._inspect_custom_filter_hotbox,
                 self._inspect_custom_filter_sweep,
@@ -2265,6 +2266,150 @@ class _MayaSmokeSession:
         ):
             raise AssertionError("保存したjoint型の属性が表示されません")
         self.steps.append("author_custom_filter_for_joint")
+
+    def _inspect_custom_filter_manager_placement(self) -> None:
+        """両入口の位置・複数モニターの端・過大サイズの補正を本体で確認する。"""
+        from bd_tools._shared.window_position import (
+            centered_position_within_screen,
+        )
+        from bd_util.ui import qt
+
+        widget = self._require_window().widget
+        widget.manage_custom_filters_action.trigger()
+        self._flush_gui()
+        manager = widget.custom_filter_dialog
+        if manager is None:
+            raise AssertionError("配置検証用の管理画面がありません")
+        saved_cursor = qt.QPoint(qt.QCursor.pos())
+        saved_size = manager.size()
+        saved_mode = widget.controller.mode
+        tree = manager.tree_widget
+        selected = tuple(tree.selectedItems())
+        current = tree.currentItem()
+        enabled = tuple(
+            entry.enabled for entry in widget.custom_filter_registry.entries
+        )
+
+        def verify(anchor: qt.QPoint, entry: str) -> None:
+            """起点の画面内へ外枠まで収まり、同じ画面が再利用されることを確認する。"""
+            screen = qt.QtGui.QGuiApplication.screenAt(anchor)
+            if screen is None:
+                raise AssertionError("操作位置のモニターがありません")
+            available = screen.availableGeometry()
+            frame = manager.frameGeometry()
+            expected = centered_position_within_screen(
+                anchor, frame.size(), available
+            )
+            if (
+                widget.custom_filter_dialog is not manager
+                or not manager.isVisible()
+                or not available.contains(frame)
+                or (frame.topLeft() - expected).manhattanLength() > 1
+                or tuple(tree.selectedItems()) != selected
+                or tree.currentItem() is not current
+                or tuple(
+                    item.enabled
+                    for item in widget.custom_filter_registry.entries
+                )
+                != enabled
+            ):
+                raise AssertionError(
+                    f"管理画面の配置・再利用・選択保持が不正です: {entry}, {frame}, {available}"
+                )
+            self.diagnostics.append(
+                {
+                    "manager_placement_entry": entry,
+                    "anchor": (anchor.x(), anchor.y()),
+                    "frame": (
+                        frame.x(),
+                        frame.y(),
+                        frame.width(),
+                        frame.height(),
+                    ),
+                    "available": (
+                        available.x(),
+                        available.y(),
+                        available.width(),
+                        available.height(),
+                    ),
+                }
+            )
+
+        def open_from_menu(position: qt.QPoint, entry: str) -> None:
+            """設定メニューを実際にクリックし、その位置からの表示を確認する。"""
+            menu = widget.settings_menu
+            menu.popup(position)
+            self._flush_gui()
+            point = menu.actionGeometry(
+                widget.manage_custom_filters_action
+            ).center()
+            qt.QCursor.setPos(menu.mapToGlobal(point))
+            anchor = qt.QPoint(qt.QCursor.pos())
+            self._mouse(menu, qt.QEvent.Type.MouseButtonPress, point)
+            self._mouse(menu, qt.QEvent.Type.MouseButtonRelease, point)
+            self._flush_gui()
+            verify(anchor, entry)
+
+        try:
+            # 各モニターの両端で、メニューから表示中の画面も再配置する
+            for index, screen in enumerate(qt.QtGui.QGuiApplication.screens()):
+                available = screen.availableGeometry()
+                for corner, point in (
+                    ("top-left", available.topLeft() + qt.QPoint(16, 16)),
+                    (
+                        "bottom-right",
+                        available.bottomRight() - qt.QPoint(16, 16),
+                    ),
+                ):
+                    open_from_menu(point, f"menu-screen-{index}-{corner}")
+
+            # 閉じてから歯車で再表示しても、手動サイズと操作対象を維持する
+            manager.resize(900, 520)
+            self._flush_gui()
+            manual_size = manager.size()
+            manual_frame_size = manager.frameGeometry().size()
+            manager.close()
+            self._select_combo_item(widget.mode_combo, 2)
+            self._flush_gui()
+            button = widget.setup_panel.manage_button
+            point = button.rect().center()
+            qt.QCursor.setPos(button.mapToGlobal(point))
+            anchor = qt.QPoint(qt.QCursor.pos())
+            self._mouse(button, qt.QEvent.Type.MouseButtonPress, point)
+            self._mouse(button, qt.QEvent.Type.MouseButtonRelease, point)
+            self._flush_gui()
+            verify(anchor, "setup-icon-reopen")
+            screen = qt.QtGui.QGuiApplication.screenAt(anchor)
+            if screen is None:
+                raise AssertionError("歯車を操作したモニターがありません")
+            available = screen.availableGeometry()
+            if (
+                manual_frame_size.width() <= available.width()
+                and manual_frame_size.height() <= available.height()
+            ):
+                if manager.size() != manual_size:
+                    raise AssertionError("管理画面の手動サイズが失われました")
+            image_path = self.output / "43e-manager-near-setup-icon.png"
+            if not manager.grab().save(str(image_path)):
+                raise RuntimeError("歯車から開いた管理画面を撮影できません")
+            self.screenshots.append(str(image_path))
+
+            # 作業領域より大きいWindowだけを縮小し、外枠まで収める
+            manager.resize(available.width() + 200, available.height() + 100)
+            open_from_menu(available.center(), "menu-fit-oversized-window")
+            image_path = self.output / "43f-manager-fitted-to-screen.png"
+            if not manager.grab().save(str(image_path)):
+                raise RuntimeError("画面内へ縮小した管理画面を撮影できません")
+            self.screenshots.append(str(image_path))
+            self.steps.append("manager_opens_near_click_and_fits_each_screen")
+        finally:
+            widget.settings_menu.hide()
+            manager.resize(saved_size)
+            manager.hide()
+            self._select_combo_item(
+                widget.mode_combo, widget.mode_combo.findData(saved_mode)
+            )
+            qt.QCursor.setPos(saved_cursor)
 
     def _inspect_custom_filter_manager_operations(self) -> None:
         """管理画面の作成後表示と、複数行の移動・再読込・登録解除を確認する。"""

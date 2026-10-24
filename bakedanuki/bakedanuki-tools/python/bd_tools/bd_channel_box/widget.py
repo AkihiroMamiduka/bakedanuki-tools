@@ -44,6 +44,7 @@ from bd_util.ui import (
     qt,
 )
 
+from .._shared.window_position import centered_position_within_screen
 from .controller import (
     ChannelAttributeFilter,
     ChannelBoxController,
@@ -1288,6 +1289,10 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.setObjectName("bdChannelBoxCustomFilterManager")
         self.setWindowTitle("カスタムフィルター管理")
         self.resize(700, 390)
+        self._placement_anchor: qt.QPoint | None = None
+        self._placement_timer = qt.QTimer(self)
+        self._placement_timer.setSingleShot(True)
+        self._placement_timer.timeout.connect(self._position_near_anchor)
         tree = CustomFilterRegistrationTree(self)
         tree.visibility_clicked.connect(self._toggle_filter_visibility)
         self.tree_widget: qt.QTreeWidget = tree
@@ -1390,6 +1395,7 @@ class CustomFilterManagerDialog(qt.QDialog):
             buttons.addWidget(button)
         buttons.addStretch(1)
         layout = qt.QVBoxLayout(self)
+        self._content_layout = layout
         layout.addWidget(
             qt.QLabel(
                 "目のアイコンで Attribute Filter への表示を切り替えます", self
@@ -1411,6 +1417,55 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.registry.path_changed.connect(self._replace_path)
         self.registry.changed.connect(self._refresh)
         self._refresh()
+
+    def show_near(self, position: qt.QPoint) -> None:
+        """同じ管理画面を指定位置付近へ表示し、画面内へ収めて前面に出す。"""
+        self._placement_anchor = qt.QPoint(position)
+        self.show()
+        self._position_near_anchor()
+        # nativeの外枠寸法が確定した後も、同じ起点で補正する
+        self._placement_timer.start(0)
+        self.raise_()
+        self.activateWindow()
+
+    def _position_near_anchor(self) -> None:
+        """クリックした画面に外枠まで収め、大きすぎる場合だけ縮小する。"""
+        anchor = self._placement_anchor
+        if anchor is None or not self.isVisible():
+            return
+        screen = cast(
+            qt.QtGui.QScreen | None, qt.QtGui.QGuiApplication.screenAt(anchor)
+        )
+        if screen is None:
+            screen = cast(qt.QtGui.QScreen | None, self.screen())
+        if screen is None:
+            screen = cast(
+                qt.QtGui.QScreen | None,
+                qt.QtGui.QGuiApplication.primaryScreen(),
+            )
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        if available.isEmpty():
+            return
+
+        # タイトルバーと外枠の分を引き、client領域の収まる寸法を求める
+        frame = self.frameGeometry().size()
+        maximum_client = qt.QSize(
+            max(1, available.width() - max(0, frame.width() - self.width())),
+            max(
+                1, available.height() - max(0, frame.height() - self.height())
+            ),
+        )
+        self.setMinimumSize(
+            self._content_layout.totalMinimumSize().boundedTo(maximum_client)
+        )
+        self.resize(self.size().boundedTo(maximum_client))
+        self.move(
+            centered_position_within_screen(
+                anchor, self.frameGeometry().size(), available
+            )
+        )
 
     @staticmethod
     def _item_path(item: qt.QTreeWidgetItem | None) -> str | None:
@@ -2081,7 +2136,8 @@ class ChannelBoxWidget(qt.QWidget):
         self._sync_filter()
 
     def _show_custom_filter_manager(self) -> None:
-        """メニューと設定画面のアイコンから同じ管理ウィンドウを表示する。"""
+        """メニューと歯車の操作位置付近へ、同じ管理ウィンドウを表示する。"""
+        click_position = qt.QCursor.pos()
         dialog = self.custom_filter_dialog
         if dialog is None or not qt.isValid(dialog):
             dialog = CustomFilterManagerDialog(
@@ -2091,9 +2147,7 @@ class ChannelBoxWidget(qt.QWidget):
             )
             dialog.created.connect(self._edit_created_filter)
             self.custom_filter_dialog = dialog
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
+        dialog.show_near(click_position)
 
     def _create_filter_in_setup(self) -> None:
         """設定画面内から、管理画面と同じ手順で新規JSONを作成する。"""

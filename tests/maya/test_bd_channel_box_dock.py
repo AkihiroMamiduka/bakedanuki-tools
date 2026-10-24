@@ -489,6 +489,151 @@ def test_custom_filter_manager_keeps_errors_and_controls_visibility(
     ) == (paths[1], paths[2])
 
 
+def test_custom_filter_manager_repositions_from_menu_and_setup_icon(
+    dock_host: _WorkspaceHost,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """両入口の操作位置へ同じ画面を再配置し、手動サイズと選択を維持する。"""
+    from bd_tools import bd_channel_box
+
+    available = qt.QRect(100, 200, 1600, 1000)
+
+    class Screen:
+        """タスクバーを除く検証用のモニター領域を返す。"""
+
+        def availableGeometry(self) -> qt.QRect:
+            """モニターの作業領域を返す。"""
+            return available
+
+    screen = Screen()
+    anchor = qt.QPoint(900, 700)
+    queried: list[qt.QPoint] = []
+
+    def cursor_position() -> qt.QPoint:
+        """各入口を操作した時点のカーソル位置を返す。"""
+        return qt.QPoint(anchor)
+
+    def screen_at(position: qt.QPoint) -> Screen:
+        """操作位置でモニターが選択されたことを記録する。"""
+        queried.append(qt.QPoint(position))
+        return screen
+
+    monkeypatch.setattr(qt.QCursor, "pos", cursor_position)
+    monkeypatch.setattr(qt.QtGui.QGuiApplication, "screenAt", screen_at)
+    files = tuple(tmp_path / f"{name}.json" for name in "ABC")
+    for path in files:
+        _write_custom_filter(path, path.stem)
+    widget = bd_channel_box.show().widget
+    paths = widget.custom_filter_registry.add_paths(files)
+    widget.manage_custom_filters_action.trigger()
+    _events()
+    dialog = widget.custom_filter_dialog
+    assert dialog is not None and dialog.isVisible()
+    assert available.contains(dialog.frameGeometry())
+    assert (dialog.frameGeometry().center() - anchor).manhattanLength() <= 2
+    assert queried[-1] == anchor
+    tree = dialog.tree_widget
+    _select_registration_rows(tree, (1, 2))
+    current = tree.currentItem()
+    widget.custom_filter_registry.set_enabled(paths[0], False)
+    enabled = tuple(
+        entry.enabled for entry in widget.custom_filter_registry.entries
+    )
+
+    # 表示中の再操作でも歯車側の位置へ寄せ、変更済みのサイズを維持する
+    dialog.resize(900, 520)
+    _events()
+    size = dialog.size()
+    anchor = available.bottomRight()
+    widget.mode_combo.setCurrentIndex(2)
+    widget.setup_panel.manage_button.click()
+    _events()
+    assert widget.custom_filter_dialog is dialog
+    assert dialog.size() == size
+    assert available.contains(dialog.frameGeometry())
+    assert dialog.frameGeometry().bottomRight() == available.bottomRight()
+    assert queried[-1] == anchor
+    assert _selected_registration_paths(tree) == (paths[1], paths[2])
+    assert tree.currentItem() is current
+    assert (
+        tuple(entry.enabled for entry in widget.custom_filter_registry.entries)
+        == enabled
+    )
+
+    # 閉じてからのメニュー操作でも再生成せず、今回の位置へ再配置する
+    dialog.close()
+    anchor = available.topLeft()
+    widget.manage_custom_filters_action.trigger()
+    _events()
+    assert widget.custom_filter_dialog is dialog and dialog.isVisible()
+    assert dialog.size() == size
+    assert dialog.frameGeometry().topLeft() == available.topLeft()
+    assert _selected_registration_paths(tree) == (paths[1], paths[2])
+    assert tree.currentItem() is current
+
+
+@pytest.mark.parametrize(
+    "work_area",
+    ((0, 0, 640, 360), (-1400, 40, 900, 500), (80, -850, 500, 300)),
+)
+def test_custom_filter_manager_shrinks_to_clicked_screen(
+    dock_host: _WorkspaceHost,
+    monkeypatch: pytest.MonkeyPatch,
+    work_area: tuple[int, int, int, int],
+) -> None:
+    """負座標のモニターも含め、作業領域より大きい外枠を縮小して収める。"""
+    from bd_tools import bd_channel_box
+
+    available = qt.QRect(*work_area)
+    queried: list[qt.QPoint] = []
+
+    class Screen:
+        """指定したモニターの作業領域を返す。"""
+
+        def availableGeometry(self) -> qt.QRect:
+            """負座標や狭い画面も含む作業領域を返す。"""
+            return available
+
+    def screen_at(position: qt.QPoint) -> Screen:
+        """要求された操作位置を記録し、対象モニターを返す。"""
+        queried.append(qt.QPoint(position))
+        return Screen()
+
+    monkeypatch.setattr(qt.QtGui.QGuiApplication, "screenAt", screen_at)
+    widget = bd_channel_box.show().widget
+    widget.manage_custom_filters_action.trigger()
+    _events()
+    dialog = widget.custom_filter_dialog
+    assert dialog is not None
+    border_tolerance = 0
+    if available.left() < 0 or available.top() < 0:
+        # offscreenは実在しない負座標へ枠の分だけずらすため、仮想画面では枠を外す
+        # nativeのタイトルバーを含む補正はMaya本体の検証で確認する
+        dialog.setWindowFlag(qt.Qt.WindowType.FramelessWindowHint, True)
+        dialog.show()
+        _events()
+        border_tolerance = 4
+    dialog.resize(1500, 1000)
+    anchor = available.bottomRight()
+    dialog.show_near(anchor)
+    _events()
+    assert queried[-1] == anchor
+    assert available.contains(dialog.frameGeometry())
+    assert (
+        dialog.frameGeometry().bottomRight() - available.bottomRight()
+    ).manhattanLength() <= border_tolerance
+    fitted_size = dialog.size()
+    assert fitted_size.width() < 1500 and fitted_size.height() < 1000
+    dialog.show_near(available.topLeft())
+    _events()
+    assert dialog.size() == fitted_size
+    assert available.contains(dialog.frameGeometry())
+    assert (
+        dialog.frameGeometry().topLeft() - available.topLeft()
+    ).manhattanLength() <= border_tolerance
+
+
 def test_custom_filter_manager_multiselection_reorders_reloads_and_removes(
     dock_host: _WorkspaceHost, tmp_path: Path
 ) -> None:
