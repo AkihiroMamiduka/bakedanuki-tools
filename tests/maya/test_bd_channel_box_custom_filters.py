@@ -15,6 +15,7 @@ from bd_util.maya.node.inspection import ScalarAttributeInfo
 from bd_util.maya.ui import MayaFloatPlugsBinding
 from bd_util.maya.ui import settings as maya_settings
 from bd_util.ui import qt
+from bd_tools.bd_channel_box import custom_filter_dialogs as dialog_module
 
 from bd_tools.bd_channel_box.controller import ChannelBoxMode, ChannelRow
 from bd_tools.bd_channel_box import controller as controller_module
@@ -37,6 +38,12 @@ def _events() -> None:
 def _new_scene() -> None:
     """Maya commandの可変引数境界を閉じて空sceneを作る。"""
     cast(Callable[..., str], cmds.file)(new=True, force=True)
+
+
+def _register_saved_filter(editor: ChannelBoxWidget, path: Path) -> None:
+    """共有定義を登録して構成を保存し、内容編集前の基準を確定する。"""
+    editor.custom_filter_registry.add_paths((path,))
+    editor.custom_filter_registry.save()
 
 
 def _selection(
@@ -215,7 +222,7 @@ def _setup_radio_sweep(
         ),
         encoding="utf-8",
     )
-    editor.custom_filter_registry.add_paths((str(path),))
+    _register_saved_filter(editor, path)
     editor.resize(640, 800)
     editor.mode_combo.setCurrentIndex(2)
     _events()
@@ -256,6 +263,16 @@ def editor(
         return tmp_path
 
     monkeypatch.setattr(maya_settings, "get_ui_settings_root", settings_root)
+    unexpected_warnings: list[str] = []
+
+    def cancel_unexpected_warning(
+        *_args: object,
+    ) -> qt.QMessageBox.StandardButton:
+        """未想定の確認で停止せず、テスト終了時に理由付きで失敗させる。"""
+        unexpected_warnings.append(str(_args[2]))
+        return qt.QMessageBox.StandardButton.Cancel
+
+    monkeypatch.setattr(qt.QMessageBox, "warning", cancel_unexpected_warning)
     _new_scene()
     widget = ChannelBoxWidget()
     widget.show()
@@ -263,11 +280,13 @@ def editor(
     try:
         yield widget
     finally:
+        widget.setup_panel.discard()
         widget.dispose()
         widget.close()
         widget.deleteLater()
         _events()
         _new_scene()
+        assert not unexpected_warnings, unexpected_warnings
 
 
 def test_custom_filter_uses_json_order_and_edits_hidden_scalar(
@@ -452,7 +471,7 @@ def test_setup_reference_type_switch_preserves_unsaved_definitions(
         encoding="utf-8",
     )
     original_json = path.read_bytes()
-    editor.custom_filter_registry.add_paths((str(path),))
+    _register_saved_filter(editor, path)
     cmds.select(network, joint, replace=True)
     editor.mode_combo.setCurrentIndex(2)
     _events()
@@ -503,7 +522,7 @@ def test_setup_mode_saves_hidden_attribute_without_scene_edit(
     _events()
     path = tmp_path / "setup-rig.json"
     create_custom_filter(path, "Rig")
-    editor.custom_filter_registry.add_paths((str(path),))
+    _register_saved_filter(editor, path)
     cmds.flushUndo()
 
     editor.mode_combo.setCurrentIndex(2)
@@ -553,7 +572,7 @@ def test_setup_mode_saves_hidden_attribute_without_scene_edit(
     index = next(
         index
         for index in range(editor.filter_combo.count())
-        if editor.filter_combo.itemText(index) == "Custom: Rig"
+        if editor.filter_combo.itemText(index) == "Custom: setup-rig"
     )
     editor.filter_combo.setCurrentIndex(index)
     _events()
@@ -561,7 +580,7 @@ def test_setup_mode_saves_hidden_attribute_without_scene_edit(
     editor.mode_combo.setCurrentIndex(2)
     editor.mode_combo.setCurrentIndex(0)
     _events()
-    assert editor.filter_combo.currentText() == "Custom: Rig"
+    assert editor.filter_combo.currentText() == "Custom: setup-rig"
 
 
 def test_setup_order_multi_selection_moves_and_removes_as_one_action(
@@ -594,7 +613,7 @@ def test_setup_order_multi_selection_moves_and_removes_as_one_action(
         encoding="utf-8",
     )
     source = path.read_bytes()
-    editor.custom_filter_registry.add_paths((str(path),))
+    _register_saved_filter(editor, path)
     cmds.flushUndo()
 
     editor.mode_combo.setCurrentIndex(2)
@@ -704,7 +723,7 @@ def test_setup_toolbox_and_selected_candidates_keep_other_definitions(
         encoding="utf-8",
     )
     original_json = path.read_bytes()
-    editor.custom_filter_registry.add_paths((str(path),))
+    _register_saved_filter(editor, path)
     cmds.flushUndo()
 
     editor.resize(640, 800)
@@ -810,7 +829,7 @@ def test_setup_radio_exclusion_saves_explicit_empty_type(
         ),
         encoding="utf-8",
     )
-    editor.custom_filter_registry.add_paths((str(path),))
+    _register_saved_filter(editor, path)
     cmds.flushUndo()
 
     editor.mode_combo.setCurrentIndex(2)
@@ -837,7 +856,7 @@ def test_setup_radio_exclusion_saves_explicit_empty_type(
     index = next(
         index
         for index in range(editor.filter_combo.count())
-        if editor.filter_combo.itemText(index) == "Custom: Empty Bulk"
+        if editor.filter_combo.itemText(index) == "Custom: empty-bulk"
     )
     editor.filter_combo.setCurrentIndex(index)
     _events()
@@ -869,7 +888,7 @@ def test_setup_selected_radio_applies_once_to_selected_attributes(
         encoding="utf-8",
     )
     source = path.read_bytes()
-    editor.custom_filter_registry.add_paths((str(path),))
+    _register_saved_filter(editor, path)
     cmds.flushUndo()
 
     editor.mode_combo.setCurrentIndex(2)
@@ -1113,7 +1132,7 @@ def test_setup_name_range_drag_and_offscreen_selection(
     _events()
     path = tmp_path / "range-rig.json"
     create_custom_filter(path, "Range Rig")
-    editor.custom_filter_registry.add_paths((str(path),))
+    _register_saved_filter(editor, path)
     cmds.flushUndo()
 
     editor.resize(640, 800)
@@ -1178,7 +1197,7 @@ def test_setup_checked_exclude_is_noop_for_undefined_type(
     _events()
     path = tmp_path / "undefined-rig.json"
     create_custom_filter(path, "Undefined Rig")
-    editor.custom_filter_registry.add_paths((str(path),))
+    _register_saved_filter(editor, path)
     cmds.flushUndo()
 
     editor.mode_combo.setCurrentIndex(2)
@@ -1213,12 +1232,12 @@ def test_manager_creates_and_selects_new_filter(
     def choose_path(*_args: object) -> tuple[str, str]:
         """保存ダイアログから検証用の新規pathを返す。"""
         assert Path(cast(str, _args[2])) == (
-            tmp_path / "bd_channel_box" / "custom_filter"
+            tmp_path / "bd_channel_box" / "custom_filter" / "filter"
         )
         assert Path(cast(str, _args[2])).is_dir()
         return str(path), "JSON ファイル (*.json)"
 
-    monkeypatch.setattr(qt.QFileDialog, "getSaveFileName", choose_path)
+    monkeypatch.setattr(dialog_module, "get_save_file_name_near", choose_path)
     editor.manage_custom_filters_action.trigger()
     manager = editor.custom_filter_dialog
     assert manager is not None and manager.isVisible()
@@ -1290,11 +1309,11 @@ def test_setup_creates_filter_without_opening_manager(
     def choose_path(*_args: object) -> tuple[str, str]:
         """設定画面で新規JSONの保存先を選択する。"""
         assert Path(cast(str, _args[2])) == (
-            tmp_path / "bd_channel_box" / "custom_filter"
+            tmp_path / "bd_channel_box" / "custom_filter" / "filter"
         )
         return str(destination), ""
 
-    monkeypatch.setattr(qt.QFileDialog, "getSaveFileName", choose_path)
+    monkeypatch.setattr(dialog_module, "get_save_file_name_near", choose_path)
     editor.setup_panel.new_button.click()
     _events()
 
@@ -1322,7 +1341,7 @@ def test_setup_rename_is_draft_only_until_save_and_can_be_discarded(
         ),
         encoding="utf-8",
     )
-    editor.custom_filter_registry.add_paths((source,))
+    _register_saved_filter(editor, source)
     editor.controller.set_mode("custom_filter_setup")
     panel = editor.setup_panel
     panel.set_target(str(source))
@@ -1352,7 +1371,7 @@ def test_setup_rename_is_draft_only_until_save_and_can_be_discarded(
     destination = tmp_path / "Saved.json"
     assert not source.exists()
     saved = json.loads(destination.read_text(encoding="utf-8"))
-    assert saved["name"] == "Saved"
+    assert saved["schema_version"] == 2 and "name" not in saved
     assert saved["node_types"] == {"transform": ["visibility"], "joint": []}
     assert tuple(tmp_path.glob("*.json")) == (destination,)
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
@@ -1368,7 +1387,7 @@ def test_setup_rename_cancel_invalid_and_unchanged_keep_clean_draft(
     """取消・不正入力・同名確定はJSONと未保存状態を変更しない。"""
     source = tmp_path / "Rig.json"
     create_custom_filter(source, "Rig")
-    editor.custom_filter_registry.add_paths((source,))
+    _register_saved_filter(editor, source)
     editor.controller.set_mode("custom_filter_setup")
     panel = editor.setup_panel
     panel.set_target(str(source))
@@ -1400,6 +1419,7 @@ def test_manager_duplicates_saved_changes_and_all_types_with_copy_suffix(
     registry = editor.custom_filter_registry
     registry.add_paths((source,))
     registry.set_enabled(registry.entries[0].path, False)
+    registry.save()
     panel = editor.setup_panel
     editor.controller.set_mode("custom_filter_setup")
     panel.set_target(str(source))
@@ -1408,7 +1428,7 @@ def test_manager_duplicates_saved_changes_and_all_types_with_copy_suffix(
     panel.draft.ensure_node_type("network")
     panel.draft.set_many_included("transform", ("rotateOrder",), True)
     _queue_filter_name(
-        "Rig", "Updated Rig", field_name="renameCustomFilterName"
+        "source", "Updated Rig", field_name="renameCustomFilterName"
     )
     panel.rename_button.click()
     destination = tmp_path / "Updated Rig_copy.json"
@@ -1423,7 +1443,7 @@ def test_manager_duplicates_saved_changes_and_all_types_with_copy_suffix(
         return str(destination), ""
 
     monkeypatch.setattr(qt.QMessageBox, "warning", save_changes)
-    monkeypatch.setattr(qt.QFileDialog, "getSaveFileName", choose_path)
+    monkeypatch.setattr(dialog_module, "get_save_file_name_near", choose_path)
     editor.manage_custom_filters_action.trigger()
     manager = editor.custom_filter_dialog
     assert manager is not None and manager.isVisible()
@@ -1445,8 +1465,8 @@ def test_manager_duplicates_saved_changes_and_all_types_with_copy_suffix(
         (tmp_path / "Updated Rig.json").read_text(encoding="utf-8")
     )
     copied = json.loads(destination.read_text(encoding="utf-8"))
-    assert original["name"] == "Updated Rig"
-    assert copied["name"] == "Updated Rig_copy"
+    assert original["schema_version"] == copied["schema_version"] == 2
+    assert "name" not in original and "name" not in copied
     assert copied["node_types"] == original["node_types"]
     assert copied["node_types"]["network"] == []
     assert registry.entries[-1].enabled
@@ -1466,10 +1486,13 @@ def test_creation_cancelled_before_dialogs_keeps_draft_and_registration(
     create_custom_filter(source, "Rig")
     registry = editor.custom_filter_registry
     registry.add_paths((source,))
+    registry.save()
     editor.controller.set_mode("custom_filter_setup")
     panel = editor.setup_panel
     panel.set_target(str(source))
-    _queue_filter_name("Rig", "Unsaved", field_name="renameCustomFilterName")
+    _queue_filter_name(
+        "source", "Unsaved", field_name="renameCustomFilterName"
+    )
     panel.rename_button.click()
     before = source.read_bytes()
 
@@ -1488,7 +1511,9 @@ def test_creation_cancelled_before_dialogs_keeps_draft_and_registration(
         raise AssertionError("保存先ダイアログが開きました")
 
     monkeypatch.setattr(qt.QDialog, "exec", reject_dialog)
-    monkeypatch.setattr(qt.QFileDialog, "getSaveFileName", reject_file_dialog)
+    monkeypatch.setattr(
+        dialog_module, "get_save_file_name_near", reject_file_dialog
+    )
     if operation == "setup":
         panel.new_button.click()
     else:
@@ -1528,7 +1553,7 @@ def test_setup_type_editor_works_without_nodes_and_preserves_saved_candidates(
         ),
         encoding="utf-8",
     )
-    editor.custom_filter_registry.add_paths((source,))
+    _register_saved_filter(editor, source)
     editor.controller.set_mode("custom_filter_setup")
     panel = editor.setup_panel
     panel.set_target(str(source))
@@ -1592,7 +1617,7 @@ def test_fixed_type_ignores_selection_and_uses_standard_filter_flags(
         ),
         encoding="utf-8",
     )
-    editor.custom_filter_registry.add_paths((source,))
+    _register_saved_filter(editor, source)
     editor.controller.set_mode("custom_filter_setup")
     panel = editor.setup_panel
     panel.set_target(str(source))
@@ -1636,7 +1661,7 @@ def test_unknown_type_keeps_saved_paths_editable_without_loading_plugin(
         ),
         encoding="utf-8",
     )
-    editor.custom_filter_registry.add_paths((source,))
+    _register_saved_filter(editor, source)
     editor.controller.set_mode("custom_filter_setup")
     panel = editor.setup_panel
     panel.set_target(str(source))

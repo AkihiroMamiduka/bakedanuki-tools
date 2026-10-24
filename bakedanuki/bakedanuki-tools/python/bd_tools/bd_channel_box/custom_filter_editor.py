@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import tempfile
 from collections.abc import Iterable
@@ -13,8 +12,10 @@ from pathlib import Path
 from .custom_filters import (
     CustomFilterDefinition,
     CustomFilterError,
+    filter_display_name,
     load_custom_filter,
     normalize_filter_path,
+    serialize_custom_filter,
 )
 
 __all__ = [
@@ -84,17 +85,6 @@ def _digest(path: Path) -> str:
         ) from error
 
 
-def _serialized(name: str, node_types: dict[str, list[str]]) -> bytes:
-    """既存schemaで検証できるUTF-8 JSONを生成する。"""
-    payload = {
-        "schema_version": 1,
-        "name": name,
-        "node_types": node_types,
-    }
-    source = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-    return source.encode("utf-8")
-
-
 def _write_temporary(path: Path, content: bytes) -> Path:
     """保存先と同じディレクトリに検証用の一時ファイルを書く。"""
     temporary: Path | None = None
@@ -122,21 +112,21 @@ def _write_temporary(path: Path, content: bytes) -> Path:
         ) from error
 
 
-def create_custom_filter(path: str | Path, name: str) -> str:
-    """空の有効なJSONを新規作成し、既存ファイルを上書きしない。"""
-    return _create_definition(path, name, {})
+def create_custom_filter(path: str | Path, name: str | None = None) -> str:
+    """実ファイル名を名前として空のJSONを作り、旧name引数は保存しない。"""
+    return _create_definition(path, {})
 
 
 def duplicate_custom_filter(
-    source: str | Path, path: str | Path, name: str
+    source: str | Path, path: str | Path, name: str | None = None
 ) -> str:
     """元JSONを読み直し、全ノード型と属性順を別ファイルへ複製する。"""
     draft = CustomFilterDraft(source)
-    return _create_definition(path, name, draft.node_types)
+    return _create_definition(path, draft.node_types)
 
 
 def _create_definition(
-    path: str | Path, name: str, node_types: dict[str, list[str]]
+    path: str | Path, node_types: dict[str, list[str]]
 ) -> str:
     """検証済みの定義を新しいJSONとして保存し、既存ファイルを保護する。"""
     normalized = normalize_filter_path(path)
@@ -147,7 +137,16 @@ def _create_definition(
         raise CustomFilterError("保存先のファイルは既に存在します。")
     if not destination.parent.is_dir():
         raise CustomFilterError("保存先のフォルダーが存在しません。")
-    temporary = _write_temporary(destination, _serialized(name, node_types))
+    content = serialize_custom_filter(
+        CustomFilterDefinition(
+            filter_display_name(destination),
+            {
+                node_type: tuple(paths)
+                for node_type, paths in node_types.items()
+            },
+        )
+    )
+    temporary = _write_temporary(destination, content)
     try:
         if destination.exists():
             raise CustomFilterError("保存先のファイルは既に存在します。")
@@ -167,9 +166,7 @@ class CustomFilterDraft:
     def __init__(self, path: str | Path) -> None:
         """現在の共有ファイルを読み、外部更新検出用の基準を保持する。"""
         self.path = normalize_filter_path(path)
-        self._destination_path = str(
-            Path(self.path).with_name(Path(path).expanduser().resolve().name)
-        )
+        self._destination_path = str(Path(path).expanduser().resolve())
         source_digest = _digest(Path(self.path))
         definition = load_custom_filter(self.path)
         if _digest(Path(self.path)) != source_digest:
@@ -177,7 +174,6 @@ class CustomFilterDraft:
                 "共有ファイルが読込中に変更されました。再読込してください。"
             )
         self._source_digest = source_digest
-        self.name = definition.name
         self.node_types = {
             node_type: list(paths)
             for node_type, paths in definition.node_types.items()
@@ -204,6 +200,21 @@ class CustomFilterDraft:
         return self._destination_path
 
     @property
+    def name(self) -> str:
+        """保存予定の実ファイル名から、大文字小文字を保持して名前を返す。"""
+        return Path(self._destination_path).stem
+
+    @property
+    def source_digest(self) -> str:
+        """全体保存が外部更新を検出するための読込時ハッシュを返す。"""
+        return self._source_digest
+
+    @property
+    def source_path(self) -> str:
+        """保存失敗時も元の大小文字で復元できる、保存済み実ファイル名を返す。"""
+        return self._saved[1]
+
+    @property
     def is_dirty(self) -> bool:
         """ファイルへ保存していない定義変更があるか返す。"""
         return self._snapshot() != self._saved
@@ -219,19 +230,16 @@ class CustomFilterDraft:
         )
 
     def set_name(self, name: str) -> None:
-        """表示名を作業中の定義へ設定する。"""
-        if not name.strip() or any(ord(char) < 32 for char in name):
-            raise CustomFilterError(
-                "名前は空でない1行の文字列にしてください。"
-            )
-        self.name = name.strip()
+        """互換入口として、名前と実ファイル名を同時に改名する。"""
+        self.rename(name)
 
     def rename(self, name: str) -> None:
         """表示名と同じフォルダー内の移動先を下書きだけに設定する。"""
         base_name = filter_file_name(name)
-        destination = Path(self.path).with_name(f"{base_name}.json")
+        destination = Path(self.destination_path).with_name(
+            f"{base_name}.json"
+        )
         self._check_destination(destination)
-        self.name = base_name
         self._destination_path = str(destination)
 
     def _check_destination(self, destination: Path) -> None:
@@ -362,11 +370,10 @@ class CustomFilterDraft:
 
     def save(self) -> None:
         """外部変更と移動先の衝突を検査し、名前・全型・属性順を保存する。"""
-        source = Path(self.path)
+        source = Path(self.source_path)
         destination = Path(self.destination_path)
-        self._check_source()
-        self._check_destination(destination)
-        content = _serialized(self.name, self.node_types)
+        self.validate_save()
+        content = self.prepared_content()
         temporary = _write_temporary(destination, content)
         try:
             self._check_source()
@@ -397,7 +404,29 @@ class CustomFilterDraft:
             ) from error
         finally:
             temporary.unlink(missing_ok=True)
+        self.mark_saved()
+
+    def validate_save(self) -> None:
+        """書き込まずに外部更新・改名衝突・定義形式を全体保存前に検査する。"""
+        self._check_source()
+        self._check_destination(Path(self.destination_path))
+        self.prepared_content()
+
+    def prepared_content(self) -> bytes:
+        """全体保存に渡す検証済みのUTF-8 JSONを生成する。"""
+        return serialize_custom_filter(self.definition())
+
+    def mark_saved(self) -> None:
+        """外部トランザクションの保存結果を検証し、下書きの保存基準へ反映する。"""
+        destination = Path(self.destination_path)
+        content = self.prepared_content()
+        digest = hashlib.sha256(content).hexdigest()
+        if _digest(destination) != digest:
+            raise CustomFilterConflictError(
+                "保存先の共有ファイルが外部で変更されました。再読込してください。"
+            )
         self.path = normalize_filter_path(destination)
-        self._source_digest = hashlib.sha256(content).hexdigest()
+        self._destination_path = str(destination.resolve())
+        self._source_digest = digest
         self._explicit_types = set(self.node_types)
         self._saved = self._snapshot()

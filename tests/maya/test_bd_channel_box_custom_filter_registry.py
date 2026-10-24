@@ -1,5 +1,5 @@
 # coding: utf-8
-"""複数登録の表示切替・移動・解除が一度の保存と通知で確定することを検証する。"""
+"""複数登録の編集が一度で下書きへ反映され、明示保存で確定することを検証する。"""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ class _CountingRegistry(CustomFilterRegistry):
 
     def __init__(self) -> None:
         """既存設定を読み込み、書込回数を初期化する。"""
-        super().__init__()
         self.save_count = 0
+        super().__init__()
 
     def _save(self) -> None:
         """書込回数を数えて実設定を更新する。"""
@@ -35,6 +35,7 @@ def _registry(
     registry = _CountingRegistry()
     paths = registry.add_paths(files)
     registry.set_enabled(paths[1], False)
+    registry.save()
     registry.save_count = 0
     return registry, files, paths
 
@@ -60,15 +61,20 @@ def test_registry_aligns_visibility_once_and_restores_settings(
     selected = (paths[3], paths[0], paths[1], paths[3], "unknown")
     assert registry.set_enabled_many(iter(selected), enabled)
     expected = (enabled, enabled, True, enabled, True)
-    assert observed == [expected] and registry.save_count == 1
+    assert observed == [expected] and registry.save_count == 0
     assert tuple(entry.path for entry in registry.entries) == paths
     assert registry.entries[3].error == read_error
-    restored = CustomFilterRegistry()
-    assert tuple(entry.enabled for entry in restored.entries) == expected
+    assert tuple(
+        entry.enabled for entry in CustomFilterRegistry().entries
+    ) == (True, False, True, True, True)
     assert tuple(path.read_bytes() for path in files) == before
     for selection in (selected, (), ("unknown",)):
         assert not registry.set_enabled_many(selection, enabled)
-    assert observed == [expected] and registry.save_count == 1
+    assert observed == [expected] and registry.save_count == 0
+    registry.save()
+    restored = CustomFilterRegistry()
+    assert tuple(entry.enabled for entry in restored.entries) == expected
+    assert registry.save_count == 1
 
 
 @pytest.mark.parametrize(
@@ -108,8 +114,9 @@ def test_registry_moves_selection_once_and_restores_saved_state(
     )
     order = tuple(paths[index] for index in expected)
     assert tuple(entry.path for entry in registry.entries) == order
-    assert registry.save_count == int(changed)
+    assert registry.save_count == 0
     assert observed == ([order] if changed else [])
+    registry.save()
     restored = CustomFilterRegistry()
     assert tuple(entry.path for entry in restored.entries) == order
     assert tuple(
@@ -136,7 +143,11 @@ def test_registry_removes_selection_once_and_keeps_shared_files(
     )
     expected = (paths[0], paths[1], paths[3])
     assert observed == [expected]
-    assert registry.save_count == 1
+    assert registry.save_count == 0
+    assert (
+        tuple(entry.path for entry in CustomFilterRegistry().entries) == paths
+    )
+    registry.save()
     assert (
         tuple(entry.path for entry in CustomFilterRegistry().entries)
         == expected
@@ -162,7 +173,7 @@ def test_registry_empty_unknown_and_single_operations(tmp_path: Path) -> None:
     assert not observed and registry.save_count == 0
     assert registry.move(paths[1], -1)
     assert registry.remove(paths[1])
-    assert registry.save_count == 2 and len(observed) == 2
+    assert registry.save_count == 0 and len(observed) == 2
     assert (
         tuple(entry.path for entry in registry.entries)
         == paths[:1] + paths[2:]

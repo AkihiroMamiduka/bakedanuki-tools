@@ -1,6 +1,7 @@
 # coding: utf-8
 """bdChannelBoxの公開入口とWindow内容の型契約。"""
 
+from pathlib import Path
 from typing import Literal, assert_type
 
 from bd_util.maya.node.inspection import ScalarAttributeInfo
@@ -26,6 +27,9 @@ from bd_util.ui import (
 )
 
 from bd_tools import bd_channel_box
+from bd_tools.bd_channel_box.custom_filter_dialogs import (
+    initial_filter_directory,
+)
 from bd_tools.bd_channel_box.controller import (
     ChannelAttributeFilter,
     ChannelDisplayFilter,
@@ -42,7 +46,10 @@ from bd_tools.bd_channel_box.custom_filter_editor import (
     duplicate_custom_filter,
     filter_file_name,
 )
-from bd_tools.bd_channel_box.custom_filter_registry import CustomFilterRegistry
+from bd_tools.bd_channel_box.custom_filter_registry import (
+    CustomFilterRegistry,
+    PresetRegistration,
+)
 from bd_tools.bd_channel_box.custom_filter_setup import CustomFilterSetupPanel
 from bd_tools.bd_channel_box.filter_preferences import ValueFilterPreferences
 from bd_tools.bd_channel_box.widget import (
@@ -60,6 +67,10 @@ manager = bd_channel_box.show().widget.custom_filter_dialog
 if manager is not None:
     assert_type(manager.show_near(qt.QPoint(100, 100)), None)
     assert_type(manager.tree_widget, qt.QTreeWidget)
+    assert_type(manager.group_tree_widget, qt.QTreeWidget)
+    assert_type(manager.preset_tree_widget, qt.QTreeWidget)
+    assert_type(manager.save_button, qt.QToolButton)
+    assert_type(manager.discard_button, qt.QToolButton)
     assert_type(manager.storage_error_label, qt.QLabel)
     assert_type(manager.new_button, qt.QToolButton)
     assert_type(manager.add_button, qt.QToolButton)
@@ -69,6 +80,18 @@ if manager is not None:
     assert_type(manager.move_down_button, qt.QToolButton)
     assert_type(manager.reload_all_button, qt.QToolButton)
 assert_type(bd_channel_box.show().widget.setup_panel, CustomFilterSetupPanel)
+assert_type(bd_channel_box.show().widget.preset_combo, qt.QComboBox)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.preset_combo, qt.QComboBox
+)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.preset_new_button, qt.QToolButton
+)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.preset_rename_button,
+    qt.QToolButton,
+)
+assert_type(bd_channel_box.show().widget.setup_panel.is_dirty, bool)
 assert_type(
     bd_channel_box.show().widget.setup_panel.tool_box, qt.QtWidgets.QToolBox
 )
@@ -117,9 +140,19 @@ assert_type(ValueFilterPreferences().save("all"), bool)
 assert_type(bd_channel_box.show().widget.setup_panel.up_button, qt.QToolButton)
 assert_type(duplicate_custom_filter("rig.json", "copy.json", "Rig_copy"), str)
 assert_type(filter_file_name("Rig.json"), str)
+assert_type(initial_filter_directory("filter", Path("rig.json")), Path)
 assert_type(CustomFilterDraft("rig.json").destination_path, str)
 assert_type(CustomFilterDraft("rig.json").rename("Renamed"), None)
 assert_type(CustomFilterRegistry().replace_path("old.json", "new.json"), bool)
+assert_type(CustomFilterRegistry().groups, tuple[PresetRegistration, ...])
+assert_type(CustomFilterRegistry().presets, tuple[PresetRegistration, ...])
+assert_type(CustomFilterRegistry().active_group, str | None)
+assert_type(CustomFilterRegistry().active_preset, str | None)
+assert_type(CustomFilterRegistry().select_group(None), bool)
+assert_type(CustomFilterRegistry().select_preset(None), bool)
+assert_type(CustomFilterRegistry().is_dirty, bool)
+assert_type(CustomFilterRegistry().save(), None)
+assert_type(CustomFilterRegistry().discard(), None)
 assert_type(CustomFilterRegistry().remove_many(("one.json", "two.json")), bool)
 assert_type(
     CustomFilterRegistry().set_enabled_many(("one.json", "two.json"), False),

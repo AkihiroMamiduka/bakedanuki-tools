@@ -404,7 +404,7 @@ def test_custom_filter_manager_keeps_errors_and_controls_visibility(
     dock_host: _WorkspaceHost,
     tmp_path: Path,
 ) -> None:
-    """同名登録、読込エラー、管理画面の切替と並べ替えを確認する。"""
+    """旧表示名が同じJSONをファイル名で区別し、読込状態と一覧操作を確認する。"""
     from bd_tools import bd_channel_box
     from bd_tools.bd_channel_box.custom_filters import (
         CustomFilterSelection,
@@ -426,8 +426,8 @@ def test_custom_filter_manager_keeps_errors_and_controls_visibility(
     assert len(widget.custom_filter_registry.entries) == 3
     assert widget.custom_filter_registry.entries[2].error is not None
     assert widget.filter_combo.count() == 7
-    assert first.name in widget.filter_combo.itemText(5)
-    assert second.name in widget.filter_combo.itemText(6)
+    assert widget.filter_combo.itemText(5) == f"Custom: {first.stem}"
+    assert widget.filter_combo.itemText(6) == f"Custom: {second.stem}"
     first_selection = widget.filter_combo.itemData(5)
     assert isinstance(first_selection, CustomFilterSelection)
     assert widget.filter_combo.findData(first_selection) == 5
@@ -443,7 +443,7 @@ def test_custom_filter_manager_keeps_errors_and_controls_visibility(
     assert tree.columnCount() == 3
     assert not tree.rootIsDecorated()
     assert not tree.isSortingEnabled()
-    assert tree.topLevelItem(0).text(0) == "Rig"
+    assert tree.topLevelItem(0).text(0) == first.stem
     assert tree.topLevelItem(0).text(1) == paths[0]
     assert tree.topLevelItem(0).toolTip(1) == paths[0]
     assert tree.topLevelItem(0).text(2) == "読込済み"
@@ -473,6 +473,7 @@ def test_custom_filter_manager_keeps_errors_and_controls_visibility(
     assert widget.filter_combo.currentIndex() == 5
     _write_custom_filter(broken, "Fixed")
     _select_registration_rows(tree, (2,))
+    widget.custom_filter_registry.save()
     dialog.reload_all_button.click()
     assert widget.custom_filter_registry.entries[2].error is None
     assert tree.topLevelItem(2).text(2) == "読込済み"
@@ -482,6 +483,7 @@ def test_custom_filter_manager_keeps_errors_and_controls_visibility(
     assert widget.filter_combo.count() == 8
     assert widget.filter_combo.itemData(6).path == paths[0]
     _select_registration_rows(tree, (1,))
+    widget.custom_filter_registry.save()
     dialog.remove_button.click()
     assert first.is_file()
     assert tuple(
@@ -689,10 +691,15 @@ def test_custom_filter_manager_multiselection_reorders_reloads_and_removes(
     assert not registry.entries[4].enabled
     assert _selected_registration_paths(tree) == (paths[1], paths[3])
     assert tree.currentItem().data(0, qt.Qt.ItemDataRole.UserRole) == paths[1]
-    _write_custom_filter(files[1], "Updated B")
+    _write_custom_filter(files[1], "Updated B", {"transform": ["visibility"]})
+    registry.save()
     dialog.reload_all_button.click()
     assert tree.currentItem() is current_item
-    assert tree.topLevelItem(1).text(0) == "Updated B"
+    assert tree.topLevelItem(1).text(0) == "B"
+    assert registry.entries[1].definition is not None
+    assert registry.entries[1].definition.node_types == {
+        "transform": ("visibility",)
+    }
     assert not registry.entries[4].enabled
     assert _selected_registration_paths(tree) == (paths[1], paths[3])
     assert tree.currentItem().data(0, qt.Qt.ItemDataRole.UserRole) == paths[1]
@@ -723,6 +730,7 @@ def test_custom_filter_manager_multiselection_reorders_reloads_and_removes(
     dialog.move_down_button.click()
     assert registry.entries[-1].path == paths[2]
 
+    registry.save()
     dialog.remove_button.click()
     assert tuple(entry.path for entry in registry.entries) == (
         paths[0],
@@ -779,7 +787,8 @@ def test_custom_filter_manager_visibility_click_preserves_selection_and_scroll(
     assert widget.filter_combo.count() == 5 + len(files) - 1
     assert tuple(path.read_bytes() for path in files) == original_bytes
 
-    # Window再生成でもアイコン操作で保存した表示設定を復元する
+    # Window再生成でも共通保存で確定した表示設定を復元する
+    registry.save()
     bd_channel_box.close()
     _events()
     reopened = bd_channel_box.show().widget
@@ -1080,13 +1089,19 @@ def test_custom_filter_manager_visibility_follows_registration_path_changes(
         (paths[2], True),
         (paths[3], True),
     )
-    _write_custom_filter(files[1], "Updated B")
+    _write_custom_filter(files[1], "Updated B", {"transform": ["visibility"]})
+    registry.save()
     dialog.reload_all_button.click()
-    assert tree.topLevelItem(0).text(0) == "Updated B"
+    assert tree.topLevelItem(0).text(0) == "B"
+    assert registry.entries[0].definition is not None
+    assert registry.entries[0].definition.node_types == {
+        "transform": ("visibility",)
+    }
     _click_registration_eye(tree, 0)
     assert registry.entries[0].enabled
 
     _select_registration_rows(tree, (1,))
+    registry.save()
     dialog.remove_button.click()
     _click_registration_eye(tree, 1)
     assert tuple(
@@ -1150,6 +1165,7 @@ def test_custom_filter_manager_visibility_is_independent_of_read_errors(
 
     # 修復後の再読込はONを引き継ぎ、OFFにしても読込済み状態を維持する
     _write_custom_filter(broken, "Repaired")
+    registry.save()
     dialog.reload_all_button.click()
     assert registry.entries[1].enabled
     assert registry.entries[1].error is None
@@ -1204,7 +1220,7 @@ def test_custom_filter_registrations_survive_reopen_reload_and_layout_reset(
     dock_host: _WorkspaceHost,
     tmp_path: Path,
 ) -> None:
-    """個人設定のパス・順序・ON/OFFをWindow再生成後も維持する。"""
+    """保存済みプリセットのパス・順序・ON/OFFをWindow再生成後も維持する。"""
     import bd_tools
 
     from bd_tools import bd_channel_box
@@ -1218,6 +1234,7 @@ def test_custom_filter_registrations_survive_reopen_reload_and_layout_reset(
     first_path, second_path = registry.add_paths((first, second))
     registry.move(second_path, -1)
     registry.set_enabled(first_path, False)
+    registry.save()
     assert tuple(entry.path for entry in registry.entries) == (
         second_path,
         first_path,
@@ -1232,7 +1249,7 @@ def test_custom_filter_registrations_survive_reopen_reload_and_layout_reset(
         (entry.path, entry.enabled)
         for entry in reopened.widget.custom_filter_registry.entries
     ) == ((second_path, True), (first_path, False))
-    assert reopened.widget.filter_combo.itemText(5) == "Custom: Two"
+    assert reopened.widget.filter_combo.itemText(5) == "Custom: two"
     reset = bd_channel_box.reset_layout()
     _events()
     assert tuple(

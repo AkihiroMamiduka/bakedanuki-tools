@@ -28,11 +28,22 @@ from bd_tools.bd_channel_box.widget import ChannelBoxWidget
 @pytest.fixture
 def editor_factory(
     qt_application: qt.QApplication,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[Callable[[], ChannelBoxWidget]]:
     """同じ個人設定を読む新しいWidgetを作り、各controllerを確実に解放する。"""
     assert qt_application is not None
     cmds.select(clear=True)
     widgets: list[ChannelBoxWidget] = []
+    unexpected_warnings: list[str] = []
+
+    def cancel_unexpected_warning(
+        *_args: object,
+    ) -> qt.QMessageBox.StandardButton:
+        """確認ダイアログによる停止を防ぎ、想定外の警告は最後に検出する。"""
+        unexpected_warnings.append(str(_args[2]))
+        return qt.QMessageBox.StandardButton.Cancel
+
+    monkeypatch.setattr(qt.QMessageBox, "warning", cancel_unexpected_warning)
 
     def create() -> ChannelBoxWidget:
         """設定を新しく読み込むWidgetを作成する。"""
@@ -42,10 +53,12 @@ def editor_factory(
 
     yield create
     for widget in widgets:
+        widget.setup_panel.discard()
         widget.dispose()
         widget.close()
         widget.deleteLater()
     qt.QApplication.sendPostedEvents(None, qt.QEvent.Type.DeferredDelete)
+    assert not unexpected_warnings, unexpected_warnings
 
 
 def _write_filter(path: Path, name: str) -> None:
@@ -93,28 +106,30 @@ def test_other_modes_do_not_overwrite_value_filter(
     assert second.controller.attribute_filter == "all"
 
 
-def test_custom_filter_restores_by_path_after_rename_and_reordering(
+def test_custom_filter_restores_by_path_after_reloading_and_reordering(
     editor_factory: Callable[[], ChannelBoxWidget], tmp_path: Path
 ) -> None:
-    """改名・同名・並べ替え後もpathで復元し、型未定義時も選択を維持する。"""
+    """旧nameの変更と並べ替え後も実ファイル名とpathで選択を復元する。"""
     first = editor_factory()
     source = tmp_path / "one.json"
     other = tmp_path / "two.json"
     _write_filter(source, "Same")
     _write_filter(other, "Same")
     path, _other_path = first.custom_filter_registry.add_paths((source, other))
+    first.custom_filter_registry.save()
     first.filter_combo.setCurrentIndex(5)
     first.custom_filter_registry.move(path, 1)
     _write_filter(source, "Renamed")
     first.custom_filter_registry.reload(path)
+    first.custom_filter_registry.save()
     assert first.filter_combo.currentIndex() == 6
 
     second = editor_factory()
     selection = second.controller.attribute_filter
     assert isinstance(selection, CustomFilterSelection)
     assert selection.path == path
-    assert selection.definition.name == "Renamed"
-    assert second.filter_combo.currentText() == "Custom: Renamed"
+    assert selection.definition.name == "one"
+    assert second.filter_combo.currentText() == "Custom: one"
     node = cmds.createNode("transform", skipSelect=True)
     try:
         cmds.select(node, replace=True)
@@ -140,6 +155,7 @@ def test_unavailable_custom_filter_restores_visible_default(
     source = tmp_path / "rig.json"
     _write_filter(source, "Rig")
     (path,) = first.custom_filter_registry.add_paths((source,))
+    first.custom_filter_registry.save()
     first.filter_combo.setCurrentIndex(5)
     first.dispose()
     if unavailable == "off":
@@ -150,6 +166,8 @@ def test_unavailable_custom_filter_restores_visible_default(
         source.unlink()
     else:
         source.write_text("{}", encoding="utf-8")
+    if unavailable in ("off", "removed"):
+        first.custom_filter_registry.save()
 
     second = editor_factory()
     assert second.controller.attribute_filter == "visible"
@@ -164,10 +182,12 @@ def test_registry_fallback_updates_values_preference_while_other_mode_is_open(
     source = tmp_path / "rig.json"
     _write_filter(source, "Rig")
     (path,) = first.custom_filter_registry.add_paths((source,))
+    first.custom_filter_registry.save()
     first.filter_combo.setCurrentIndex(5)
     first.controller.set_mode("states")
     first.custom_filter_registry.set_enabled(path, False)
     first.custom_filter_registry.set_enabled(path, True)
+    first.custom_filter_registry.save()
     second = editor_factory()
     assert second.controller.values_attribute_filter == "visible"
     assert second.filter_combo.currentData() == "visible"
@@ -204,6 +224,7 @@ def test_file_rename_migrates_both_mode_selections_and_saved_path(
     destination = tmp_path / "after.json"
     _write_filter(source, "Before")
     (old_path,) = first.custom_filter_registry.add_paths((source,))
+    first.custom_filter_registry.save()
     selected = first.filter_combo.itemData(5)
     assert isinstance(selected, CustomFilterSelection)
     first.controller.set_attribute_filter(selected)
@@ -216,6 +237,7 @@ def test_file_rename_migrates_both_mode_selections_and_saved_path(
     _write_filter(destination, "After")
     new_path = normalize_filter_path(destination)
     assert first.custom_filter_registry.replace_path(old_path, new_path)
+    first.custom_filter_registry.save()
     assert len(first.custom_filter_registry.entries) == 1
     assert first.custom_filter_registry.entries[0].path == new_path
     assert not source.exists()
@@ -226,15 +248,15 @@ def test_file_rename_migrates_both_mode_selections_and_saved_path(
         actual = first.controller.attribute_filter
         assert isinstance(actual, CustomFilterSelection)
         assert actual.path == new_path
-        assert actual.definition.name == "After"
-        assert first.filter_combo.currentText() == "Custom: After"
+        assert actual.definition.name == "after"
+        assert first.filter_combo.currentText() == "Custom: after"
         assert first.filter_combo.count() == 6
 
     restored = editor_factory()
     actual = restored.controller.values_attribute_filter
     assert isinstance(actual, CustomFilterSelection)
     assert actual.path == new_path
-    assert restored.filter_combo.currentText() == "Custom: After"
+    assert restored.filter_combo.currentText() == "Custom: after"
 
 
 def test_rename_preserves_unselected_registration_order_and_disabled_state(
@@ -248,6 +270,7 @@ def test_rename_preserves_unselected_registration_order_and_disabled_state(
     first_path, old_path, last_path = first.custom_filter_registry.add_paths(
         sources
     )
+    first.custom_filter_registry.save()
     first.filter_combo.setCurrentIndex(5)
     first.custom_filter_registry.set_enabled(old_path, False)
     events: list[str] = []
@@ -269,6 +292,7 @@ def test_rename_preserves_unselected_registration_order_and_disabled_state(
     new_path = normalize_filter_path(destination)
     assert first.custom_filter_registry.replace_path(old_path, new_path)
     assert events == ["path", "changed"]
+    first.custom_filter_registry.save()
     entries = first.custom_filter_registry.entries
     assert tuple(entry.path for entry in entries) == (
         first_path,

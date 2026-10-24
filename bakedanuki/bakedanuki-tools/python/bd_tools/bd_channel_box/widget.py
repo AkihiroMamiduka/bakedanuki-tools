@@ -44,7 +44,6 @@ from bd_util.ui import (
     qt,
 )
 
-from .._shared.window_position import centered_position_within_screen
 from .controller import (
     ChannelAttributeFilter,
     ChannelBoxController,
@@ -54,14 +53,8 @@ from .controller import (
     RoundTransformKind,
     RotationDestination,
 )
-from .custom_filter_registry import (
-    CustomFilterRegistration,
-    CustomFilterRegistry,
-)
-from .custom_filter_manager_view import (
-    CustomFilterRegistrationTree,
-    create_manager_tool_button,
-)
+from .custom_filter_registry import CustomFilterRegistry
+from .custom_filter_manager import CustomFilterManagerDialog
 from .custom_filter_dialogs import create_registered_filter
 from .custom_filter_setup import CustomFilterSetupPanel
 from .custom_filters import CustomFilterSelection
@@ -1270,442 +1263,6 @@ class _NodeNameLineEdit(StringLineEdit):
             self.setStyleSheet(style)
 
 
-class CustomFilterManagerDialog(qt.QDialog):
-    """共有 JSON の登録、表示切替、順序、読込状態を管理する。"""
-
-    created = qt.Signal(str)
-
-    def __init__(
-        self,
-        registry: CustomFilterRegistry,
-        parent: qt.QWidget,
-        *,
-        confirm_create: Callable[[], bool] | None = None,
-    ) -> None:
-        """登録一覧と操作ボタンを構成し、registryの変更へ追従する。"""
-        super().__init__(parent)
-        self.registry = registry
-        self._confirm_create = confirm_create
-        self.setObjectName("bdChannelBoxCustomFilterManager")
-        self.setWindowTitle("カスタムフィルター管理")
-        self.resize(700, 390)
-        self._placement_anchor: qt.QPoint | None = None
-        self._placement_timer = qt.QTimer(self)
-        self._placement_timer.setSingleShot(True)
-        self._placement_timer.timeout.connect(self._position_near_anchor)
-        tree = CustomFilterRegistrationTree(self)
-        tree.visibility_clicked.connect(self._toggle_filter_visibility)
-        self.tree_widget: qt.QTreeWidget = tree
-        self.tree_widget.setObjectName("customFilterRegistrationTree")
-        self.tree_widget.setAccessibleName("カスタムフィルター登録一覧")
-        # Maya 2027のstubにない見出し引数の型をQt境界で確定する
-        set_header_labels = cast(
-            Callable[[list[str]], None],
-            getattr(self.tree_widget, "setHeaderLabels"),
-        )
-        set_header_labels(["フィルター名", "ファイルパス", "読込状態"])
-        self.tree_widget.setRootIsDecorated(False)
-        self.tree_widget.setUniformRowHeights(True)
-        self.tree_widget.setSortingEnabled(False)
-        self.tree_widget.setSelectionBehavior(
-            qt.QAbstractItemView.SelectionBehavior.SelectRows
-        )
-        self.tree_widget.setSelectionMode(
-            qt.QAbstractItemView.SelectionMode.ExtendedSelection
-        )
-        header = self.tree_widget.header()
-        header.setStretchLastSection(False)
-        header.setSectionsMovable(False)
-        header.setSectionResizeMode(
-            0, qt.QHeaderView.ResizeMode.ResizeToContents
-        )
-        header.setSectionResizeMode(1, qt.QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(
-            2, qt.QHeaderView.ResizeMode.ResizeToContents
-        )
-        self.storage_error_label = qt.QLabel(self)
-        self.storage_error_label.setObjectName("customFilterStorageError")
-        self.storage_error_label.setWordWrap(True)
-        self.storage_error_label.setTextInteractionFlags(
-            qt.Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        self.new_button = create_manager_tool_button(self)
-        self.new_button.setObjectName("createCustomFilterButton")
-        self.add_button = create_manager_tool_button(self)
-        self.duplicate_button = create_manager_tool_button(self)
-        self.duplicate_button.setObjectName("duplicateCustomFilterButton")
-        self.remove_button = create_manager_tool_button(self)
-        self.move_up_button = create_manager_tool_button(self)
-        self.move_down_button = create_manager_tool_button(self)
-        self.reload_all_button = create_manager_tool_button(self)
-        buttons = qt.QHBoxLayout()
-        buttons.setSpacing(4)
-        for button, label, icon_name, fallback in (
-            (
-                self.new_button,
-                "カスタムフィルターを新規作成",
-                "fileNew.png",
-                "fileNew.png",
-            ),
-            (
-                self.add_button,
-                "既存のカスタムフィルターを追加",
-                "item_add.png",
-                "item_add.png",
-            ),
-            (
-                self.duplicate_button,
-                "選択したカスタムフィルターを複製",
-                "polyCopyUV.png",
-                "polyCopyUV.png",
-            ),
-            (
-                self.remove_button,
-                "登録から削除（JSONファイルは削除しません）",
-                "RS_delete.png",
-                "RS_delete.png",
-            ),
-            (
-                self.move_up_button,
-                "上へ",
-                "nodeGrapherArrowUp.png",
-                "arrowUp.png",
-            ),
-            (
-                self.move_down_button,
-                "下へ",
-                "nodeGrapherArrowDown.png",
-                "arrowDown.png",
-            ),
-            (
-                self.reload_all_button,
-                "全て再読込",
-                "UVTkRotateCW.png",
-                "UVTkRotateCW.png",
-            ),
-        ):
-            icon = qt.QIcon(f":/{icon_name}")
-            if icon.pixmap(16, 16).isNull():
-                icon = qt.QIcon(f":/{fallback}")
-            button.setIcon(icon)
-            button.setIconSize(qt.QSize(16, 16))
-            button.setFixedSize(20, 20)
-            button.setToolTip(label)
-            button.setAccessibleName(label)
-            buttons.addWidget(button)
-        buttons.addStretch(1)
-        layout = qt.QVBoxLayout(self)
-        self._content_layout = layout
-        layout.addWidget(
-            qt.QLabel(
-                "目のアイコンで Attribute Filter への表示を切り替えます", self
-            )
-        )
-        layout.addLayout(buttons)
-        layout.addWidget(self.tree_widget, 1)
-        layout.addWidget(self.storage_error_label)
-
-        self.tree_widget.itemChanged.connect(self._change_enabled)
-        self.tree_widget.itemSelectionChanged.connect(self._sync_selection)
-        self.new_button.clicked.connect(self._create_file)
-        self.add_button.clicked.connect(self._add_files)
-        self.duplicate_button.clicked.connect(self._duplicate_selected)
-        self.remove_button.clicked.connect(self._remove_selected)
-        self.move_up_button.clicked.connect(self._move_up)
-        self.move_down_button.clicked.connect(self._move_down)
-        self.reload_all_button.clicked.connect(self.registry.reload_all)
-        self.registry.path_changed.connect(self._replace_path)
-        self.registry.changed.connect(self._refresh)
-        self._refresh()
-
-    def show_near(self, position: qt.QPoint) -> None:
-        """同じ管理画面を指定位置付近へ表示し、画面内へ収めて前面に出す。"""
-        self._placement_anchor = qt.QPoint(position)
-        self.show()
-        self._position_near_anchor()
-        # nativeの外枠寸法が確定した後も、同じ起点で補正する
-        self._placement_timer.start(0)
-        self.raise_()
-        self.activateWindow()
-
-    def _position_near_anchor(self) -> None:
-        """クリックした画面に外枠まで収め、大きすぎる場合だけ縮小する。"""
-        anchor = self._placement_anchor
-        if anchor is None or not self.isVisible():
-            return
-        screen = cast(
-            qt.QtGui.QScreen | None, qt.QtGui.QGuiApplication.screenAt(anchor)
-        )
-        if screen is None:
-            screen = cast(qt.QtGui.QScreen | None, self.screen())
-        if screen is None:
-            screen = cast(
-                qt.QtGui.QScreen | None,
-                qt.QtGui.QGuiApplication.primaryScreen(),
-            )
-        if screen is None:
-            return
-        available = screen.availableGeometry()
-        if available.isEmpty():
-            return
-
-        # タイトルバーと外枠の分を引き、client領域の収まる寸法を求める
-        frame = self.frameGeometry().size()
-        maximum_client = qt.QSize(
-            max(1, available.width() - max(0, frame.width() - self.width())),
-            max(
-                1, available.height() - max(0, frame.height() - self.height())
-            ),
-        )
-        self.setMinimumSize(
-            self._content_layout.totalMinimumSize().boundedTo(maximum_client)
-        )
-        self.resize(self.size().boundedTo(maximum_client))
-        self.move(
-            centered_position_within_screen(
-                anchor, self.frameGeometry().size(), available
-            )
-        )
-
-    @staticmethod
-    def _item_path(item: qt.QTreeWidgetItem | None) -> str | None:
-        """行に保存した正規化済みパスを返す。"""
-        if item is None:
-            return None
-        value: object = item.data(0, qt.Qt.ItemDataRole.UserRole)
-        return value if isinstance(value, str) else None
-
-    def _selected_paths(self) -> tuple[str, ...]:
-        """選択中の登録パスを一覧の順序で返す。"""
-        paths: list[str] = []
-        for index in range(self.tree_widget.topLevelItemCount()):
-            item = self.tree_widget.topLevelItem(index)
-            path = self._item_path(item)
-            if item.isSelected() and path is not None:
-                paths.append(path)
-        return tuple(paths)
-
-    def _single_selected_path(self) -> str | None:
-        """複製元を一意に決められるときだけ選択パスを返す。"""
-        paths = self._selected_paths()
-        return paths[0] if len(paths) == 1 else None
-
-    def _select_path(self, path: str) -> None:
-        """作成・追加した登録を単独選択し、表示範囲へ移す。"""
-        for index in range(self.tree_widget.topLevelItemCount()):
-            item = self.tree_widget.topLevelItem(index)
-            if self._item_path(item) == path:
-                self.tree_widget.setCurrentItem(
-                    item,
-                    0,
-                    qt.QItemSelectionModel.SelectionFlag.ClearAndSelect
-                    | qt.QItemSelectionModel.SelectionFlag.Rows,
-                )
-                self.tree_widget.scrollToItem(item)
-                return
-
-    def _replace_path(self, old_path: str, new_path: str) -> None:
-        """保存済み改名後の再描画に備え、選択行の識別子を更新する。"""
-        blocked = self.tree_widget.blockSignals(True)
-        try:
-            for index in range(self.tree_widget.topLevelItemCount()):
-                item = self.tree_widget.topLevelItem(index)
-                if self._item_path(item) == old_path:
-                    item.setData(0, qt.Qt.ItemDataRole.UserRole, new_path)
-                    break
-        finally:
-            self.tree_widget.blockSignals(blocked)
-
-    def _update_item(
-        self, item: qt.QTreeWidgetItem, entry: CustomFilterRegistration
-    ) -> None:
-        """既存行を破棄せず、名前・チェック・パス・読込結果を更新する。"""
-        name = (
-            entry.definition.name
-            if entry.definition is not None
-            else Path(entry.path).name
-        )
-        item.setText(0, name)
-        item.setText(1, entry.path)
-        item.setText(2, "読込済み" if entry.error is None else "読込エラー")
-        item.setData(0, qt.Qt.ItemDataRole.UserRole, entry.path)
-        item.setFlags(item.flags() | qt.Qt.ItemFlag.ItemIsUserCheckable)
-        item.setCheckState(
-            0,
-            (
-                qt.Qt.CheckState.Checked
-                if entry.enabled
-                else qt.Qt.CheckState.Unchecked
-            ),
-        )
-        item.setToolTip(0, name)
-        item.setToolTip(1, entry.path)
-        item.setToolTip(
-            2, entry.error or "JSONファイルの読込・形式検証に成功しました"
-        )
-
-    def _refresh(self) -> None:
-        """選択・現在行・スクロールを保ち、登録と読込状態を再描画する。"""
-        tree = self.tree_widget
-        entries = self.registry.entries
-        existing_paths = tuple(
-            self._item_path(tree.topLevelItem(index))
-            for index in range(tree.topLevelItemCount())
-        )
-        # チェックのsignal処理中にQtが参照する行を破棄しない
-        if existing_paths == tuple(entry.path for entry in entries):
-            blocked = tree.blockSignals(True)
-            try:
-                for index, entry in enumerate(entries):
-                    self._update_item(tree.topLevelItem(index), entry)
-            finally:
-                tree.blockSignals(blocked)
-            self._sync_selection()
-            return
-
-        selected = set(self._selected_paths())
-        current = cast(qt.QTreeWidgetItem | None, tree.currentItem())
-        current_path = self._item_path(current)
-        old_row = (
-            tree.indexOfTopLevelItem(current) if current is not None else -1
-        )
-        had_rows = bool(tree.topLevelItemCount())
-        scroll = tree.verticalScrollBar().value()
-        blocked = tree.blockSignals(True)
-        try:
-            tree.clear()
-            items: dict[str, qt.QTreeWidgetItem] = {}
-            for entry in entries:
-                item = qt.QTreeWidgetItem(tree)
-                items[entry.path] = item
-                self._update_item(item, entry)
-            restored_current = items.get(current_path or "")
-            if restored_current is None and items:
-                restored_current = tree.topLevelItem(
-                    min(max(old_row, 0), len(items) - 1)
-                )
-            if restored_current is not None:
-                tree.setCurrentItem(
-                    restored_current,
-                    0,
-                    qt.QItemSelectionModel.SelectionFlag.NoUpdate,
-                )
-            surviving = selected.intersection(items)
-            for path in surviving:
-                items[path].setSelected(True)
-            # 削除で選択が全て消えた場合と初回登録時だけ隣接行を選ぶ
-            if (
-                not surviving
-                and (selected or not had_rows)
-                and restored_current is not None
-            ):
-                restored_current.setSelected(True)
-            tree.verticalScrollBar().setValue(scroll)
-        finally:
-            tree.blockSignals(blocked)
-        self._sync_selection()
-
-    def _sync_selection(self) -> None:
-        """選択件数と移動可能範囲に応じて操作と設定保存エラーを示す。"""
-        selected = set(self._selected_paths())
-        entries = self.registry.entries
-        indices = tuple(
-            index
-            for index, item in enumerate(entries)
-            if item.path in selected
-        )
-        entry = next((item for item in entries if item.path in selected), None)
-        self.remove_button.setEnabled(bool(indices))
-        self.duplicate_button.setEnabled(
-            len(indices) == 1
-            and entry is not None
-            and entry.definition is not None
-        )
-        self.move_up_button.setEnabled(bool(indices) and indices[0] > 0)
-        self.move_down_button.setEnabled(
-            bool(indices) and indices[-1] < len(entries) - 1
-        )
-        self.reload_all_button.setEnabled(bool(entries))
-        error = self.registry.storage_error
-        self.storage_error_label.setText(error or "")
-        self.storage_error_label.setToolTip(error or "")
-        self.storage_error_label.setVisible(error is not None)
-
-    def _toggle_filter_visibility(self, clicked: object) -> None:
-        """選択内は全件、選択外は一件を、クリックした登録の反対状態へ揃える。"""
-        if not isinstance(clicked, qt.QTreeWidgetItem):
-            return
-        path = self._item_path(clicked)
-        if path is None:
-            return
-        paths = self._selected_paths() if clicked.isSelected() else (path,)
-        self.registry.set_enabled_many(
-            paths, clicked.checkState(0) != qt.Qt.CheckState.Checked
-        )
-
-    def _change_enabled(self, item: qt.QTreeWidgetItem, column: int) -> None:
-        """名前列のチェック変更だけを個人設定とComboBoxへ反映する。"""
-        path = self._item_path(item)
-        if column == 0 and path is not None:
-            self.registry.set_enabled(
-                path, item.checkState(0) == qt.Qt.CheckState.Checked
-            )
-
-    def _add_files(self) -> None:
-        """任意数の共有 JSON をファイル選択から末尾へ追加する。"""
-        paths, _selected_filter = qt.QFileDialog.getOpenFileNames(
-            self,
-            "カスタムフィルター定義を追加",
-            "",
-            "JSON ファイル (*.json);;すべてのファイル (*)",
-        )
-        if not paths:
-            return
-        added = self.registry.add_paths(paths)
-        if added:
-            self._select_path(added[-1])
-            self._sync_selection()
-
-    def _create_file(self) -> None:
-        """保存先のファイル名で空の定義を作成し、末尾へ登録する。"""
-        if self._confirm_create is not None and not self._confirm_create():
-            return
-        self._register_created(create_registered_filter(self, self.registry))
-
-    def _duplicate_selected(self) -> None:
-        """未保存変更を先に確認し、選択JSONの全型を別名で複製する。"""
-        path = self._single_selected_path()
-        if path is None:
-            return
-        if self._confirm_create is not None and not self._confirm_create():
-            return
-        # 未保存の改名を保存した場合は、更新された登録先から複製する
-        path = self._single_selected_path()
-        if path is None:
-            return
-        self._register_created(
-            create_registered_filter(self, self.registry, source=path)
-        )
-
-    def _register_created(self, path: str | None) -> None:
-        """新規・複製ファイルを選択し、設定モードでの編集を要求する。"""
-        if path is not None:
-            self._select_path(path)
-            self.created.emit(path)
-
-    def _remove_selected(self) -> None:
-        """選択登録をまとめて解除し、JSONファイルは残す。"""
-        self.registry.remove_many(self._selected_paths())
-
-    def _move_up(self) -> None:
-        """選択登録の相対順を保ち、全件を一段上へ移動する。"""
-        self.registry.move_many(self._selected_paths(), -1)
-
-    def _move_down(self) -> None:
-        """選択登録の相対順を保ち、全件を一段下へ移動する。"""
-        self.registry.move_many(self._selected_paths(), 1)
-
-
 class ChannelBoxWidget(qt.QWidget):
     """基準ノードの情報と、スクロール可能な属性入力欄を表示する。"""
 
@@ -1965,6 +1522,8 @@ class ChannelBoxWidget(qt.QWidget):
         self.setup_panel.manage_requested.connect(
             self._show_custom_filter_manager
         )
+        self.preset_combo = self.setup_panel.preset_combo
+        self.setup_panel.set_setup_mode(False)
         self.setup_panel.hide()
         self.empty_label = qt.QLabel("", self)
         self.empty_label.setWordWrap(True)
@@ -1974,6 +1533,9 @@ class ChannelBoxWidget(qt.QWidget):
         layout.setMenuBar(self.menu_bar)
         layout.addLayout(controls_layout)
         layout.addWidget(self.header_separator)
+        # 設定用の全体操作と、全モード共通のプリセット行を同じ場所で使う
+        layout.addWidget(self.setup_panel.global_controls)
+        layout.addWidget(self.setup_panel.preset_controls)
         layout.addLayout(search_layout)
         layout.addWidget(self.filter_fallback_label)
         layout.addLayout(self.header_layout)
@@ -2144,16 +1706,30 @@ class ChannelBoxWidget(qt.QWidget):
                 self.custom_filter_registry,
                 self,
                 confirm_create=self.setup_panel.confirm_leave,
+                save_changes=self.setup_panel.save,
+                discard_changes=self.setup_panel.discard,
+                changes_pending=self.setup_panel.has_unsaved_changes,
             )
+            self.setup_panel.changes_changed.connect(dialog.refresh_save_state)
             dialog.created.connect(self._edit_created_filter)
+            dialog.rename_requested.connect(self._rename_managed_filter)
             self.custom_filter_dialog = dialog
         dialog.show_near(click_position)
 
     def _create_filter_in_setup(self) -> None:
         """設定画面内から、管理画面と同じ手順で新規JSONを作成する。"""
+        position = qt.QCursor.pos()
         if not self.setup_panel.confirm_leave():
             return
-        path = create_registered_filter(self, self.custom_filter_registry)
+        draft = self.setup_panel.draft
+        path = create_registered_filter(
+            self,
+            self.custom_filter_registry,
+            reference_path=(
+                draft.destination_path if draft is not None else None
+            ),
+            position=position,
+        )
         if path is not None:
             self._edit_created_filter(path)
 
@@ -2162,6 +1738,11 @@ class ChannelBoxWidget(qt.QWidget):
         if self.controller.mode != "custom_filter_setup":
             self.controller.set_mode("custom_filter_setup")
         self.setup_panel.set_target(path)
+
+    def _rename_managed_filter(self, path: str, position: qt.QPoint) -> None:
+        """管理画面の選択ファイルを、共通の入力検証で改名する。"""
+        self._edit_created_filter(path)
+        self.setup_panel.rename_filter_at(position)
 
     def _set_wheel_editing_without_focus(self, enabled: bool) -> None:
         """表示中の全値入力行へ、メニューで選んだホイール方針を反映する。"""
@@ -2301,6 +1882,7 @@ class ChannelBoxWidget(qt.QWidget):
         self.table_view.setVisible(not setup)
         self.empty_label.setVisible(not setup)
         self.setup_panel.setVisible(setup)
+        self.setup_panel.set_setup_mode(setup)
         blocked = self.filter_combo.blockSignals(True)
         try:
             self._populate_filter_combo()

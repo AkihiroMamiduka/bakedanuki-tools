@@ -58,6 +58,7 @@ def context_editor(
     )
     editor = ChannelBoxWidget()
     editor.custom_filter_registry.add_paths((source,))
+    editor.custom_filter_registry.save()
     editor.controller.set_mode("custom_filter_setup")
     editor.setup_panel.set_target(str(source))
     editor.setup_panel.tool_box.setCurrentWidget(editor.setup_panel.order_page)
@@ -173,7 +174,7 @@ def test_order_context_removes_selected_paths_and_uses_draft_save_discard(
     assert panel.draft.paths("joint") == ("visibility",)
     assert panel.draft.paths("network") == ()
     assert not panel.order_context_menu.isVisible()
-    assert panel.target_combo.currentText() == "Context Rig *"
+    assert panel.target_combo.currentText() == "context-rig *"
     assert source.read_bytes() == before
     assert cmds.getAttr(f"{node}.rigA") == 0.0
     assert cmds.ls(long=True) == node_names
@@ -181,7 +182,7 @@ def test_order_context_removes_selected_paths_and_uses_draft_save_discard(
 
     # 破棄後に同じ経路で除外し直し、保存後だけ共有JSONを更新する
     panel.discard_button.click()
-    assert panel.target_combo.currentText() == "Context Rig"
+    assert panel.target_combo.currentText() == "context-rig"
     order.setCurrentRow(0)
     order.item(2).setSelected(True)
     _right_click(
@@ -196,7 +197,7 @@ def test_order_context_removes_selected_paths_and_uses_draft_save_discard(
         "network": [],
     }
     assert not panel.save_button.isEnabled()
-    assert panel.target_combo.currentText() == "Context Rig"
+    assert panel.target_combo.currentText() == "context-rig"
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
 

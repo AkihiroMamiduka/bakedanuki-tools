@@ -202,7 +202,9 @@ class _MayaSmokeSession:
                 self._inspect_custom_filter_hotbox,
                 self._inspect_custom_filter_sweep,
                 self._inspect_custom_filter_type_editor,
+                self._inspect_custom_filter_modal_placement,
                 self._inspect_custom_filter_context_menus,
+                self._inspect_custom_filter_presets,
                 self._inspect_reference_only_custom_filter_setup,
                 self._inspect_thousand_node_states,
                 self._inspect_value_filter_preferences,
@@ -1647,8 +1649,8 @@ class _MayaSmokeSession:
             )
 
         # 共有ファイル2件を隔離した出力先へ作り、個人設定に登録する
-        first_path = self.output / "custom-filter-rig.json"
-        second_path = self.output / "custom-filter-controls.json"
+        first_path = self.output / "Rig.json"
+        second_path = self.output / "Controls.json"
         _write_json(
             first_path,
             {
@@ -1677,6 +1679,7 @@ class _MayaSmokeSession:
         )
         if registry.add_paths((first_path, second_path)) != paths:
             raise AssertionError("共有JSONを2件登録できません")
+        registry.save()
         self._flush_gui()
         if tuple(entry.path for entry in registry.entries) != paths:
             raise AssertionError("共有JSONの登録順が保持されません")
@@ -1813,12 +1816,17 @@ class _MayaSmokeSession:
             (dialog.new_button, "fileNew.png"),
             (dialog.add_button, "item_add.png"),
             (dialog.duplicate_button, "polyCopyUV.png"),
+            (dialog.rename_button, "fileTextureEdit.png"),
             (dialog.remove_button, "RS_delete.png"),
             (dialog.move_up_button, "nodeGrapherArrowUp.png"),
             (dialog.move_down_button, "nodeGrapherArrowDown.png"),
+        )
+        global_toolbar = (
+            (dialog.save_button, "fileSave.png"),
+            (dialog.discard_button, "redo_s.png"),
             (dialog.reload_all_button, "UVTkRotateCW.png"),
         )
-        for button, icon_name in toolbar:
+        for button, icon_name in toolbar + global_toolbar:
             available = not qt.QIcon(f":/{icon_name}").pixmap(16, 16).isNull()
             resources[icon_name] = available
             if (
@@ -1837,7 +1845,8 @@ class _MayaSmokeSession:
                 left.x() >= right.x() or left.y() != right.y()
                 for (left, _), (right, _) in zip(toolbar, toolbar[1:])
             )
-            or dialog.new_button.geometry().bottom() >= tree.y()
+            or dialog.new_button.mapToGlobal(qt.QPoint()).y()
+            >= tree.mapToGlobal(qt.QPoint()).y()
         ):
             raise AssertionError(
                 "管理画面のアイコンの上部配置・並び順が不正です"
@@ -1912,6 +1921,7 @@ class _MayaSmokeSession:
         ):
             raise AssertionError("目のtooltipの状態・一括操作案内が不正です")
         qt.QtWidgets.QToolTip.hideText()
+        dialog.save_button.click()
         dialog.reload_all_button.click()
         self._flush_gui()
         if (
@@ -2434,7 +2444,9 @@ class _MayaSmokeSession:
         )
         temporary_paths = tuple(normalize_filter_path(path) for path in files)
         destinations = iter(files[:2])
-        get_save_file = qt.QFileDialog.getSaveFileName
+        from bd_tools.bd_channel_box import custom_filter_dialogs
+
+        get_save_file = custom_filter_dialogs.get_save_file_name_near
 
         def choose_path(*_args: object) -> tuple[str, str]:
             """保存先選択だけを固定し、作成完了後の実Windowを検証する。"""
@@ -2447,7 +2459,7 @@ class _MayaSmokeSession:
         tree = manager.tree_widget
         try:
             # 保存先ダイアログの戻り値を渡し、新規・複製の完了経路を通す
-            qt.QFileDialog.getSaveFileName = choose_path
+            custom_filter_dialogs.get_save_file_name_near = choose_path
             for button, expected_path in (
                 (manager.new_button, temporary_paths[0]),
                 (manager.duplicate_button, temporary_paths[1]),
@@ -2468,7 +2480,8 @@ class _MayaSmokeSession:
                     raise AssertionError(
                         "新規・複製後に管理画面か作成行の選択が失われました"
                     )
-            qt.QFileDialog.getSaveFileName = get_save_file
+                manager.save_button.click()
+            custom_filter_dialogs.get_save_file_name_near = get_save_file
             self.steps.append("manager_create_duplicate_keeps_window_open")
 
             # 読込失敗も独立した状態列へ残し、離れた2行を操作対象にする
@@ -2516,6 +2529,7 @@ class _MayaSmokeSession:
                     "離れた複数登録をまとめて上移動できません"
                 )
             manager.move_down_button.click()
+            manager.save_button.click()
             manager.reload_all_button.click()
             self._flush_gui()
             if (
@@ -2552,9 +2566,10 @@ class _MayaSmokeSession:
                 "manager_multiselection_moves_reloads_and_removes"
             )
         finally:
-            qt.QFileDialog.getSaveFileName = get_save_file
+            custom_filter_dialogs.get_save_file_name_near = get_save_file
             panel.discard()
             registry.remove_many(temporary_paths)
+            registry.save()
             if saved_target is not None:
                 panel.set_target(saved_target)
             self._select_combo_item(
@@ -2798,7 +2813,7 @@ class _MayaSmokeSession:
         saved_selection = tuple(cmds.ls(selection=True, long=True) or ())
         saved_target = panel.draft.path if panel.draft is not None else None
         saved_search = panel.search_edit.text()
-        source = self.output / "type-editor.json"
+        source = self.output / "Type Editor.json"
         path = create_custom_filter(source, "Type Editor")
         draft = CustomFilterDraft(path)
         draft.set_many_included(
@@ -2809,6 +2824,7 @@ class _MayaSmokeSession:
         draft.ensure_node_type("joint")
         draft.save()
         registry.add_paths((path,))
+        registry.save()
 
         try:
             # ノード未選択でも型を選び、標準候補と保存済みpathを編集する
@@ -2871,9 +2887,12 @@ class _MayaSmokeSession:
                     panel.target_combo,
                     "fileTextureEdit.png",
                 ),
-                (panel.save_button, panel.target_combo, "fileSave.png"),
-                (panel.discard_button, panel.target_combo, "redo_s.png"),
-                (panel.manage_button, panel.target_combo, "QR_settings.png"),
+                (panel.preset_new_button, panel.preset_combo, "fileNew.png"),
+                (
+                    panel.preset_rename_button,
+                    panel.preset_combo,
+                    "fileTextureEdit.png",
+                ),
                 (
                     panel.clear_type_button,
                     panel.node_type_combo,
@@ -2903,18 +2922,48 @@ class _MayaSmokeSession:
             toolbar = (
                 panel.new_button,
                 panel.rename_button,
+            )
+            global_toolbar = (
                 panel.save_button,
                 panel.discard_button,
                 panel.manage_button,
             )
+            for button, icon_name in (
+                (panel.save_button, "fileSave.png"),
+                (panel.discard_button, "redo_s.png"),
+                (panel.manage_button, "QR_settings.png"),
+            ):
+                resources[icon_name] = (
+                    not qt.QIcon(f":/{icon_name}").pixmap(16, 16).isNull()
+                )
+                if button.size() != qt.QSize(20, 20) or button.icon().isNull():
+                    raise AssertionError("全体操作のアイコンが描画されません")
             if any(
-                left.x() >= right.x() or left.y() != right.y()
-                for left, right in zip(toolbar, toolbar[1:])
+                left.mapToGlobal(qt.QPoint()).x()
+                >= right.mapToGlobal(qt.QPoint()).x()
+                or left.mapToGlobal(qt.QPoint()).y()
+                != right.mapToGlobal(qt.QPoint()).y()
+                for buttons in (toolbar, global_toolbar)
+                for left, right in zip(buttons, buttons[1:])
+            ) or not (
+                panel.save_button.mapToGlobal(qt.QPoint()).y()
+                < panel.preset_combo.mapToGlobal(qt.QPoint()).y()
+                < panel.target_combo.mapToGlobal(qt.QPoint()).y()
             ):
                 raise AssertionError(
                     "フィルター操作アイコンの順序・行が不正です"
                 )
             background = panel.palette().color(qt.QPalette.ColorRole.Window)
+            if (
+                panel.manage_button.mapTo(
+                    panel.global_controls,
+                    qt.QPoint(panel.manage_button.width(), 0),
+                ).x()
+                != panel.global_controls.width()
+            ):
+                raise AssertionError(
+                    "全体操作のアイコンが右端に揃っていません"
+                )
             for surface in (
                 panel.tool_box,
                 panel.order_page,
@@ -3053,10 +3102,8 @@ class _MayaSmokeSession:
             renamed_source = self.output / "Type Editor Renamed.json"
             if (
                 source.exists()
-                or json.loads(renamed_source.read_text(encoding="utf-8"))[
-                    "name"
-                ]
-                != "Type Editor Renamed"
+                or "name"
+                in json.loads(renamed_source.read_text(encoding="utf-8"))
                 or panel.save_button.isEnabled()
                 or occupied_source.read_bytes() != occupied_content
             ):
@@ -3113,11 +3160,114 @@ class _MayaSmokeSession:
             if saved_target is not None:
                 panel.set_target(saved_target)
             registry.remove(path)
+            registry.save()
             panel.search_edit.setText(saved_search)
             cmds.select(*saved_selection, replace=True)
             self._select_combo_item(
                 widget.mode_combo, widget.mode_combo.findData(saved_mode)
             )
+
+    def _inspect_custom_filter_modal_placement(self) -> None:
+        """四つのモーダル画面を各モニターの端で開き、外枠まで収まるか確認する。"""
+        from bd_util.ui import qt
+
+        widget = self._require_window().widget
+        panel = widget.setup_panel
+        registry = widget.custom_filter_registry
+        saved_mode = widget.controller.mode
+        saved_target = panel.draft.path if panel.draft is not None else None
+        saved_cursor = qt.QCursor.pos()
+        widget.controller.set_mode("custom_filter_setup")
+        registry.save()
+        if panel.draft is None:
+            target = next(
+                entry.path
+                for entry in registry.entries
+                if entry.definition is not None
+            )
+            panel.set_target(target)
+        failures: list[str] = []
+        checked: list[str] = []
+        try:
+            for screen_index, screen in enumerate(
+                qt.QtGui.QGuiApplication.screens()
+            ):
+                available = screen.availableGeometry()
+                for edge, anchor in (
+                    ("top-left", available.topLeft() + qt.QPoint(3, 3)),
+                    (
+                        "bottom-right",
+                        available.bottomRight() - qt.QPoint(3, 3),
+                    ),
+                ):
+                    for key, button, is_file in (
+                        ("preset-new", panel.preset_new_button, True),
+                        ("preset-rename", panel.preset_rename_button, False),
+                        ("filter-new", panel.new_button, True),
+                        ("filter-rename", panel.rename_button, False),
+                    ):
+
+                        def inspect() -> None:
+                            """表示と位置補正が終わった実ダイアログを撮影して閉じる。"""
+                            modal = qt.QApplication.activeModalWidget()
+                            if not isinstance(modal, qt.QDialog):
+                                failures.append(
+                                    f"{key}: モーダル画面がありません"
+                                )
+                                return
+                            try:
+                                if not available.contains(
+                                    modal.frameGeometry()
+                                ):
+                                    failures.append(
+                                        f"{key}: 外枠が画面外です {modal.frameGeometry()}"
+                                    )
+                                if is_file and (
+                                    not isinstance(modal, qt.QFileDialog)
+                                    or not modal.testOption(
+                                        qt.QFileDialog.Option.DontUseNativeDialog
+                                    )
+                                ):
+                                    failures.append(
+                                        f"{key}: Qt版保存画面ではありません"
+                                    )
+                                checked.append(key)
+                                image_path = (
+                                    self.output
+                                    / f"64-dialog-{screen_index}-{edge}-{key}.png"
+                                )
+                                if not modal.grab().save(str(image_path)):
+                                    failures.append(f"{key}: 撮影できません")
+                                self.screenshots.append(str(image_path))
+                            except Exception as error:
+                                failures.append(f"{key}: {error}")
+                            finally:
+                                modal.reject()
+
+                        qt.QCursor.setPos(anchor)
+                        timer = qt.QTimer(widget)
+                        timer.setSingleShot(True)
+                        timer.timeout.connect(inspect)
+                        timer.start(150)
+                        try:
+                            button.click()
+                        finally:
+                            timer.stop()
+                            timer.deleteLater()
+                        if failures:
+                            raise AssertionError("／".join(failures))
+            if len(checked) != len(qt.QtGui.QGuiApplication.screens()) * 8:
+                raise AssertionError(
+                    "四つのモーダル画面を検証しきれていません"
+                )
+            self.steps.append("custom_filter_modal_dialogs_fit_click_screen")
+        finally:
+            qt.QCursor.setPos(saved_cursor)
+            if saved_target is not None:
+                panel.set_target(saved_target)
+            else:
+                panel.target_combo.setCurrentIndex(0)
+            widget.controller.set_mode(saved_mode)
 
     def _inspect_custom_filter_context_menus(self) -> None:
         """設定専用の右クリック、選択範囲、除外と検索の編集キーを実画面で確認する。"""
@@ -3146,6 +3296,7 @@ class _MayaSmokeSession:
         draft.save()
         registry = widget.custom_filter_registry
         registry.add_paths((path,))
+        registry.save()
         try:
             widget.controller.set_mode("custom_filter_setup")
             panel.set_target(path)
@@ -3310,8 +3461,357 @@ class _MayaSmokeSession:
             else:
                 panel.target_combo.setCurrentIndex(0)
             registry.remove(path)
+            registry.save()
             panel.search_edit.setText(saved_search)
             widget.controller.set_mode(saved_mode)
+
+    def _inspect_custom_filter_presets(self) -> None:
+        """実画面で3階層の切替、共通保存・破棄、共有参照の改名を確認する。"""
+        from bd_util.ui import qt
+        from bd_tools.bd_channel_box.custom_filter_editor import (
+            create_custom_filter,
+        )
+        from bd_tools.bd_channel_box.custom_filter_presets import (
+            read_preset_document,
+        )
+        from bd_tools.bd_channel_box.custom_filters import (
+            normalize_filter_path,
+        )
+
+        widget = self._require_window().widget
+        registry = widget.custom_filter_registry
+        panel = widget.setup_panel
+        if not panel.save():
+            raise AssertionError("プリセット検証前の保存に失敗しました")
+        saved_mode = widget.controller.mode
+        saved_group = registry.active_group
+        saved_preset = registry.active_preset
+        saved_target = panel.draft.path if panel.draft is not None else None
+        root = self.output / "preset-qa"
+        for name in ("preset_group", "preset", "filter"):
+            (root / name).mkdir(parents=True, exist_ok=True)
+        first_file = root / "filter" / "Filter Alpha.json"
+        second_file = root / "filter" / "Filter Beta.json"
+        create_custom_filter(first_file, first_file.stem)
+        create_custom_filter(second_file, second_file.stem)
+        first_path = normalize_filter_path(first_file)
+        second_path = normalize_filter_path(second_file)
+        first_group_file = root / "preset_group" / "Group Alpha.json"
+        second_group_file = root / "preset_group" / "Group Beta.json"
+        modeling_file = root / "preset" / "Modeling.json"
+        rigging_file = root / "preset" / "Rigging.json"
+        first_group = registry.create_group(first_group_file)
+        modeling = registry.create_preset(modeling_file)
+        registry.add_paths((first_file, second_file))
+        registry.save()
+        rigging = registry.create_preset(rigging_file)
+        registry.add_paths((second_file, first_file))
+        registry.set_enabled(first_path, False)
+        registry.save()
+        second_group = registry.create_group(second_group_file)
+        registry.add_preset_paths((modeling, rigging))
+        registry.save()
+        registry.select_group(first_group)
+        registry.select_preset(modeling)
+        manager = widget.custom_filter_dialog
+
+        def item_for_path(
+            tree: qt.QTreeWidget, path: str
+        ) -> qt.QTreeWidgetItem:
+            """識別パスから行を取得し、並べ替え後も同じ対象を操作する。"""
+            for index in range(tree.topLevelItemCount()):
+                item = tree.topLevelItem(index)
+                if item.data(0, qt.Qt.ItemDataRole.UserRole) == path:
+                    return item
+            raise AssertionError(f"共有ファイルの行がありません: {path}")
+
+        try:
+            # 全Modeで同じプリセット選択欄を使い、ON/OFFは個別に保持する
+            for mode in ("values", "states", "custom_filter_setup"):
+                widget.controller.set_mode(mode)
+                self._flush_gui()
+                combo = widget.preset_combo
+                if not combo.isVisible() or combo is not panel.preset_combo:
+                    raise AssertionError(
+                        "全Mode共通のプリセット欄がありません"
+                    )
+                self._select_combo_item(combo, combo.findData(rigging))
+                if (
+                    registry.active_preset != rigging
+                    or tuple(
+                        (entry.path, entry.enabled)
+                        for entry in registry.entries
+                    )
+                    != ((second_path, True), (first_path, False))
+                    or widget.filter_combo.count()
+                    != (5 if mode == "custom_filter_setup" else 6)
+                    or panel.global_controls.isVisible()
+                    != (mode == "custom_filter_setup")
+                ):
+                    raise AssertionError(
+                        "プリセット切替後の表示状態が不正です"
+                    )
+                self._select_combo_item(combo, combo.findData(modeling))
+                if tuple(entry.enabled for entry in registry.entries) != (
+                    True,
+                    True,
+                ):
+                    raise AssertionError(
+                        "別プリセットの目の状態が混在しました"
+                    )
+            self.steps.append("presets_switch_shared_row_in_every_mode")
+
+            # 複数選択中も現在行が下段を決め、選択解除では残った選択へ移る
+            widget.manage_custom_filters_action.trigger()
+            manager = widget.custom_filter_dialog
+            if manager is None:
+                raise AssertionError("3階層の管理画面を開けません")
+            group_tree = manager.group_tree_widget
+            preset_tree = manager.preset_tree_widget
+            if manager.splitter.count() != 3:
+                raise AssertionError("管理画面の3段を調整できません")
+            model_item = item_for_path(preset_tree, modeling)
+            rig_item = item_for_path(preset_tree, rigging)
+            preset_tree.setCurrentItem(
+                model_item,
+                0,
+                qt.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+            )
+            rig_item.setSelected(True)
+            preset_tree.setCurrentItem(
+                rig_item, 0, qt.QItemSelectionModel.SelectionFlag.NoUpdate
+            )
+            self._flush_gui()
+            if (
+                len(preset_tree.selectedItems()) != 2
+                or registry.active_preset != rigging
+            ):
+                raise AssertionError(
+                    "複数選択中の現在行が下段に反映されません"
+                )
+            rig_item.setSelected(False)
+            current_after_deselect = preset_tree.currentItem()
+            self.diagnostics.append(
+                {
+                    "preset_deselect_immediate": {
+                        "active": registry.active_preset,
+                        "current": (
+                            current_after_deselect.data(
+                                0, qt.Qt.ItemDataRole.UserRole
+                            )
+                            if current_after_deselect is not None
+                            else None
+                        ),
+                        "current_is_model": current_after_deselect
+                        is model_item,
+                        "selected": [
+                            item.data(0, qt.Qt.ItemDataRole.UserRole)
+                            for item in preset_tree.selectedItems()
+                        ],
+                    }
+                }
+            )
+            self._flush_gui()
+            if (
+                registry.active_preset != modeling
+                or preset_tree.currentItem() is not model_item
+            ):
+                raise AssertionError(
+                    "現在行の選択解除後に残りの選択へ戻りません: "
+                    f"active={registry.active_preset!r}, "
+                    f"expected={modeling!r}, "
+                    f"current_is_model={preset_tree.currentItem() is model_item}"
+                )
+            preset_tree.clearSelection()
+            if (
+                registry.active_preset is not None
+                or manager.tree_widget.topLevelItemCount()
+            ):
+                raise AssertionError("親の選択解除後に下段が空になりません")
+            registry.select_preset(modeling)
+            first_item = item_for_path(group_tree, first_group)
+            second_item = item_for_path(group_tree, second_group)
+            group_tree.setCurrentItem(
+                first_item,
+                0,
+                qt.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+            )
+            second_item.setSelected(True)
+            group_tree.setCurrentItem(
+                second_item, 0, qt.QItemSelectionModel.SelectionFlag.NoUpdate
+            )
+            if (
+                len(group_tree.selectedItems()) != 2
+                or registry.active_group != second_group
+            ):
+                raise AssertionError(
+                    "グループの複数選択と現在行を両立できません"
+                )
+            original_groups = tuple(entry.path for entry in registry.groups)
+            manager.group_move_up_button.click()
+            if (
+                tuple(entry.path for entry in registry.groups)
+                == original_groups
+                or not manager.discard_button.isEnabled()
+            ):
+                raise AssertionError("グループをまとめて移動できません")
+            manager.discard_button.click()
+            if (
+                tuple(entry.path for entry in registry.groups)
+                != original_groups
+            ):
+                raise AssertionError("グループの順序をまとめて破棄できません")
+            registry.select_group(first_group)
+            registry.select_preset(modeling)
+            self._flush_gui()
+            image_path = (
+                self.output / "62-custom-filter-three-level-manager.png"
+            )
+            if not manager.grab().save(str(image_path)):
+                raise RuntimeError("3階層の管理画面を撮影できません")
+            self.screenshots.append(str(image_path))
+            self.steps.append(
+                "preset_manager_current_row_and_multiple_selection"
+            )
+
+            # 目の編集とフィルター本体を同じボタンで保存し、次の編集は一緒に破棄する
+            panel.set_target(first_path)
+            if panel.draft is None:
+                raise AssertionError("共通保存用のフィルターを選択できません")
+            panel.draft.set_included("transform", "visibility", True)
+            registry.set_enabled(second_path, False)
+            panel._refresh_view()
+            manager.save_button.click()
+            saved_content = first_file.read_bytes()
+            if (
+                panel.is_dirty
+                or json.loads(saved_content)["node_types"]
+                != {"transform": ["visibility"]}
+                or tuple(entry.enabled for entry in registry.entries)
+                != (True, False)
+            ):
+                raise AssertionError("構成と属性をまとめて保存できません")
+            if panel.draft is None:
+                raise AssertionError("保存後のフィルター編集対象がありません")
+            panel.draft.set_included("transform", "rotateOrder", True)
+            registry.set_enabled(first_path, False)
+            panel._refresh_view()
+            manager.discard_button.click()
+            if (
+                panel.is_dirty
+                or first_file.read_bytes() != saved_content
+                or panel.draft is None
+                or panel.draft.paths("transform") != ("visibility",)
+                or tuple(entry.enabled for entry in registry.entries)
+                != (True, False)
+            ):
+                raise AssertionError("構成と属性をまとめて破棄できません")
+            self.steps.append("preset_structure_and_filter_share_save_discard")
+
+            # 改名は実ファイルと全登録済み参照元に反映し、相対パスを維持する
+            registry.rename_group(first_group, "GROUP Alpha Renamed")
+            registry.rename_preset(modeling, "Modeling Renamed")
+            panel.draft.rename("Filter Alpha Renamed")
+            panel._refresh_view()
+            manager.save_button.click()
+            renamed_group = first_group_file.with_name(
+                "GROUP Alpha Renamed.json"
+            )
+            renamed_preset = modeling_file.with_name("Modeling Renamed.json")
+            renamed_filter = first_file.with_name("Filter Alpha Renamed.json")
+            if (
+                first_group_file.exists()
+                or modeling_file.exists()
+                or first_file.exists()
+                or not all(
+                    path.is_file()
+                    for path in (renamed_group, renamed_preset, renamed_filter)
+                )
+                or panel.is_dirty
+            ):
+                raise AssertionError("3階層の実ファイル名を変更できません")
+            first_group = normalize_filter_path(renamed_group)
+            modeling = normalize_filter_path(renamed_preset)
+            renamed_filter_path = normalize_filter_path(renamed_filter)
+            for file in (renamed_group, second_group_file):
+                document = read_preset_document(file, "preset_group")
+                if document.error is not None or modeling not in {
+                    ref.path for ref in document.references
+                }:
+                    raise AssertionError(
+                        "プリセット改名後の参照元が更新されません"
+                    )
+            for file in (renamed_preset, rigging_file):
+                document = read_preset_document(file, "preset")
+                if document.error is not None or renamed_filter_path not in {
+                    ref.path for ref in document.references
+                }:
+                    raise AssertionError(
+                        "フィルター改名後の参照元が更新されません"
+                    )
+            for file in (
+                renamed_group,
+                second_group_file,
+                renamed_preset,
+                rigging_file,
+                renamed_filter,
+                second_file,
+            ):
+                payload = json.loads(file.read_text(encoding="utf-8"))
+                if "name" in payload:
+                    raise AssertionError(
+                        "ファイル名と別の表示名がJSONに残りました"
+                    )
+            if (
+                panel.target_combo.currentText() != renamed_filter.stem
+                or widget.preset_combo.currentText() != renamed_preset.stem
+                or not any(
+                    path.name == renamed_group.name
+                    for path in renamed_group.parent.iterdir()
+                )
+                or not any(
+                    path.name == renamed_preset.name
+                    for path in renamed_preset.parent.iterdir()
+                )
+                or not any(
+                    path.name == renamed_filter.name
+                    for path in renamed_filter.parent.iterdir()
+                )
+            ):
+                raise AssertionError(
+                    "実ファイルの大文字小文字と表示名が一致しません"
+                )
+            image_path = (
+                self.output / "63-custom-filter-preset-shared-rename.png"
+            )
+            if not manager.grab().save(str(image_path)):
+                raise RuntimeError(
+                    "共有参照を更新した管理画面を撮影できません"
+                )
+            self.screenshots.append(str(image_path))
+            self.diagnostics.append(
+                {
+                    "shared_preset_group": str(renamed_group),
+                    "shared_preset": str(renamed_preset),
+                    "shared_filter": str(renamed_filter),
+                }
+            )
+            self.steps.append(
+                "preset_rename_updates_every_registered_reference"
+            )
+        finally:
+            panel.discard()
+            registry.select_group(saved_group)
+            registry.select_preset(saved_preset)
+            registry.remove_groups((first_group, second_group))
+            registry.save()
+            if saved_target is not None:
+                panel.set_target(saved_target)
+            else:
+                panel.target_combo.setCurrentIndex(0)
+            widget.controller.set_mode(saved_mode)
+            if manager is not None:
+                manager.hide()
 
     def _inspect_common_header(self) -> None:
         """実画面でモードと検索の有無によらないヘッダー配置と区切りを確認する。"""

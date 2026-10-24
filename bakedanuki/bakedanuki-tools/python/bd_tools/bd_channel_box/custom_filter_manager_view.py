@@ -129,11 +129,15 @@ class CustomFilterRegistrationTree(qt.QTreeWidget):
 
     visibility_clicked = qt.Signal(object)
 
-    def __init__(self, parent: qt.QWidget) -> None:
-        """名前列の描画と、選択から独立した目の操作を準備する。"""
+    def __init__(
+        self, parent: qt.QWidget, *, show_visibility: bool = True
+    ) -> None:
+        """必要な一覧だけに目を描き、Mayaへ届くキー操作を共用する。"""
         super().__init__(parent)
+        self._show_visibility = show_visibility
         self._visibility_delegate = _VisibilityDelegate(self)
-        self.setItemDelegateForColumn(0, self._visibility_delegate)
+        if show_visibility:
+            self.setItemDelegateForColumn(0, self._visibility_delegate)
         self._path_delegate = _FilePathDelegate(self)
         self.setItemDelegateForColumn(1, self._path_delegate)
         self._eye_gesture = False
@@ -141,8 +145,12 @@ class CustomFilterRegistrationTree(qt.QTreeWidget):
         self._eye_press_position = qt.QPoint()
 
     def _visibility_rect(self, index: qt.QModelIndex) -> qt.QRect:
-        """名前セル左端の余白に20四方の操作領域を返す。"""
-        if not index.isValid() or index.column() != 0:
+        """目を持つ一覧だけ、名前セル左端の操作領域を返す。"""
+        if (
+            not self._show_visibility
+            or not index.isValid()
+            or index.column() != 0
+        ):
             return qt.QRect()
         cell = self.visualRect(index)
         rect = qt.QRect(

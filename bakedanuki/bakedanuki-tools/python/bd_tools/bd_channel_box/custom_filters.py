@@ -13,11 +13,16 @@ __all__ = [
     "CustomFilterDefinition",
     "CustomFilterError",
     "CustomFilterSelection",
+    "filter_display_name",
     "load_custom_filter",
     "normalize_filter_path",
+    "serialize_custom_filter",
 ]
 
-_SCHEMA_KEYS = frozenset(("schema_version", "name", "node_types"))
+_SCHEMA_KEYS = {
+    1: frozenset(("schema_version", "name", "node_types")),
+    2: frozenset(("schema_version", "node_types")),
+}
 _INVALID_PATH_CHARACTERS = frozenset("[]*?")
 
 
@@ -27,7 +32,7 @@ class CustomFilterError(ValueError):
 
 @dataclass(frozen=True)
 class CustomFilterDefinition:
-    """JSONから読み込んだ名前とノード型別の正式属性path。"""
+    """実ファイル名から導いた表示名とノード型別の正式属性path。"""
 
     name: str
     node_types: dict[str, tuple[str, ...]]
@@ -52,6 +57,18 @@ def normalize_filter_path(path: str | Path) -> str:
             f"定義ファイルのパスを解決できません: {path}"
         ) from exc
     return os.path.normcase(str(resolved))
+
+
+def filter_display_name(path: str | Path) -> str:
+    """実ファイル名の大文字小文字を保ち、拡張子を除いた表示名を返す。"""
+    if not str(path).strip():
+        raise CustomFilterError("定義ファイルのパスが空です。")
+    try:
+        return Path(path).expanduser().resolve().stem
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CustomFilterError(
+            f"定義ファイルの名前を取得できません: {path}"
+        ) from exc
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -82,14 +99,24 @@ def _valid_attribute_path(value: str) -> bool:
     return all(bool(segment) for segment in relative.split("."))
 
 
-def _parse_definition(raw: object) -> CustomFilterDefinition:
-    """JSONの型と属性path構文を検証して定義へ変換する。"""
+def _parse_definition(raw: object, name: str) -> CustomFilterDefinition:
+    """対応schemaの型と属性pathを検証し、実ファイル由来の名前を付ける。"""
     if not isinstance(raw, dict):
         raise CustomFilterError("JSONの最上位はオブジェクトにしてください。")
     data = cast(dict[str, object], raw)
-    if data.keys() != _SCHEMA_KEYS:
-        missing = _SCHEMA_KEYS - data.keys()
-        extra = data.keys() - _SCHEMA_KEYS
+    if "schema_version" not in data:
+        raise CustomFilterError(
+            "JSONの項目が正しくありません（不足: schema_version）。"
+        )
+    version = data["schema_version"]
+    if type(version) is not int or version not in _SCHEMA_KEYS:
+        raise CustomFilterError(
+            "schema_versionは整数の1または2にしてください。"
+        )
+    keys = _SCHEMA_KEYS[version]
+    if data.keys() != keys:
+        missing = keys - data.keys()
+        extra = data.keys() - keys
         details: list[str] = []
         if missing:
             details.append("不足: " + ", ".join(sorted(missing)))
@@ -99,16 +126,13 @@ def _parse_definition(raw: object) -> CustomFilterDefinition:
             "JSONの項目が正しくありません（" + "／".join(details) + "）。"
         )
 
-    version = data["schema_version"]
-    if type(version) is not int or version != 1:
-        raise CustomFilterError("schema_versionは整数の1にしてください。")
-
-    raw_name = data["name"]
-    if not isinstance(raw_name, str) or not raw_name.strip():
-        raise CustomFilterError("nameは空でない文字列にしてください。")
-    name = raw_name.strip()
-    if any(ord(char) < 32 for char in name):
-        raise CustomFilterError("nameに改行や制御文字は使用できません。")
+    # 旧形式は検証だけを続け、表示名には保存先の実ファイル名を使う
+    if version == 1:
+        raw_name = data["name"]
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            raise CustomFilterError("nameは空でない文字列にしてください。")
+        if any(ord(char) < 32 for char in raw_name.strip()):
+            raise CustomFilterError("nameに改行や制御文字は使用できません。")
 
     raw_node_types = data["node_types"]
     if not isinstance(raw_node_types, dict):
@@ -145,6 +169,20 @@ def _parse_definition(raw: object) -> CustomFilterDefinition:
     return CustomFilterDefinition(name=name, node_types=parsed)
 
 
+def serialize_custom_filter(definition: CustomFilterDefinition) -> bytes:
+    """表示名を重複保存せず、検証済みのschema version 2をUTF-8で返す。"""
+    payload: dict[str, object] = {
+        "schema_version": 2,
+        "node_types": {
+            node_type: list(paths)
+            for node_type, paths in definition.node_types.items()
+        },
+    }
+    _parse_definition(payload, definition.name)
+    source = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    return source.encode("utf-8")
+
+
 def load_custom_filter(path: str | Path) -> CustomFilterDefinition:
     """UTF-8のJSON定義ファイルを読み、形式を検証する。"""
     normalized_path = normalize_filter_path(path)
@@ -156,7 +194,7 @@ def load_custom_filter(path: str | Path) -> CustomFilterDefinition:
         ) from exc
     try:
         raw: object = json.loads(source, object_pairs_hook=_unique_object)
-        return _parse_definition(raw)
+        return _parse_definition(raw, filter_display_name(path))
     except json.JSONDecodeError as exc:
         raise CustomFilterError(
             f"JSONの構文が正しくありません: {normalized_path} "

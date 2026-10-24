@@ -17,8 +17,12 @@ from bd_util.maya.node.inspection import (
     inspect_scalar_attributes_by_type,
     matches_scalar_attribute_display_filter,
 )
-from bd_util.ui import RadioButtonSweep, qt
+from bd_util.ui import RadioButtonSweep, exec_dialog_near, qt
 
+from .custom_filter_dialogs import (
+    create_registered_preset,
+    rename_registered_preset,
+)
 from .custom_filter_editor import CustomFilterDraft, filter_file_name
 from . import config
 from .custom_filter_registry import CustomFilterRegistry
@@ -64,6 +68,7 @@ class CustomFilterSetupPanel(qt.QWidget):
     saved = qt.Signal(str)
     create_requested = qt.Signal()
     manage_requested = qt.Signal()
+    changes_changed = qt.Signal()
 
     def __init__(
         self, registry: CustomFilterRegistry, parent: qt.QWidget
@@ -72,6 +77,8 @@ class CustomFilterSetupPanel(qt.QWidget):
         super().__init__(parent)
         self.registry = registry
         self.draft: CustomFilterDraft | None = None
+        self._preset_path = registry.active_preset
+        self._saving = False
         self._node_name: str | None = None
         self._node_type: str | None = None
         self._selected_node_name: str | None = None
@@ -112,6 +119,21 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.discard_button.setObjectName("customFilterSetupDiscard")
         self.manage_button = qt.QToolButton(self)
         self.manage_button.setObjectName("customFilterSetupManage")
+        self.global_controls = qt.QWidget(self)
+        self.global_controls.setObjectName("customFilterGlobalControls")
+        self.preset_controls = qt.QWidget(self)
+        self.preset_controls.setObjectName("customFilterPresetControls")
+        self.preset_label = qt.QLabel("プリセット:", self.preset_controls)
+        self.preset_combo = qt.QComboBox(self.preset_controls)
+        self.preset_combo.setObjectName("customFilterPresetCombo")
+        self.preset_combo.setAccessibleName("使用するプリセット")
+        self.preset_combo.setSizePolicy(
+            qt.QSizePolicy.Policy.Ignored, qt.QSizePolicy.Policy.Fixed
+        )
+        self.preset_new_button = qt.QToolButton(self.preset_controls)
+        self.preset_new_button.setObjectName("createPresetInSetupButton")
+        self.preset_rename_button = qt.QToolButton(self.preset_controls)
+        self.preset_rename_button.setObjectName("renamePresetInSetupButton")
         self.target_combo.setSizePolicy(
             qt.QSizePolicy.Policy.Ignored, qt.QSizePolicy.Policy.Fixed
         )
@@ -167,7 +189,24 @@ class CustomFilterSetupPanel(qt.QWidget):
                 "fileTextureEdit.png",
                 "fileTextureEdit.png",
             ),
-            (self.save_button, "JSONに保存", "fileSave.png", "fileSave.png"),
+            (
+                self.preset_new_button,
+                "プリセットを新規作成",
+                "fileNew.png",
+                "fileNew.png",
+            ),
+            (
+                self.preset_rename_button,
+                "プリセット名を変更",
+                "fileTextureEdit.png",
+                "fileTextureEdit.png",
+            ),
+            (
+                self.save_button,
+                "変更をすべて保存",
+                "fileSave.png",
+                "fileSave.png",
+            ),
             (
                 self.discard_button,
                 "保存済みの内容に戻す（変更を破棄）",
@@ -234,11 +273,25 @@ class CustomFilterSetupPanel(qt.QWidget):
         for button in (
             self.new_button,
             self.rename_button,
+        ):
+            filter_controls.addWidget(button)
+        global_layout = qt.QHBoxLayout(self.global_controls)
+        global_layout.setContentsMargins(0, 0, 0, 0)
+        global_layout.setSpacing(4)
+        global_layout.addStretch(1)
+        for button in (
             self.save_button,
             self.discard_button,
             self.manage_button,
         ):
-            filter_controls.addWidget(button)
+            global_layout.addWidget(button)
+        preset_layout = qt.QHBoxLayout(self.preset_controls)
+        preset_layout.setContentsMargins(0, 0, 0, 0)
+        preset_layout.setSpacing(4)
+        preset_layout.addWidget(self.preset_label)
+        preset_layout.addWidget(self.preset_combo, 1)
+        preset_layout.addWidget(self.preset_new_button)
+        preset_layout.addWidget(self.preset_rename_button)
         type_controls = qt.QHBoxLayout()
         type_controls.setContentsMargins(0, 0, 0, 0)
         type_controls.setSpacing(4)
@@ -287,6 +340,8 @@ class CustomFilterSetupPanel(qt.QWidget):
         layout = qt.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
+        layout.addWidget(self.global_controls)
+        layout.addWidget(self.preset_controls)
         layout.addLayout(grid)
         layout.addWidget(self.node_label)
         layout.addWidget(self.tool_box, 1)
@@ -295,6 +350,9 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.new_button.clicked.connect(self._request_create)
         self.manage_button.clicked.connect(self._request_manage)
         self.rename_button.clicked.connect(self._rename_filter)
+        self.preset_combo.currentIndexChanged.connect(self._change_preset)
+        self.preset_new_button.clicked.connect(self._create_preset)
+        self.preset_rename_button.clicked.connect(self._rename_preset)
         self.node_type_combo.currentIndexChanged.connect(
             self._change_node_type
         )
@@ -309,13 +367,147 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.save_button.clicked.connect(self.save)
         self.discard_button.clicked.connect(self.discard)
         self.registry.changed.connect(self.refresh_entries)
+        self.registry.path_changed.connect(self._replace_draft_path)
         self.refresh_entries()
         self._refresh_view()
+
+    @property
+    def is_dirty(self) -> bool:
+        """一覧構成か編集中の属性定義に未保存変更があるか返す。"""
+        return self.registry.is_dirty or (
+            self.draft is not None and self.draft.is_dirty
+        )
+
+    def has_unsaved_changes(self) -> bool:
+        """管理画面と共有する未保存状態をコールバックとして返す。"""
+        return self.is_dirty
+
+    def set_setup_mode(self, enabled: bool) -> None:
+        """同じプリセット行を全モードで使い、設定時だけ編集操作を示す。"""
+        self.global_controls.setVisible(enabled)
+        self.preset_label.setText(
+            "編集するプリセット:" if enabled else "プリセット:"
+        )
+        self.preset_new_button.setVisible(enabled)
+        self.preset_rename_button.setVisible(enabled)
+
+    def _refresh_presets(self) -> None:
+        """現在グループのプリセット名・未保存状態と選択を同期する。"""
+        blocked = self.preset_combo.blockSignals(True)
+        try:
+            self.preset_combo.clear()
+            self.preset_combo.addItem("プリセットを選択してください", None)
+            counts = Counter(entry.name for entry in self.registry.presets)
+            for entry in self.registry.presets:
+                label = entry.name
+                if counts[entry.name] > 1:
+                    label += f"（{Path(entry.destination_path).parent}）"
+                if entry.is_dirty:
+                    label += " *"
+                if entry.error is not None:
+                    label += "（読込エラー）"
+                self.preset_combo.addItem(label, entry.path)
+                self.preset_combo.setItemData(
+                    self.preset_combo.count() - 1,
+                    entry.error or entry.destination_path,
+                    qt.Qt.ItemDataRole.ToolTipRole,
+                )
+            self.preset_combo.setCurrentIndex(
+                max(0, self.preset_combo.findData(self.registry.active_preset))
+            )
+        finally:
+            self.preset_combo.blockSignals(blocked)
+        group = next(
+            (
+                entry
+                for entry in self.registry.groups
+                if entry.path == self.registry.active_group
+            ),
+            None,
+        )
+        self.preset_combo.setToolTip(
+            "プリセットグループ: " + group.name
+            if group is not None
+            else "管理画面でプリセットグループを選択してください"
+        )
+
+    def _change_preset(self, index: int) -> None:
+        """未保存編集を確認し、全モード共通の使用プリセットを切り替える。"""
+        path: object = self.preset_combo.itemData(index)
+        if path is not None and not isinstance(path, str):
+            return
+        if path == self.registry.active_preset:
+            return
+        destination = next(
+            (
+                entry.destination_path
+                for entry in self.registry.presets
+                if entry.path == path
+            ),
+            None,
+        )
+        if not self.confirm_leave():
+            self._refresh_presets()
+            return
+        available = {entry.path for entry in self.registry.presets}
+        if path is not None and path not in available:
+            # 保存で改名が確定した場合だけ、新しい識別パスを引き継ぐ
+            renamed = (
+                normalize_filter_path(destination)
+                if destination is not None
+                else None
+            )
+            if renamed not in available:
+                self._refresh_presets()
+                return
+            path = renamed
+        try:
+            self.registry.select_preset(path)
+        except CustomFilterError as error:
+            self.error_occurred.emit(str(error))
+            self._refresh_presets()
+
+    def _create_preset(self) -> None:
+        """編集中プリセットのフォルダーから、空のプリセットを作成する。"""
+        position = qt.QCursor.pos()
+        if not self.confirm_leave():
+            return
+        create_registered_preset(
+            self,
+            self.registry,
+            "preset",
+            reference_path=self.registry.active_preset,
+            position=position,
+        )
+
+    def _rename_preset(self) -> None:
+        """プリセットファイルの改名を共通下書きへ反映する。"""
+        path = self.registry.active_preset
+        if path is not None:
+            rename_registered_preset(self, self.registry, "preset", path)
+
+    def _replace_draft_path(self, old_path: str, new_path: str) -> None:
+        """全体保存中の改名通知では作業中の同じ下書きを維持する。"""
+        if self._saving:
+            return
+        if self.draft is not None and self.draft.path == old_path:
+            self._load_target(new_path)
 
     def refresh_entries(self) -> None:
         """ON/OFFを問わず正常な登録を編集候補へ反映する。"""
         self._finish_radio_sweep()
+        self._refresh_presets()
+        context_changed = self._preset_path != self.registry.active_preset
+        self._preset_path = self.registry.active_preset
         current = self.draft.path if self.draft is not None else None
+        if context_changed and not self._saving:
+            available = {
+                entry.path
+                for entry in self.registry.entries
+                if entry.definition is not None
+            }
+            self._load_target(current if current in available else None)
+            current = self.draft.path if self.draft is not None else None
         blocked = self.target_combo.blockSignals(True)
         try:
             self.target_combo.clear()
@@ -385,17 +577,23 @@ class CustomFilterSetupPanel(qt.QWidget):
             return
         if self.draft is not None and path == self.draft.path:
             return
-        if not self.confirm_leave():
+        previous = self.draft.path if self.draft is not None else None
+        # 同じプリセット内の一覧下書きは維持し、離れる属性編集だけ確認する
+        if (
+            self.draft is not None
+            and self.draft.is_dirty
+            and not self.confirm_leave()
+        ):
             blocked = self.target_combo.blockSignals(True)
             try:
-                old = self._index_for_path(
-                    self.draft.path if self.draft is not None else None
-                )
+                old = self._index_for_path(previous)
                 self.target_combo.setCurrentIndex(max(0, old))
             finally:
                 self.target_combo.blockSignals(blocked)
             return
-        self._load_target(path)
+        available = {entry.path for entry in self.registry.entries}
+        self._load_target(path if path in available else None)
+        self.refresh_entries()
 
     def set_node(
         self,
@@ -1154,6 +1352,10 @@ class CustomFilterSetupPanel(qt.QWidget):
         self._refresh_view()
 
     def _rename_filter(self) -> None:
+        """ボタンを操作した位置を基準に、フィルター名の入力を開く。"""
+        self.rename_filter_at(qt.QCursor.pos())
+
+    def rename_filter_at(self, position: qt.QPoint) -> None:
         """同じフォルダーのファイル名と表示名を検証し、改名予定を下書きへ反映する。"""
         self._finish_radio_sweep()
         draft = self.draft
@@ -1198,7 +1400,10 @@ class CustomFilterSetupPanel(qt.QWidget):
         name_edit.textChanged.connect(validate)
         validate(name_edit.text())
         name_edit.setFocus()
-        accepted = dialog.exec() == qt.QDialog.DialogCode.Accepted
+        accepted = (
+            exec_dialog_near(dialog, position)
+            == qt.QDialog.DialogCode.Accepted
+        )
         name = name_edit.text()
         dialog.deleteLater()
         if not accepted:
@@ -1248,6 +1453,19 @@ class CustomFilterSetupPanel(qt.QWidget):
             draft is not None and node_type is not None and bool(selected_rows)
         )
         self.rename_button.setEnabled(draft is not None)
+        preset_editable = any(
+            entry.path == self.registry.active_preset and entry.error is None
+            for entry in self.registry.presets
+        )
+        self.new_button.setEnabled(preset_editable)
+        self.preset_new_button.setEnabled(
+            any(
+                entry.path == self.registry.active_group
+                and entry.error is None
+                for entry in self.registry.groups
+            )
+        )
+        self.preset_rename_button.setEnabled(preset_editable)
         self.node_type_combo.setEnabled(draft is not None)
         self.up_button.setEnabled(has_order and selected_rows[0] > 0)
         self.down_button.setEnabled(
@@ -1260,63 +1478,45 @@ class CustomFilterSetupPanel(qt.QWidget):
             and node_type is not None
             and draft.has_node_type(node_type)
         )
-        self.save_button.setEnabled(draft is not None and draft.is_dirty)
-        self.discard_button.setEnabled(draft is not None and draft.is_dirty)
+        self.save_button.setEnabled(self.is_dirty)
+        self.discard_button.setEnabled(self.is_dirty)
+        self.changes_changed.emit()
 
     def save(self) -> bool:
-        """改名とJSON編集を保存し、登録先と通常モードの参照を引き継ぐ。"""
+        """全構成と編集中のJSONを保存し、改名先と通常表示の参照を引き継ぐ。"""
         self._finish_radio_sweep()
         draft = self.draft
-        if draft is None:
-            return False
+        self._saving = True
         try:
-            if draft.is_dirty:
-                previous_path = draft.path
-                destination = normalize_filter_path(draft.destination_path)
-                if destination != previous_path and not any(
-                    entry.path == previous_path
-                    for entry in self.registry.entries
-                ):
-                    raise CustomFilterError(
-                        "編集対象の登録がありません。登録し直してから保存してください。"
-                    )
-                if destination != previous_path and any(
-                    entry.path == destination
-                    for entry in self.registry.entries
-                ):
-                    raise CustomFilterError("同名ファイルが登録されています。")
-                draft.save()
-                if draft.path != previous_path:
-                    self.registry.replace_path(
-                        previous_path,
-                        draft.path,
-                        saved_definition=draft.definition(),
-                    )
-                else:
-                    self.registry.reload(draft.path)
+            self.registry.save(draft)
+            if draft is not None:
                 self.saved.emit(draft.path)
         except CustomFilterError as error:
             self.error_occurred.emit(str(error))
             self._refresh_target_label()
             self._sync_buttons()
             return False
+        finally:
+            self._saving = False
         self._refresh_view()
         return True
 
     def discard(self) -> None:
-        """未保存の変更を破棄し、現在の共有JSONを読み直す。"""
-        if self.draft is not None:
-            self._load_target(self.draft.path)
+        """構成と属性定義の未保存変更を破棄し、保存済みの状態へ戻す。"""
+        path = self.draft.path if self.draft is not None else None
+        self.registry.discard()
+        available = {entry.path for entry in self.registry.entries}
+        self._load_target(path if path in available else None)
 
     def confirm_leave(self) -> bool:
         """未保存のまま編集対象やモードを離れる操作を確認する。"""
         self._finish_radio_sweep()
-        if self.draft is None or not self.draft.is_dirty:
+        if not self.is_dirty:
             return True
         choice = qt.QMessageBox.warning(
             self,
-            "未保存のカスタムフィルター",
-            "JSONに保存していない変更があります。",
+            "未保存のカスタムフィルター設定",
+            "グループ・プリセットの構成、またはフィルターに未保存の変更があります。",
             qt.QMessageBox.StandardButton.Save
             | qt.QMessageBox.StandardButton.Discard
             | qt.QMessageBox.StandardButton.Cancel,

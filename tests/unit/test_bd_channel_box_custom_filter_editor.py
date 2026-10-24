@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import sys
@@ -141,7 +142,7 @@ def test_rename_is_draft_until_save_and_commits_file_and_display_name(
     assert source.read_bytes() == original
     assert not destination.exists()
     discarded = CustomFilterDraft(source)
-    assert discarded.name == "Rig"
+    assert discarded.name == "rig"
     assert not discarded.is_dirty
     draft.save()
     assert not source.exists()
@@ -172,7 +173,7 @@ def test_rename_rejects_existing_destination_and_retains_current_draft(
     draft = CustomFilterDraft(source)
     with pytest.raises(CustomFilterError, match="同名ファイルが存在"):
         draft.rename("Other")
-    assert draft.name == "Rig"
+    assert draft.name == "rig"
     assert not draft.is_dirty
     assert other.read_bytes() == before
 
@@ -200,11 +201,109 @@ def test_create_empty_definition_and_refuse_overwrite(tmp_path: Path) -> None:
     path = tmp_path / "rig.json"
     create_custom_filter(path, "Rig")
     assert load_custom_filter(path).node_types == {}
+    assert load_custom_filter(path).name == "rig"
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "schema_version": 2,
+        "node_types": {},
+    }
     source = path.read_bytes()
 
     with pytest.raises(CustomFilterError, match="既に存在"):
         create_custom_filter(path, "Other")
     assert path.read_bytes() == source
+
+
+def test_legacy_draft_prepares_name_free_json_and_commits_external_save(
+    tmp_path: Path,
+) -> None:
+    """旧形式は読込で変えず、全体保存の準備と成功同期で新形式へ移す。"""
+    source = tmp_path / "RigGING.json"
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "Unrelated name",
+                "node_types": {"joint": ["visibility"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    original = source.read_bytes()
+    draft = CustomFilterDraft(source)
+    assert draft.name == "RigGING"
+    assert not draft.is_dirty
+    assert draft.source_digest == hashlib.sha256(original).hexdigest()
+    assert Path(draft.source_path).name == "RigGING.json"
+    assert source.read_bytes() == original
+
+    # 互換の名前設定もファイル改名と一つの下書きとして扱う
+    destination = tmp_path / "Rigging_Copy.json"
+    draft.set_name("Rigging_Copy")
+    assert Path(draft.source_path).name == "RigGING.json"
+    draft.set_included("joint", "rigMode", True)
+    draft.validate_save()
+    content = draft.prepared_content()
+    assert json.loads(content) == {
+        "schema_version": 2,
+        "node_types": {"joint": ["visibility", "rigMode"]},
+    }
+    assert source.read_bytes() == original
+    assert not destination.exists()
+    assert draft.is_dirty
+
+    # 全ファイルを確定した保存担当が最後に下書きの基準を更新する
+    destination.write_bytes(content)
+    source.unlink()
+    draft.mark_saved()
+    assert Path(draft.path) == destination
+    assert draft.name == "Rigging_Copy"
+    assert Path(draft.source_path).name == "Rigging_Copy.json"
+    assert not draft.is_dirty
+    assert draft.source_digest == hashlib.sha256(content).hexdigest()
+
+
+def test_preflight_and_commit_sync_keep_dirty_state_on_conflict(
+    tmp_path: Path,
+) -> None:
+    """全体保存の事前検査と成功同期でも競合内容を守り、下書きを消さない。"""
+    source = tmp_path / "Rig.json"
+    create_custom_filter(source)
+    original = source.read_bytes()
+    draft = CustomFilterDraft(source)
+    draft.set_included("joint", "visibility", True)
+    source.write_bytes(b"external update")
+    with pytest.raises(CustomFilterConflictError, match="外部で変更"):
+        draft.validate_save()
+    assert source.read_bytes() == b"external update"
+    assert draft.is_dirty
+
+    source.write_bytes(original)
+    draft.rename("Renamed")
+    destination = tmp_path / "Renamed.json"
+    destination.write_bytes(b"occupied")
+    with pytest.raises(CustomFilterError, match="同名ファイルが存在"):
+        draft.validate_save()
+    with pytest.raises(CustomFilterConflictError, match="外部で変更"):
+        draft.mark_saved()
+    assert source.read_bytes() == original
+    assert destination.read_bytes() == b"occupied"
+    assert draft.is_dirty
+
+
+def test_preflight_rejects_invalid_attributes_without_writing(
+    tmp_path: Path,
+) -> None:
+    """直接変更された不正な属性定義も、全体保存の事前検査で拒否する。"""
+    source = tmp_path / "Rig.json"
+    create_custom_filter(source)
+    original = source.read_bytes()
+    draft = CustomFilterDraft(source)
+    draft.node_types["joint"] = ["weights[0]"]
+    with pytest.raises(CustomFilterError, match="相対path"):
+        draft.validate_save()
+    assert source.read_bytes() == original
+    assert tuple(tmp_path.iterdir()) == (source,)
+    assert draft.is_dirty
 
 
 def test_duplicate_preserves_all_types_order_empty_definitions_and_source(
@@ -224,7 +323,7 @@ def test_duplicate_preserves_all_types_order_empty_definitions_and_source(
     duplicate_custom_filter(source, copy, "Rig_copy")
 
     definition = load_custom_filter(copy)
-    assert definition.name == "Rig_copy"
+    assert definition.name == "rig-copy"
     assert tuple(definition.node_types) == ("joint", "network", "transform")
     assert definition.node_types == load_custom_filter(source).node_types
     assert source.read_bytes() == before
@@ -496,7 +595,7 @@ def test_external_change_blocks_save(tmp_path: Path) -> None:
 
     with pytest.raises(CustomFilterConflictError, match="外部で変更"):
         draft.save()
-    assert load_custom_filter(path).name == "Other"
+    assert load_custom_filter(path).name == "rig"
 
 
 def test_rename_save_rechecks_destination_created_after_dialog(

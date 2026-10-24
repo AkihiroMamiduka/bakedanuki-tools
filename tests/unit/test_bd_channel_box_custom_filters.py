@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from bd_tools.bd_channel_box.custom_filters import (
         CustomFilterError,
         CustomFilterSelection,
+        filter_display_name,
         load_custom_filter,
         normalize_filter_path,
     )
@@ -42,6 +43,7 @@ else:
     _SPEC.loader.exec_module(_MODULE)
     CustomFilterError = _MODULE.CustomFilterError
     CustomFilterSelection = _MODULE.CustomFilterSelection
+    filter_display_name = _MODULE.filter_display_name
     load_custom_filter = _MODULE.load_custom_filter
     normalize_filter_path = _MODULE.normalize_filter_path
 
@@ -94,6 +96,27 @@ def test_valid_definition_keeps_order_and_first_duplicate(
         setattr(selection, "path", "other.json")
 
 
+@pytest.mark.parametrize("version", (1, 2))
+def test_display_name_uses_actual_file_case_without_rewriting(
+    tmp_path: Path, version: int
+) -> None:
+    """旧形式の保存名を使わず、実ファイル名の大小文字を保って無書込で読む。"""
+    value: dict[str, object] = {
+        "schema_version": version,
+        "node_types": {"transform": ["visibility"]},
+    }
+    if version == 1:
+        value["name"] = "Unrelated display name"
+    path = _write_json(tmp_path / "RigGING.json", value)
+    original = path.read_bytes()
+    normalized = normalize_filter_path(path)
+    definition = load_custom_filter(normalized)
+    assert definition.name == "RigGING"
+    assert filter_display_name(normalized) == "RigGING"
+    assert definition.node_types == {"transform": ("visibility",)}
+    assert path.read_bytes() == original
+
+
 @pytest.mark.parametrize(
     ("value", "message"),
     (
@@ -111,6 +134,11 @@ def test_valid_definition_keeps_order_and_first_duplicate(
         (
             {"schema_version": True, "name": "Rig", "node_types": {}},
             "schema_version",
+        ),
+        ({"schema_version": 3, "node_types": {}}, "schema_version"),
+        (
+            {"schema_version": 2, "name": "Old", "node_types": {}},
+            "未対応",
         ),
         (
             {"schema_version": 1, "name": "  ", "node_types": {}},

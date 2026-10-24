@@ -11,28 +11,44 @@ from typing import cast
 import pytest
 
 from bd_util.ui import qt
+from bd_tools.bd_channel_box import custom_filter_dialogs as dialog_module
 
 from bd_tools.bd_channel_box.custom_filter_dialogs import (
     create_registered_filter,
 )
 from bd_tools.bd_channel_box.custom_filter_editor import create_custom_filter
 from bd_tools.bd_channel_box import custom_filter_registry as registry_module
-from bd_tools.bd_channel_box.custom_filters import normalize_filter_path
+from bd_tools.bd_channel_box.custom_filters import (
+    load_custom_filter,
+    normalize_filter_path,
+)
 from bd_tools.bd_channel_box.widget import ChannelBoxWidget
 
 
 @pytest.fixture
-def editor(qt_application: qt.QApplication) -> Iterator[ChannelBoxWidget]:
+def editor(
+    qt_application: qt.QApplication, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[ChannelBoxWidget]:
     """入力ダイアログを検証するWidgetを作り、監視を確実に解除する。"""
     assert qt_application is not None
+    unexpected_warnings: list[str] = []
+
+    def cancel_unexpected_warning(
+        *_args: object,
+    ) -> qt.QMessageBox.StandardButton:
+        """未想定の確認で待ち続けず、説明を検証結果へ残す。"""
+        unexpected_warnings.append(str(_args[2]))
+        return qt.QMessageBox.StandardButton.Cancel
+
+    monkeypatch.setattr(qt.QMessageBox, "warning", cancel_unexpected_warning)
     widget = ChannelBoxWidget()
     yield widget
-    if widget.setup_panel.draft is not None:
-        widget.setup_panel.discard()
+    widget.setup_panel.discard()
     widget.dispose()
     widget.close()
     widget.deleteLater()
     qt.QApplication.sendPostedEvents(None, qt.QEvent.Type.DeferredDelete)
+    assert not unexpected_warnings, unexpected_warnings
 
 
 @pytest.mark.parametrize("duplicate", (False, True))
@@ -42,7 +58,7 @@ def test_creation_uses_only_save_dialog_and_selected_file_name(
     monkeypatch: pytest.MonkeyPatch,
     duplicate: bool,
 ) -> None:
-    """名前入力を挟まず、実際に選んだファイル名をJSONの表示名へ反映する。"""
+    """名前入力を挟まず、実ファイル名を表示名にしてnameなしJSONを作る。"""
     source = tmp_path / "source.json"
     create_custom_filter(source, "Original")
     destination = tmp_path / "Chosen.json"
@@ -57,7 +73,7 @@ def test_creation_uses_only_save_dialog_and_selected_file_name(
         """保存先以外の名前入力が表示された場合に失敗させる。"""
         raise AssertionError("名前入力ダイアログは不要です")
 
-    monkeypatch.setattr(qt.QFileDialog, "getSaveFileName", choose)
+    monkeypatch.setattr(dialog_module, "get_save_file_name_near", choose)
     monkeypatch.setattr(qt.QDialog, "exec", reject_name_dialog)
     result = create_registered_filter(
         editor,
@@ -67,15 +83,16 @@ def test_creation_uses_only_save_dialog_and_selected_file_name(
     assert result == normalize_filter_path(destination)
     assert len(calls) == 1
     if duplicate:
-        assert calls[0] == tmp_path / "Original_copy.json"
+        assert calls[0] == tmp_path / "source_copy.json"
     else:
-        assert calls[0].name == "custom_filter" and calls[0].is_dir()
-    assert json.loads(destination.read_text(encoding="utf-8"))["name"] == (
-        "Chosen"
-    )
-    assert json.loads(source.read_text(encoding="utf-8"))["name"] == (
-        "Original"
-    )
+        assert calls[0].name == "filter" and calls[0].is_dir()
+        assert calls[0].parent.name == "custom_filter"
+    assert load_custom_filter(destination).name == "Chosen"
+    assert load_custom_filter(source).name == "source"
+    for path in (source, destination):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert payload["schema_version"] == 2
+        assert "name" not in payload
 
 
 @pytest.mark.parametrize("cancel", (False, True))
@@ -102,7 +119,7 @@ def test_existing_destination_is_preserved_and_can_be_reselected(
         messages.append(message)
         return 0
 
-    monkeypatch.setattr(qt.QFileDialog, "getSaveFileName", choose)
+    monkeypatch.setattr(dialog_module, "get_save_file_name_near", choose)
     monkeypatch.setattr(qt.QMessageBox, "warning", warn)
     result = create_registered_filter(editor, editor.custom_filter_registry)
     assert existing.read_bytes() == before
@@ -124,6 +141,7 @@ def test_rename_validates_collision_inline_and_keeps_draft_until_saved(
     original = source.read_bytes()
     occupied = collision.read_bytes()
     editor.custom_filter_registry.add_paths((source, collision))
+    editor.custom_filter_registry.save()
     editor.controller.set_mode("custom_filter_setup")
     panel = editor.setup_panel
     panel.set_target(str(source))
@@ -157,11 +175,9 @@ def test_rename_validates_collision_inline_and_keeps_draft_until_saved(
     assert not (tmp_path / "Renamed.json").exists()
     assert panel.save()
     assert not source.exists()
-    assert (
-        json.loads((tmp_path / "Renamed.json").read_text(encoding="utf-8"))[
-            "name"
-        ]
-        == "Renamed"
+    assert load_custom_filter(tmp_path / "Renamed.json").name == "Renamed"
+    assert "name" not in json.loads(
+        (tmp_path / "Renamed.json").read_text(encoding="utf-8")
     )
     assert collision.read_bytes() == occupied
     assert panel.target_combo.currentData() == normalize_filter_path(
@@ -180,6 +196,7 @@ def test_rename_rechecks_collision_created_after_dialog(
     create_custom_filter(source, "Original")
     original = source.read_bytes()
     editor.custom_filter_registry.add_paths((source,))
+    editor.custom_filter_registry.save()
     editor.controller.set_mode("custom_filter_setup")
     panel = editor.setup_panel
     panel.set_target(str(source))
@@ -214,11 +231,13 @@ def test_same_names_are_distinguished_in_setup_combo(
     for path in (first, second, third):
         create_custom_filter(path, "Same")
     editor.custom_filter_registry.add_paths((first, second, third))
+    editor.custom_filter_registry.save()
     panel = editor.setup_panel
     labels = [panel.target_combo.itemText(index) for index in range(1, 4)]
     assert len(set(labels)) == 3
-    assert all("Same" in label for label in labels)
-    assert "second.json" in labels[1]
+    assert "first" in labels[0] and "first" in labels[2]
+    assert labels[1] == "second"
+    assert all("Same" not in label for label in labels)
     panel.set_target(str(first))
     assert (
         len({panel.target_combo.itemText(index) for index in range(1, 4)}) == 3
@@ -236,6 +255,7 @@ def test_rename_transfers_saved_definition_without_second_file_read(
     create_custom_filter(source, "Original")
     registry = editor.custom_filter_registry
     registry.add_paths((source,))
+    registry.save()
     editor.filter_combo.setCurrentIndex(5)
     editor.controller.set_mode("custom_filter_setup")
     panel = editor.setup_panel
@@ -247,10 +267,11 @@ def test_rename_transfers_saved_definition_without_second_file_read(
         """保存済み定義の引き継ぎ中に不要なファイル読込があれば失敗させる。"""
         raise AssertionError("改名済みJSONを再読込する必要はありません")
 
-    monkeypatch.setattr(
-        registry_module, "load_custom_filter", reject_second_read
-    )
-    assert panel.save()
+    with monkeypatch.context() as save_scope:
+        save_scope.setattr(
+            registry_module, "load_custom_filter", reject_second_read
+        )
+        assert panel.save()
     assert not source.exists() and destination.exists()
     assert registry.entries[0].path == normalize_filter_path(destination)
     assert registry.entries[0].definition == panel.draft.definition()
