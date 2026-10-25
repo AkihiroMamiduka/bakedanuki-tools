@@ -8,15 +8,16 @@ from functools import partial
 from pathlib import Path
 from typing import Literal, cast
 
+from bd_util.maya.ui import get_existing_directory_near
 from bd_util.ui import (
     exec_dialog_near,
-    get_existing_directory_near,
     get_open_file_names_near,
     qt,
 )
 from bd_util.ui import dialog as ui_dialog
 
 from .._shared.window_position import centered_position_within_screen
+from . import config
 from .custom_filter_dialogs import (
     confirm_export_save,
     create_registered_filter,
@@ -1142,6 +1143,10 @@ class CustomFilterManagerDialog(qt.QDialog):
                 "エクスポート先のフォルダーを選択",
                 str(Path(paths[0]).parent),
                 position,
+                initial_size=qt.QSize(
+                    config.EXPORT_DIRECTORY_DIALOG_WIDTH,
+                    config.EXPORT_DIRECTORY_DIALOG_HEIGHT,
+                ),
             )
             if not directory:
                 return
@@ -1156,7 +1161,7 @@ class CustomFilterManagerDialog(qt.QDialog):
                 exec_dialog_near(dialog, position)
             finally:
                 dialog.deleteLater()
-        except CustomFilterError as error:
+        except (CustomFilterError, OSError, RuntimeError, ValueError) as error:
             ui_dialog.warning_near(
                 self, "エクスポートできません", str(error), position
             )

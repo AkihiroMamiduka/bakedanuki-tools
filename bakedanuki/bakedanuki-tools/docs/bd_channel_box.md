@@ -386,6 +386,18 @@ JSONが不正な場合は登録を残してエラーを表示し、修正後に�
 保存失敗時も保存先選択や出力へ進みません。保存で改名した場合は、改名後の同じ対象を出力します。
 保存先の選択を取り消した場合、既に保存した編集内容は保存済みのままです。
 
+保存先選択はMaya標準のフォルダーブラウザーです。上部の`Look In:`へパスを貼り付けて
+Enterで移動し、現在のフルパスを選択・コピーできます。下部の`Directory:`は選択の確定に使います。
+初期サイズは`bd_channel_box/config.py`の次の2値だけで調整します。
+
+```python
+EXPORT_DIRECTORY_DIALOG_WIDTH: int = 1200
+EXPORT_DIRECTORY_DIALOG_HEIGHT: int = 650
+```
+
+幅・高さはQtの論理ピクセルで直接指定し、変更後は`bd_tools.reload_package()`で読み直します。
+画面より大きい場合は作業領域へ収めます。表示後の手動リサイズ・移動も可能です。
+
 選択した保存先の中へ、次の構成で出力します。出力するファイルがない種類のフォルダーは作りません。
 
 ```text
@@ -558,6 +570,8 @@ Custom表示へ反映します。空の`"node_types": {}`も有効で、すべ�
 
 Qtモーダル画面の配置、警告、追加・保存先選択はutilの`exec_dialog_near()`・
 `warning_near()`・`get_open_file_names_near()`・`get_save_file_name_near()`を使用します。
+エクスポート先は`bd_util.maya.ui.get_existing_directory_near()`を使用します。
+このMaya adapterは`fileDialog2`の表示通知を捕捉し、共通の`place_dialog_near()`で配置します。
 入力方法による起点は`DialogAnchorTracker`で取得し、未保存確認の前に記録して
 後続へ渡してください。toolsへ配置処理やイベント監視を重複実装しません。
 TrackerはWidgetの終了処理で`dispose()`し、reload後へ入力監視を残しません。

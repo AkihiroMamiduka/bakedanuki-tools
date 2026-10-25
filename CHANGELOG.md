@@ -9,6 +9,11 @@
 
 ### Changed
 
+- bdChannelBoxのエクスポート先選択を、上部のパス欄を編集できるMaya標準画面へ変更。
+  初期幅・高さは`bd_channel_box/config.py`の`EXPORT_DIRECTORY_DIALOG_WIDTH`と
+  `EXPORT_DIRECTORY_DIALOG_HEIGHT`へ集約し、Qtの論理ピクセルで直接指定する。
+  初期値は1200×650。操作起点への配置と画面端補正を維持し、表示後も手動で調整できる。
+  toolsとutilを更新し、`bd_tools.reload_package(reload_util=True)`で反映する。
 - bdChannelBoxの未保存確認、エラー通知、既存JSONの追加画面を、操作開始位置を
   中心に表示する。画面端ではクリックしたモニターの作業領域へ外枠まで収める。
   確認を挟む後続画面とQt標準の上書き確認も同じ起点を使い、キーボード操作では

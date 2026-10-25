@@ -10,6 +10,7 @@ import pytest
 
 from bd_util.ui import qt
 from bd_tools.bd_channel_box import custom_filter_manager as manager_module
+from bd_tools.bd_channel_box import config
 from bd_tools.bd_channel_box.custom_filter_editor import (
     CustomFilterDraft,
     create_custom_filter,
@@ -221,11 +222,17 @@ def test_export_tracks_the_initial_target_after_save_rename(
         _caption: str,
         directory: str,
         anchor: qt.QPoint,
+        *,
+        initial_size: qt.QSize,
     ) -> str:
         """保存後の親フォルダーと同じ位置で保存先が開くことを確認する。"""
         events.append("folder")
         anchors.append(qt.QPoint(anchor))
         assert Path(directory) == tmp_path
+        assert initial_size == qt.QSize(
+            config.EXPORT_DIRECTORY_DIALOG_WIDTH,
+            config.EXPORT_DIRECTORY_DIALOG_HEIGHT,
+        )
         return str(tmp_path)
 
     def export(
@@ -325,10 +332,13 @@ def test_filter_export_preserves_multiple_paths_and_dialog_anchor(
         _caption: str,
         _directory: str,
         anchor: qt.QPoint,
+        *,
+        initial_size: qt.QSize,
     ) -> str:
         """同じ起点で保存先選択か取消を返す。"""
         events.append("folder")
         anchors.append(qt.QPoint(anchor))
+        assert initial_size == qt.QSize(1100, 620)
         return "" if outcome == "cancel" else str(tmp_path)
 
     def export(
@@ -362,6 +372,8 @@ def test_filter_export_preserves_multiple_paths_and_dialog_anchor(
         return qt.QMessageBox.StandardButton.Ok.value
 
     monkeypatch.setattr(manager, "_dialog_position", position)
+    monkeypatch.setattr(config, "EXPORT_DIRECTORY_DIALOG_WIDTH", 1100)
+    monkeypatch.setattr(config, "EXPORT_DIRECTORY_DIALOG_HEIGHT", 620)
     monkeypatch.setattr(
         manager_module, "confirm_export_save", refuse_confirmation
     )
@@ -378,3 +390,45 @@ def test_filter_export_preserves_multiple_paths_and_dialog_anchor(
         ]
     assert events == expected_events
     assert anchors == [origin] * (1 if outcome == "cancel" else 2)
+
+
+@pytest.mark.parametrize(
+    "error", (RuntimeError("Mayaの画面エラー"), ValueError("初期サイズ"))
+)
+def test_directory_dialog_failure_stops_export_with_a_nearby_warning(
+    manager: CustomFilterManagerDialog,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    """Maya標準画面やサイズ設定の失敗を起点へ通知し、出力を作成しない。"""
+    _select(manager.tree_widget, 0)
+    origin = qt.QPoint(100, 200)
+    warnings: list[str] = []
+
+    def position() -> qt.QPoint:
+        """失敗通知の起点を固定する。"""
+        return qt.QPoint(origin)
+
+    def fail(*_args: object, **_kwargs: object) -> str:
+        """ダイアログ表示または設定値の失敗を再現する。"""
+        raise error
+
+    def refuse_export(*_args: object) -> Path:
+        """保存先の選択に失敗した後のファイル出力を拒否する。"""
+        raise AssertionError("出力へ進んではいけません")
+
+    def warning(
+        _parent: qt.QWidget, _title: str, message: str, anchor: qt.QPoint
+    ) -> None:
+        """開始位置と表示される失敗理由を記録する。"""
+        assert anchor == origin
+        warnings.append(message)
+
+    monkeypatch.setattr(manager, "_dialog_position", position)
+    monkeypatch.setattr(manager_module, "get_existing_directory_near", fail)
+    monkeypatch.setattr(
+        manager_module, "export_custom_filter_files", refuse_export
+    )
+    monkeypatch.setattr(manager_module.ui_dialog, "warning_near", warning)
+    manager.export_button.click()
+    assert warnings == [str(error)]

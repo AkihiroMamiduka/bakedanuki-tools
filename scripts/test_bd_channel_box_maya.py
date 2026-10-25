@@ -3189,10 +3189,11 @@ class _MayaSmokeSession:
             )
 
     def _inspect_custom_filter_export(self) -> None:
-        """右端の配置と、実際の保存確認・保存先選択・移設後の参照を検証する。"""
+        """右端配置、Maya標準のアドレス操作、保存確認と移設後の参照を検証する。"""
         import shutil
 
         from bd_util.ui import qt
+        from bd_tools.bd_channel_box import config
         from bd_tools.bd_channel_box.custom_filter_presets import (
             read_preset_document,
         )
@@ -3250,6 +3251,17 @@ class _MayaSmokeSession:
 
         destination = self.output / "ExportDestination"
         destination.mkdir()
+        navigation = self.output / "パス入力 テスト"
+        child_directory = navigation / "子フォルダー"
+        child_directory.mkdir(parents=True)
+        clipboard = qt.QApplication.clipboard()
+        saved_clipboard = qt.QtCore.QMimeData()
+        original_mime = clipboard.mimeData()
+        if original_mime is not None:
+            for mime_type in original_mime.formats():
+                saved_clipboard.setData(
+                    mime_type, original_mime.data(mime_type)
+                )
         cursor = qt.QCursor.pos()
         screen = qt.QtGui.QGuiApplication.screens()[-1]
         available = screen.availableGeometry()
@@ -3273,6 +3285,12 @@ class _MayaSmokeSession:
             failures: list[str] = []
             chosen = [False]
             confirmed = [False]
+            captured = [False]
+            address_stage = [0]
+            address_focused = [False]
+            address_entered = [False]
+            address_waits = [0]
+            address_enters = [1]
             timer = qt.QTimer(widget)
             safety = qt.QTimer(widget)
             safety.setSingleShot(True)
@@ -3287,19 +3305,189 @@ class _MayaSmokeSession:
                         return
                     if not available.contains(modal.frameGeometry()):
                         failures.append("フォルダー選択が画面外へ出ています")
-                    if (
-                        not modal.testOption(
-                            qt.QFileDialog.Option.DontUseNativeDialog
+                    if modal.metaObject().className() != "QmayaFileDialog":
+                        failures.append("Maya標準画面を開いていません")
+                    frame = modal.frameGeometry().size()
+                    expected_size = qt.QSize(
+                        min(
+                            config.EXPORT_DIRECTORY_DIALOG_WIDTH,
+                            available.width()
+                            - max(0, frame.width() - modal.width()),
+                        ),
+                        min(
+                            config.EXPORT_DIRECTORY_DIALOG_HEIGHT,
+                            available.height()
+                            - max(0, frame.height() - modal.height()),
+                        ),
+                    )
+                    if modal.size() != expected_size:
+                        failures.append(
+                            f"初期サイズが設定値と違います: {modal.size()}"
                         )
-                        or modal.fileMode()
-                        != qt.QFileDialog.FileMode.Directory
-                    ):
-                        failures.append("Qt版フォルダー選択ではありません")
-                    if not chosen[0]:
+                    if not captured[0]:
                         shot = self.output / f"65-export-directory-{key}.png"
                         if not modal.grab().save(str(shot)):
                             failures.append("フォルダー選択を撮影できません")
                         self.screenshots.append(str(shot))
+                        captured[0] = True
+                    # 一度だけ上部欄への貼付・移動・コピーと、一覧からの移動を検証する
+                    if key == "group" and address_stage[0] < 4:
+                        combos = [
+                            c
+                            for c in modal.findChildren(qt.QComboBox)
+                            if c.objectName() == "lookInCombo"
+                        ]
+                        if not combos or not combos[0].isEditable():
+                            failures.append("上部のパス欄が編集できません")
+                            modal.reject()
+                            return
+                        address = combos[0].lineEdit()
+                        if address is None:
+                            failures.append("上部のパス入力欄を取得できません")
+                            modal.reject()
+                            return
+                        if address_stage[0] == 0:
+                            if not address_focused[0]:
+                                modal.raise_()
+                                modal.activateWindow()
+                                self._activate_native_window(modal)
+                                address.setFocus(
+                                    qt.Qt.FocusReason.MouseFocusReason
+                                )
+                                for event_type in (
+                                    qt.QEvent.Type.MouseButtonPress,
+                                    qt.QEvent.Type.MouseButtonRelease,
+                                ):
+                                    self._mouse(
+                                        address,
+                                        event_type,
+                                        address.rect().center(),
+                                    )
+                                address_focused[0] = True
+                                return
+                            address.setFocus(
+                                qt.Qt.FocusReason.MouseFocusReason
+                            )
+                            clipboard.setText(str(navigation))
+                            address.selectAll()
+                            self._key(
+                                combos[0],
+                                qt.Qt.Key.Key_V,
+                                modifiers=qt.Qt.KeyboardModifier.ControlModifier,
+                                text="v",
+                            )
+                            self.diagnostics.append(
+                                {
+                                    "address_pasted": address.text(),
+                                    "address_expected": str(navigation),
+                                    "address_focused": address.hasFocus(),
+                                }
+                            )
+                            address_stage[0] = 1
+                            return
+                        current = normalize_filter_path(
+                            modal.directory().absolutePath()
+                        )
+                        if address_stage[0] == 1:
+                            if not address_entered[0]:
+                                # パス補完の非同期更新が終わってからEnterを送る
+                                address_waits[0] += 1
+                                if address_waits[0] < 5:
+                                    return
+                                address_entered[0] = True
+                                address_waits[0] = 0
+                                self._native_return(address)
+                                return
+                            if current != normalize_filter_path(navigation):
+                                address_waits[0] += 1
+                                if address_waits[0] < 3:
+                                    return
+                                if address_enters[0] < 2:
+                                    # 補完候補の確定が先行した場合は、次のEnterで移動する
+                                    address_enters[0] += 1
+                                    address_waits[0] = 0
+                                    self._native_return(address)
+                                    return
+                                if address_waits[0] < 10:
+                                    return
+                                failures.append(
+                                    "Enterで入力したフォルダーへ移動できません: "
+                                    f"current={current}, input={address.text()}"
+                                )
+                                modal.reject()
+                                return
+                            address.selectAll()
+                            address.copy()
+                            address_stage[0] = 2
+                            return
+                        if address_stage[0] == 2:
+                            if (
+                                normalize_filter_path(clipboard.text())
+                                != current
+                            ):
+                                failures.append(
+                                    "現在のフルパスをコピーできません"
+                                )
+                                modal.reject()
+                                return
+                            tree = next(
+                                (
+                                    t
+                                    for t in modal.findChildren(qt.QTreeView)
+                                    if t.objectName() == "treeView"
+                                ),
+                                None,
+                            )
+                            if tree is None:
+                                failures.append(
+                                    "Maya標準のフォルダー一覧がありません"
+                                )
+                                modal.reject()
+                                return
+                            model = tree.model()
+                            root = tree.rootIndex()
+                            index = next(
+                                (
+                                    model.index(row, 0, root)
+                                    for row in range(model.rowCount(root))
+                                    if model.index(row, 0, root).data()
+                                    == child_directory.name
+                                ),
+                                None,
+                            )
+                            if index is None:
+                                failures.append(
+                                    "移動先の子フォルダーが一覧にありません"
+                                )
+                                modal.reject()
+                                return
+                            point = tree.visualRect(index).center()
+                            for event_type in (
+                                qt.QEvent.Type.MouseButtonPress,
+                                qt.QEvent.Type.MouseButtonRelease,
+                                qt.QEvent.Type.MouseButtonDblClick,
+                                qt.QEvent.Type.MouseButtonRelease,
+                            ):
+                                self._mouse(tree.viewport(), event_type, point)
+                            address_stage[0] = 3
+                            return
+                        if current != normalize_filter_path(
+                            child_directory
+                        ) or (
+                            normalize_filter_path(address.text()) != current
+                        ):
+                            failures.append(
+                                "一覧からの移動で上部パスが更新されません"
+                            )
+                            modal.reject()
+                            return
+                        shot = self.output / "65-maya-directory-address.png"
+                        modal.grab().save(str(shot))
+                        self.screenshots.append(str(shot))
+                        self.steps.append(
+                            "maya_directory_address_paste_enter_copy_and_navigation"
+                        )
+                        address_stage[0] = 4
                     chosen[0] = True
                     modal.setDirectory(str(destination))
                     modal.accept()
@@ -3341,7 +3529,7 @@ class _MayaSmokeSession:
             )
             qt.QCursor.setPos(anchor)
             timer.start(100)
-            safety.start(5000)
+            safety.start(10000)
             try:
                 button.click()
                 if failures:
@@ -3350,6 +3538,10 @@ class _MayaSmokeSession:
                     raise AssertionError("未保存の確認が開きません")
                 if not cancel and not chosen[0]:
                     raise AssertionError("保存先選択が開きません")
+                if key == "group" and address_stage[0] != 4:
+                    raise AssertionError(
+                        f"上部パス欄の検証が未完了です: {address_stage[0]}"
+                    )
             finally:
                 timer.stop()
                 safety.stop()
@@ -3402,6 +3594,7 @@ class _MayaSmokeSession:
         finally:
             manager.hide()
             qt.QCursor.setPos(cursor)
+            clipboard.setMimeData(saved_clipboard)
 
     def _inspect_custom_filter_modal_placement(self) -> None:
         """確認・通知・入力・追加を各モニターの端で開き、外枠と起点を確認する。"""
@@ -6811,6 +7004,37 @@ class _MayaSmokeSession:
             widget.mapToGlobal(position),
         )
         qt.QApplication.sendEvent(widget, event)
+
+    @staticmethod
+    def _activate_native_window(widget: qt.QWidget) -> None:
+        """入力の前段階で、検証対象だけをWindowsの前景Windowへ切り替える。"""
+        import ctypes
+        from ctypes import wintypes
+
+        activate = ctypes.windll.user32.SetForegroundWindow
+        activate.argtypes = [wintypes.HWND]
+        activate.restype = wintypes.BOOL
+        activate(int(widget.window().winId()))
+
+    @staticmethod
+    def _native_return(widget: qt.QWidget) -> None:
+        """対象Windowのqueueだけに、走査コード付きEnter入力を送る。"""
+        import ctypes
+        from ctypes import wintypes
+
+        send = ctypes.windll.user32.PostMessageW
+        send.argtypes = [
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+        ]
+        send.restype = wintypes.BOOL
+        handle = int(widget.window().winId())
+        scan = ctypes.windll.user32.MapVirtualKeyW(0x0D, 0)
+        flags = 1 | (scan << 16)
+        send(handle, 0x0100, 0x0D, flags)
+        send(handle, 0x0101, 0x0D, flags | (1 << 30) | (1 << 31))
 
     @staticmethod
     def _key(

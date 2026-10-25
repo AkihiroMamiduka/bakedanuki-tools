@@ -66,6 +66,8 @@ from bd_tools.bd_channel_box.table import ChannelTableView
 
 assert_type(bd_channel_box.show(), bd_channel_box.ChannelBoxWindow)
 assert_type(bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
+assert_type(bd_channel_box.config.EXPORT_DIRECTORY_DIALOG_WIDTH, int)
+assert_type(bd_channel_box.config.EXPORT_DIRECTORY_DIALOG_HEIGHT, int)
 assert_type(bd_channel_box.show().widget, ChannelBoxWidget)
 manager = bd_channel_box.show().widget.custom_filter_dialog
 if manager is not None:
