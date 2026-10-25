@@ -5,18 +5,26 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import partial
+from pathlib import Path
 from typing import Literal, cast
 
-from bd_util.ui import get_open_file_names_near, qt
+from bd_util.ui import (
+    exec_dialog_near,
+    get_existing_directory_near,
+    get_open_file_names_near,
+    qt,
+)
 from bd_util.ui import dialog as ui_dialog
 
 from .._shared.window_position import centered_position_within_screen
 from .custom_filter_dialogs import (
+    confirm_export_save,
     create_registered_filter,
     create_registered_preset,
     initial_filter_directory,
     rename_registered_preset,
 )
+from .custom_filter_export import ExportKind, export_custom_filter_files
 from .custom_filter_manager_view import (
     CustomFilterRegistrationTree,
     create_manager_tool_button,
@@ -77,7 +85,7 @@ class _PresetSection(qt.QWidget):
     """上位ドキュメントの見出し、操作列、一覧をまとめる。"""
 
     def __init__(self, name: str, parent: qt.QWidget) -> None:
-        """目の切替を持たない一覧と共通の7操作を構成する。"""
+        """目の切替を持たない一覧と編集操作、右端の出力操作を構成する。"""
         super().__init__(parent)
         self.label = qt.QLabel(name, self)
         self.tree = CustomFilterRegistrationTree(self, show_visibility=False)
@@ -90,6 +98,7 @@ class _PresetSection(qt.QWidget):
         self.remove_button = create_manager_tool_button(self)
         self.move_up_button = create_manager_tool_button(self)
         self.move_down_button = create_manager_tool_button(self)
+        self.export_button = create_manager_tool_button(self)
         toolbar = qt.QHBoxLayout()
         toolbar.setSpacing(4)
         for button, label, icon in (
@@ -112,6 +121,12 @@ class _PresetSection(qt.QWidget):
             _configure_button(button, label, icon)
             toolbar.addWidget(button)
         toolbar.addStretch(1)
+        _configure_button(
+            self.export_button,
+            f"選択した{name}と関連ファイルをエクスポート",
+            "UVTkNudgeUp.png",
+        )
+        toolbar.addWidget(self.export_button)
         layout = qt.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
@@ -132,6 +147,7 @@ class CustomFilterManagerDialog(qt.QDialog):
         parent: qt.QWidget,
         *,
         confirm_create: Callable[[qt.QPoint], bool] | None = None,
+        confirm_export: Callable[[qt.QPoint], bool] | None = None,
         save_changes: Callable[[], bool] | None = None,
         discard_changes: Callable[[], None] | None = None,
         changes_pending: Callable[[], bool] | None = None,
@@ -141,6 +157,7 @@ class CustomFilterManagerDialog(qt.QDialog):
         super().__init__(parent)
         self.registry = registry
         self._confirm_create = confirm_create
+        self._confirm_export = confirm_export
         self._dialog_position = dialog_position
         self._save_changes = save_changes
         self._discard_changes = discard_changes
@@ -169,6 +186,8 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.group_remove_button = self._group_section.remove_button
         self.group_move_up_button = self._group_section.move_up_button
         self.group_move_down_button = self._group_section.move_down_button
+        self.group_export_button = self._group_section.export_button
+        self.group_export_button.setObjectName("exportCustomFilterGroupButton")
         self.preset_new_button = self._preset_section.new_button
         self.preset_add_button = self._preset_section.add_button
         self.preset_duplicate_button = self._preset_section.duplicate_button
@@ -176,6 +195,10 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.preset_remove_button = self._preset_section.remove_button
         self.preset_move_up_button = self._preset_section.move_up_button
         self.preset_move_down_button = self._preset_section.move_down_button
+        self.preset_export_button = self._preset_section.export_button
+        self.preset_export_button.setObjectName(
+            "exportCustomFilterPresetButton"
+        )
         self.splitter.addWidget(self._group_section)
         self.splitter.addWidget(self._preset_section)
 
@@ -206,6 +229,8 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.remove_button = create_manager_tool_button(self)
         self.move_up_button = create_manager_tool_button(self)
         self.move_down_button = create_manager_tool_button(self)
+        self.export_button = create_manager_tool_button(self)
+        self.export_button.setObjectName("exportCustomFilterButton")
         buttons = qt.QHBoxLayout()
         buttons.setSpacing(4)
         for button, label, icon in (
@@ -236,6 +261,12 @@ class CustomFilterManagerDialog(qt.QDialog):
             _configure_button(button, label, icon)
             buttons.addWidget(button)
         buttons.addStretch(1)
+        _configure_button(
+            self.export_button,
+            "選択したカスタムフィルターをエクスポート",
+            "UVTkNudgeUp.png",
+        )
+        buttons.addWidget(self.export_button)
         filter_layout.addLayout(buttons)
         filter_layout.addWidget(self.tree_widget, 1)
         self.splitter.addWidget(filter_section)
@@ -303,6 +334,9 @@ class CustomFilterManagerDialog(qt.QDialog):
             section.move_down_button.clicked.connect(
                 partial(self._move_documents, typed_kind, 1)
             )
+            section.export_button.clicked.connect(
+                partial(self._export, typed_kind)
+            )
         self.tree_widget.itemChanged.connect(self._change_enabled)
         self.tree_widget.itemSelectionChanged.connect(self._sync_selection)
         self.new_button.clicked.connect(self._create_file)
@@ -312,6 +346,7 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.remove_button.clicked.connect(self._remove_selected)
         self.move_up_button.clicked.connect(self._move_up)
         self.move_down_button.clicked.connect(self._move_down)
+        self.export_button.clicked.connect(partial(self._export, "filter"))
         self.save_button.clicked.connect(self._save)
         self.discard_button.clicked.connect(self._discard)
         self.reload_all_button.clicked.connect(self._reload_all)
@@ -757,6 +792,7 @@ class CustomFilterManagerDialog(qt.QDialog):
         section.move_down_button.setEnabled(
             bool(indices) and indices[-1] < len(entries) - 1
         )
+        section.export_button.setEnabled(bool(self._export_paths(kind)))
 
     def _sync_selection(self) -> None:
         """フィルター選択に応じて操作と保存エラーを表示する。"""
@@ -786,6 +822,7 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.move_down_button.setEnabled(
             bool(indices) and indices[-1] < len(entries) - 1
         )
+        self.export_button.setEnabled(bool(self._export_paths("filter")))
         self.reload_all_button.setEnabled(bool(self.registry.groups))
         error = self.registry.storage_error
         self.storage_error_label.setText(error or "")
@@ -1029,6 +1066,104 @@ class CustomFilterManagerDialog(qt.QDialog):
     def _move_down(self) -> None:
         """選択フィルターの相対順を保ち、一段下へ移動する。"""
         self.registry.move_many(self._selected_paths(), 1)
+
+    def _export_paths(self, kind: ExportKind) -> tuple[str, ...]:
+        """選択行を全件検証し、上位一件または正常な複数フィルターを返す。"""
+        tree = (
+            self.tree_widget if kind == "filter" else self._section(kind).tree
+        )
+        paths = self._tree_selected_paths(tree)
+        if not paths or len(paths) != len(tree.selectedItems()):
+            return ()
+        if kind == "filter":
+            valid = {
+                entry.path
+                for entry in self.registry.entries
+                if entry.definition is not None and entry.error is None
+            }
+        else:
+            if len(paths) != 1:
+                return ()
+            valid = {
+                entry.path
+                for entry in self._documents(kind)
+                if entry.error is None
+            }
+        return paths if all(path in valid for path in paths) else ()
+
+    def _export_changes_pending(self) -> bool:
+        """構成と外部の属性下書きのどちらかに未保存変更があるか返す。"""
+        return self.registry.is_dirty or (
+            self._changes_pending is not None and self._changes_pending()
+        )
+
+    def _prepare_export(self, position: qt.QPoint) -> bool:
+        """変更を保存するか確認し、保存失敗や変更の残存では出力を止める。"""
+        if self._confirm_export is not None:
+            return self._confirm_export(position) and not (
+                self._export_changes_pending()
+            )
+        if not self._export_changes_pending():
+            return True
+        if not confirm_export_save(self, position):
+            return False
+        if self._save_changes is not None:
+            if not self._save_changes():
+                return False
+        else:
+            self.registry.save()
+        return not self._export_changes_pending()
+
+    def _export(self, kind: ExportKind) -> None:
+        """選択した同一対象を保存後も追跡し、依存ファイル一式を出力する。"""
+        paths = list(self._export_paths(kind))
+        if not paths:
+            return
+        position = self._popup_position()
+
+        def replace_filter(old: str, new: str) -> None:
+            """保存時に改名した選択フィルターを、改名後のパスへ引き継ぐ。"""
+            if kind == "filter":
+                paths[:] = [new if path == old else path for path in paths]
+
+        def replace_document(changed_kind: str, old: str, new: str) -> None:
+            """保存時に改名した選択文書だけを、改名後のパスへ引き継ぐ。"""
+            if kind == changed_kind:
+                paths[:] = [new if path == old else path for path in paths]
+
+        # 保存による選択更新より前に、出力する同一対象の改名を追跡する
+        self.registry.path_changed.connect(replace_filter)
+        self.registry.document_path_changed.connect(replace_document)
+        try:
+            if not self._prepare_export(position):
+                return
+            directory = get_existing_directory_near(
+                self,
+                "エクスポート先のフォルダーを選択",
+                str(Path(paths[0]).parent),
+                position,
+            )
+            if not directory:
+                return
+            destination = export_custom_filter_files(kind, paths, directory)
+            dialog = qt.QMessageBox(self)
+            dialog.setWindowTitle("エクスポート完了")
+            dialog.setIcon(qt.QMessageBox.Icon.Information)
+            dialog.setText("カスタムフィルターの関連ファイルを出力しました。")
+            dialog.setInformativeText(str(destination))
+            dialog.setStandardButtons(qt.QMessageBox.StandardButton.Ok)
+            try:
+                exec_dialog_near(dialog, position)
+            finally:
+                dialog.deleteLater()
+        except CustomFilterError as error:
+            ui_dialog.warning_near(
+                self, "エクスポートできません", str(error), position
+            )
+        finally:
+            self.registry.path_changed.disconnect(replace_filter)
+            self.registry.document_path_changed.disconnect(replace_document)
+            self.refresh_save_state()
 
     def _save(self) -> None:
         """管理画面と設定画面の未保存変更をまとめて保存する。"""

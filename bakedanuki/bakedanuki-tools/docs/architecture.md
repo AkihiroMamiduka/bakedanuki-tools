@@ -76,6 +76,9 @@ bd_tools/
 操作対象を組み立てます。`custom_filters.py`は共有JSONの形式と読込みを、
 `custom_filter_registry.py`は共有グループ・プリセットの参照graph、構成の下書きと個人設定を扱います。
 `custom_filter_presets.py`はグループ・プリセットJSONの検証と相対参照を扱います。
+`custom_filter_export.py`は保存済みJSONの依存関係を収集し、出力内で完結する相対参照と
+衝突しない名前を割り当て、完成した共有用ディレクトリを公開します。QtやMayaには依存しません。
+出力前の保存確認と選択対象の追跡は設定・管理画面、フォルダー選択の配置はutilが担当します。
 `custom_filter_editor.py`は共有JSONの作業中データと競合検出・原子的保存を、
 `custom_filter_setup.py`はノード型ごとの属性選択・順序・保存UIを扱います。
 表示順一覧の複数選択はsetup UIが保持し、選択全件の移動・除外は作業中データへ

@@ -28,7 +28,11 @@ from bd_util.ui import (
 
 from bd_tools import bd_channel_box
 from bd_tools.bd_channel_box.custom_filter_dialogs import (
+    confirm_export_save,
     initial_filter_directory,
+)
+from bd_tools.bd_channel_box.custom_filter_export import (
+    export_custom_filter_files,
 )
 from bd_tools.bd_channel_box.controller import (
     ChannelAttributeFilter,
@@ -79,6 +83,18 @@ if manager is not None:
     assert_type(manager.move_up_button, qt.QToolButton)
     assert_type(manager.move_down_button, qt.QToolButton)
     assert_type(manager.reload_all_button, qt.QToolButton)
+    assert_type(manager.group_export_button, qt.QToolButton)
+    assert_type(manager.preset_export_button, qt.QToolButton)
+    assert_type(manager.export_button, qt.QToolButton)
+assert_type(
+    export_custom_filter_files("filter", [Path("Filter.json")], Path("out")),
+    Path,
+)
+assert_type(confirm_export_save(qt.QWidget(), qt.QPoint(10, 20)), bool)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.confirm_export(qt.QPoint(10, 20)),
+    bool,
+)
 assert_type(bd_channel_box.show().widget.setup_panel, CustomFilterSetupPanel)
 assert_type(bd_channel_box.show().widget.setup_panel.confirm_leave(), bool)
 assert_type(

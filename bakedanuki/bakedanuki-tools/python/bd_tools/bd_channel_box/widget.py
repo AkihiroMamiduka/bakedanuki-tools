@@ -1710,6 +1710,7 @@ class ChannelBoxWidget(qt.QWidget):
                 self.custom_filter_registry,
                 self,
                 confirm_create=self.setup_panel.confirm_leave,
+                confirm_export=self.setup_panel.confirm_export,
                 save_changes=self.setup_panel.save,
                 discard_changes=self.setup_panel.discard,
                 changes_pending=self.setup_panel.has_unsaved_changes,

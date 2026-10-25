@@ -34,6 +34,7 @@ _NAME_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_NAME_ONLY"
 _CONNECTIONS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CONNECTIONS_ONLY"
 _CUSTOM_FILTERS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CUSTOM_FILTERS_ONLY"
 _DIALOGS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_DIALOGS_ONLY"
+_EXPORTS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_EXPORTS_ONLY"
 _CHILD_SET_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CHILD_SET_ONLY"
 _POSE_SET_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_POSE_SET_ONLY"
 _PERSISTED_STEP = 0.5
@@ -193,6 +194,14 @@ class _MayaSmokeSession:
                 self._inspect_node_name_enter,
                 self._finish,
             )
+        elif os.environ.get(_EXPORTS_ONLY_VARIABLE) == "1":
+            self._stages = (
+                self._setup_scene,
+                self._show,
+                self._inspect_custom_filters,
+                self._inspect_custom_filter_export,
+                self._finish,
+            )
         elif os.environ.get(_DIALOGS_ONLY_VARIABLE) == "1":
             self._stages = (
                 self._setup_scene,
@@ -215,6 +224,7 @@ class _MayaSmokeSession:
                 self._inspect_custom_filter_modal_placement,
                 self._inspect_custom_filter_overwrite_placement,
                 self._inspect_custom_filter_context_menus,
+                self._inspect_custom_filter_export,
                 self._inspect_custom_filter_presets,
                 self._inspect_reference_only_custom_filter_setup,
                 self._inspect_thousand_node_states,
@@ -3177,6 +3187,221 @@ class _MayaSmokeSession:
             self._select_combo_item(
                 widget.mode_combo, widget.mode_combo.findData(saved_mode)
             )
+
+    def _inspect_custom_filter_export(self) -> None:
+        """右端の配置と、実際の保存確認・保存先選択・移設後の参照を検証する。"""
+        import shutil
+
+        from bd_util.ui import qt
+        from bd_tools.bd_channel_box.custom_filter_presets import (
+            read_preset_document,
+        )
+        from bd_tools.bd_channel_box.custom_filters import (
+            load_custom_filter,
+            normalize_filter_path,
+        )
+
+        widget = self._require_window().widget
+        panel = widget.setup_panel
+        registry = widget.custom_filter_registry
+        if not panel.save():
+            raise AssertionError("出力検証前の保存に失敗しました")
+        widget.manage_custom_filters_action.trigger()
+        manager = widget.custom_filter_dialog
+        if manager is None:
+            raise AssertionError("出力する管理画面を開けません")
+        manager.resize(900, 800)
+        self._flush_gui()
+        buttons = (
+            manager.group_export_button,
+            manager.preset_export_button,
+            manager.export_button,
+        )
+        right_edges = tuple(
+            button.mapTo(manager, qt.QPoint(button.width(), 0)).x()
+            for button in buttons
+        )
+        if max(right_edges) - min(right_edges) > 2:
+            raise AssertionError("出力ボタンの右端が揃っていません")
+        for button, previous in zip(
+            buttons,
+            (
+                manager.group_move_down_button,
+                manager.preset_move_down_button,
+                manager.move_down_button,
+            ),
+            strict=True,
+        ):
+            if (
+                button.mapTo(manager, qt.QPoint()).x()
+                - previous.mapTo(manager, qt.QPoint(previous.width(), 0)).x()
+                < 100
+            ):
+                raise AssertionError(
+                    "既存操作と出力の間に伸縮余白がありません"
+                )
+            if button.icon().pixmap(16, 16).isNull():
+                raise AssertionError("出力アイコンを読み込めません")
+        image_path = self.output / "65-export-manager.png"
+        if not manager.grab().save(str(image_path)):
+            raise RuntimeError("出力ボタンの配置を撮影できません")
+        self.screenshots.append(str(image_path))
+        self.steps.append("export_buttons_align_at_toolbar_right_edges")
+
+        destination = self.output / "ExportDestination"
+        destination.mkdir()
+        cursor = qt.QCursor.pos()
+        screen = qt.QtGui.QGuiApplication.screens()[-1]
+        available = screen.availableGeometry()
+        anchor = available.bottomRight() - qt.QPoint(3, 3)
+
+        def select_rows(tree: qt.QTreeWidget, count: int) -> None:
+            """先頭行を現在行にして、出力する行だけを選択する。"""
+            if tree.topLevelItemCount() < count:
+                raise AssertionError("出力検証の行が不足しています")
+            tree.setCurrentItem(
+                tree.topLevelItem(0),
+                0,
+                qt.QItemSelectionModel.SelectionFlag.ClearAndSelect
+                | qt.QItemSelectionModel.SelectionFlag.Rows,
+            )
+            for index in range(1, count):
+                tree.topLevelItem(index).setSelected(True)
+
+        def export(button: qt.QToolButton, key: str, cancel: bool) -> None:
+            """実ダイアログを自動操作し、出力または保存確認の取消を完了する。"""
+            failures: list[str] = []
+            chosen = [False]
+            confirmed = [False]
+            timer = qt.QTimer(widget)
+            safety = qt.QTimer(widget)
+            safety.setSingleShot(True)
+
+            def inspect() -> None:
+                """保存確認・フォルダー選択・完了通知を種類ごとに操作する。"""
+                modal = qt.QApplication.activeModalWidget()
+                if isinstance(modal, qt.QFileDialog):
+                    if cancel:
+                        failures.append("取消後に保存先選択が開きました")
+                        modal.reject()
+                        return
+                    if not available.contains(modal.frameGeometry()):
+                        failures.append("フォルダー選択が画面外へ出ています")
+                    if (
+                        not modal.testOption(
+                            qt.QFileDialog.Option.DontUseNativeDialog
+                        )
+                        or modal.fileMode()
+                        != qt.QFileDialog.FileMode.Directory
+                    ):
+                        failures.append("Qt版フォルダー選択ではありません")
+                    if not chosen[0]:
+                        shot = self.output / f"65-export-directory-{key}.png"
+                        if not modal.grab().save(str(shot)):
+                            failures.append("フォルダー選択を撮影できません")
+                        self.screenshots.append(str(shot))
+                    chosen[0] = True
+                    modal.setDirectory(str(destination))
+                    modal.accept()
+                elif isinstance(modal, qt.QMessageBox):
+                    save = modal.button(qt.QMessageBox.StandardButton.Save)
+                    if save is not None:
+                        confirmed[0] = True
+                        if save.text() != "保存してエクスポート":
+                            failures.append("保存確認の文言が違います")
+                        shot = self.output / f"65-export-confirm-{key}.png"
+                        if not modal.grab().save(str(shot)):
+                            failures.append("保存確認を撮影できません")
+                        self.screenshots.append(str(shot))
+                        choice = modal.button(
+                            qt.QMessageBox.StandardButton.Cancel
+                            if cancel
+                            else qt.QMessageBox.StandardButton.Save
+                        )
+                        if choice is not None:
+                            choice.click()
+                    else:
+                        if modal.icon() == qt.QMessageBox.Icon.Warning:
+                            failures.append(modal.text())
+                        modal.accept()
+
+            def timeout() -> None:
+                """想定外の対話画面も閉じ、停止を検証失敗として記録する。"""
+                failures.append("出力の自動操作が時間内に完了しません")
+                modal = qt.QApplication.activeModalWidget()
+                if isinstance(modal, qt.QDialog):
+                    modal.reject()
+
+            timer.timeout.connect(inspect)
+            safety.timeout.connect(timeout)
+            self._mouse(
+                widget,
+                qt.QEvent.Type.MouseButtonRelease,
+                widget.mapFromGlobal(anchor),
+            )
+            qt.QCursor.setPos(anchor)
+            timer.start(100)
+            safety.start(5000)
+            try:
+                button.click()
+                if failures:
+                    raise AssertionError("／".join(failures))
+                if cancel and not confirmed[0]:
+                    raise AssertionError("未保存の確認が開きません")
+                if not cancel and not chosen[0]:
+                    raise AssertionError("保存先選択が開きません")
+            finally:
+                timer.stop()
+                safety.stop()
+                timer.deleteLater()
+                safety.deleteLater()
+
+        try:
+            select_rows(manager.group_tree_widget, 1)
+            export(manager.group_export_button, "group", False)
+            select_rows(manager.preset_tree_widget, 1)
+            export(manager.preset_export_button, "preset", False)
+            select_rows(manager.tree_widget, 2)
+            if not manager.export_button.isEnabled():
+                raise AssertionError("フィルターの複数出力が無効です")
+            export(manager.export_button, "filters", False)
+            if len(tuple(destination.glob("export_custom_filter*"))) != 3:
+                raise AssertionError("3種類の出力を作成できません")
+
+            # 未保存の取消では内容を残し、保存を選んだ場合だけ一式を追加する
+            entry = registry.entries[0]
+            registry.set_enabled(entry.path, not entry.enabled)
+            export(manager.export_button, "cancel", True)
+            if not panel.is_dirty or len(tuple(destination.iterdir())) != 3:
+                raise AssertionError(
+                    "取消で変更が消えたか出力が作成されました"
+                )
+            export(manager.export_button, "save", False)
+            if panel.is_dirty or len(tuple(destination.iterdir())) != 4:
+                raise AssertionError("保存後の出力を作成できません")
+
+            # 移設先の参照がすべて一式の中を指すことを再読込して確認する
+            relocated = self.output / "RelocatedExports"
+            shutil.copytree(destination, relocated)
+            for root in relocated.iterdir():
+                normalized_root = Path(normalize_filter_path(root))
+                for kind, key in (
+                    ("preset_group", "presets"),
+                    ("preset", "filters"),
+                ):
+                    for source in (root / kind).glob("*.json"):
+                        document = read_preset_document(source, kind)
+                        if document.error is not None or any(
+                            not Path(ref.path).is_relative_to(normalized_root)
+                            for ref in document.references
+                        ):
+                            raise AssertionError(f"{key}の参照が出力外です")
+                for source in (root / "filter").glob("*.json"):
+                    load_custom_filter(source)
+            self.steps.append("export_all_kinds_save_cancel_and_relocate")
+        finally:
+            manager.hide()
+            qt.QCursor.setPos(cursor)
 
     def _inspect_custom_filter_modal_placement(self) -> None:
         """確認・通知・入力・追加を各モニターの端で開き、外枠と起点を確認する。"""
@@ -6832,6 +7057,7 @@ def _launch(
     connections_only: bool = False,
     custom_filters_only: bool = False,
     dialogs_only: bool = False,
+    exports_only: bool = False,
     child_set_only: bool = False,
     pose_set_only: bool = False,
 ) -> int:
@@ -6885,6 +7111,7 @@ def _launch(
         "1" if custom_filters_only else "0"
     )
     environment[_DIALOGS_ONLY_VARIABLE] = "1" if dialogs_only else "0"
+    environment[_EXPORTS_ONLY_VARIABLE] = "1" if exports_only else "0"
     environment[_CHILD_SET_ONLY_VARIABLE] = "1" if child_set_only else "0"
     environment[_POSE_SET_ONLY_VARIABLE] = "1" if pose_set_only else "0"
     environment["BAKEDANUKI_UTIL_ROOT"] = str(util_root)
@@ -6985,6 +7212,7 @@ def main() -> int:
     restart_group.add_argument("--connections-only", action="store_true")
     restart_group.add_argument("--custom-filters-only", action="store_true")
     restart_group.add_argument("--dialogs-only", action="store_true")
+    restart_group.add_argument("--exports-only", action="store_true")
     parser.add_argument("--child-set-only", action="store_true")
     parser.add_argument("--pose-set-only", action="store_true")
     arguments = parser.parse_args()
@@ -7004,6 +7232,7 @@ def main() -> int:
         connections_only=arguments.connections_only,
         custom_filters_only=arguments.custom_filters_only,
         dialogs_only=arguments.dialogs_only,
+        exports_only=arguments.exports_only,
         child_set_only=arguments.child_set_only,
         pose_set_only=arguments.pose_set_only,
     )

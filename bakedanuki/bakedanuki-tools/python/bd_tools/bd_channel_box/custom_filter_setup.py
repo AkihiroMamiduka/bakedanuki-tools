@@ -21,6 +21,7 @@ from bd_util.ui import RadioButtonSweep, exec_dialog_near, qt
 from bd_util.ui import dialog as ui_dialog
 
 from .custom_filter_dialogs import (
+    confirm_export_save,
     create_registered_preset,
     rename_registered_preset,
 )
@@ -1554,3 +1555,12 @@ class CustomFilterSetupPanel(qt.QWidget):
             self.discard()
             return True
         return False
+
+    def confirm_export(self, position: qt.QPoint) -> bool:
+        """未保存変更を保存できた場合だけ、保存済みファイルの出力を許可する。"""
+        self._finish_radio_sweep()
+        if not self.is_dirty:
+            return True
+        if not confirm_export_save(self, position):
+            return False
+        return self.save() and not self.is_dirty

@@ -20,12 +20,40 @@ from .custom_filter_registry import CustomFilterRegistry
 from .custom_filters import CustomFilterError, load_custom_filter
 
 __all__ = [
+    "confirm_export_save",
     "create_registered_filter",
     "create_registered_preset",
     "default_filter_directory",
     "initial_filter_directory",
     "rename_registered_preset",
 ]
+
+
+def confirm_export_save(parent: qt.QWidget, position: qt.QPoint) -> bool:
+    """編集内容を維持して中止するか、保存して出力を続けるか確認する。"""
+    dialog = qt.QMessageBox(parent)
+    dialog.setWindowTitle("エクスポート前に保存")
+    dialog.setIcon(qt.QMessageBox.Icon.Warning)
+    dialog.setText(
+        "カスタムフィルター設定に未保存の変更があります。\n"
+        "変更を保存してからエクスポートしますか？"
+    )
+    dialog.setStandardButtons(
+        qt.QMessageBox.StandardButton.Save
+        | qt.QMessageBox.StandardButton.Cancel
+    )
+    dialog.button(qt.QMessageBox.StandardButton.Save).setText(
+        "保存してエクスポート"
+    )
+    dialog.button(qt.QMessageBox.StandardButton.Cancel).setText("キャンセル")
+    dialog.setDefaultButton(qt.QMessageBox.StandardButton.Save)
+    try:
+        return (
+            exec_dialog_near(dialog, position)
+            == qt.QMessageBox.StandardButton.Save
+        )
+    finally:
+        dialog.deleteLater()
 
 
 def default_filter_directory(

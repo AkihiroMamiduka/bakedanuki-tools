@@ -887,6 +887,65 @@ Maya 2027の`QSplitter.setSizes()`は同梱stubから引数型を取得できな
 不具合修正では、可能な限り最初に再現テストを追加します。個別ツールの UI test は、その
 ツール package と対応が分かる階層へ配置します。
 
+## 共有用エクスポート
+
+`tests/unit/test_bd_channel_box_export.py`は保存済みJSONの依存収集、相対参照、
+共有参照の集約、OFFと順序、同名の解消、既存出力の保護、途中失敗時の保護を検証します。
+出力先を移設しても、必要な参照が一式の中で解決することを確認します。
+
+`tests/maya/test_bd_channel_box_export.py`は3段の選択条件、
+未保存確認・保存失敗・取消、保存時の改名の引継ぎ、フォルダー選択と通知の起点を確認します。
+`test_bd_channel_box_export_confirmation.py`は保存確認が日本語の2ボタンだけを持ち、
+保存成功以外では編集内容を保持して中止することを確認します。
+フォルダー選択のQt互換性と配置は、utilの`tests/ui/test_dialog.py`にも含めます。
+
+本体の対象限定検証は次のコマンドで実行できます。
+
+```powershell
+.\.venv-format\Scripts\python.exe -B scripts/test_bd_channel_box_maya.py --maya-version 2025 --util-root ../bakedanuki-util --exports-only --timeout 150
+```
+
+2026・2027にも対応します。右端のアイコンと余白、3種類の出力、フィルターの複数選択、
+実際の保存確認の取消・保存、Qt版フォルダー選択、出力先の連番と移設後の参照を確認します。
+検証用の一式・結果・画像は、通常の設定から分離した`%TEMP%/bd-channel-box-maya<version>-.../`
+へ保存します。通常の`--custom-filters-only`にもこの工程を含めます。
+
+### 検証記録（2026-10-25）
+
+unit testは125件、3 versionのPyrightとBlack checkが成功しました。
+toolsのruntimeは2025／2026で既存753件が成功し、最終構成の追加23件も
+対象限定の再実行で成功しました。2027はoffscreenで全776件が成功しました。
+追加23件は保存確認8件と、管理画面の選択・保存・改名追跡15件です。
+
+2025／2026の初回全件実行には、追加テスト側の失敗を各3件含みました。
+2025は廃止した配置構造テスト、2026は初期fixtureと通知文言の確認による失敗です。
+配置はMaya本体の実座標と画像で確認し、残る追加テストは修正後に再実行しています。
+このため2025／2026は、全件実行と最終追加分の再実行を組み合わせた結果です。
+
+2027の初回Windows標準backend全件実行は、既存の整数値コピー・貼り付けで1件失敗しました。
+単独1件、関連47件、offscreen全776件の順に再実行して成功しています。
+OSクリップボードでの失敗原因は未確定で、Windows標準backendの全件成功とは扱いません。
+pytest cacheの書込権限警告は非失敗です。
+
+utilの`verify.cmd`も成功し、Maya 2025の総合テストは8486件成功・1040件skip、
+3 versionそれぞれのQt UIは1153件、Maya UIは1035件成功しました。
+
+Maya本体は3 versionとも17工程が成功しました。各段の右端アイコンと伸縮余白、
+3種類の出力、フィルターの複数選択、保存確認の取消・保存、Qt版フォルダー選択、
+出力先の連番と移設後の参照を確認し、代表画像も目視確認しました。
+
+| Maya | `%TEMP%`内のディレクトリ | runnerの終了 |
+| --- | --- | --- |
+| 2025 | `bd-channel-box-maya2025-vbqg9ggf` | 操作結果保存後の終了待ちtimeout、終了code 1 |
+| 2026 | `bd-channel-box-maya2026-ooyo6z9k` | 操作結果保存後の終了待ちtimeout、終了code 1 |
+| 2027 | `bd-channel-box-maya2027-6de37db1` | 操作結果保存後の終了待ちtimeout、終了code 1 |
+
+3 versionとも`result.json`は`success: true`／`error: null`です。
+runnerが起動した専用processは停止し、残存していないことを確認しました。
+操作・配置の成功と、Maya本体の正常終了は分けて記録します。
+終了時の根因と今回の変更との関連は未確定で、通常環境での正常終了まで
+検証済みとは扱いません。
+
 ## プリセット対応の検証記録（2026-10-24）
 
 - unit testは102件成功。
