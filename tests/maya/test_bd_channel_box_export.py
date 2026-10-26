@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 
 import pytest
@@ -11,6 +11,9 @@ import pytest
 from bd_util.ui import qt
 from bd_tools.bd_channel_box import custom_filter_manager as manager_module
 from bd_tools.bd_channel_box import config
+from bd_tools.bd_channel_box.custom_filter_dialogs import (
+    CustomFilterExportCompleteDialog,
+)
 from bd_tools.bd_channel_box.custom_filter_editor import (
     CustomFilterDraft,
     create_custom_filter,
@@ -84,6 +87,166 @@ def _select(tree: qt.QTreeWidget, *indices: int) -> None:
     tree.clearSelection()
     for index in indices:
         tree.topLevelItem(index).setSelected(True)
+
+
+def _operate_context_menu(
+    widget: qt.QWidget,
+    event: qt.QtGui.QContextMenuEvent,
+    operation: Callable[[qt.QMenu], None],
+) -> None:
+    """実際に開いたメニューを操作し、検証失敗でも確実に閉じる。"""
+    errors: list[Exception] = []
+    timer = qt.QTimer(widget)
+    timer.setSingleShot(True)
+
+    def operate() -> None:
+        """ネストしたイベントループ内のメニューを処理し、例外を外へ返す。"""
+        popup = qt.QApplication.activePopupWidget()
+        if not isinstance(popup, qt.QMenu):
+            errors.append(AssertionError("パスメニューが開いていません"))
+            return
+        try:
+            operation(popup)
+        except Exception as error:
+            errors.append(error)
+        finally:
+            popup.close()
+
+    timer.timeout.connect(operate)
+    timer.start(0)
+    try:
+        qt.QApplication.sendEvent(widget, event)
+    finally:
+        timer.stop()
+        timer.deleteLater()
+    if errors:
+        raise errors[0]
+
+
+@pytest.mark.parametrize("kind", ("preset_group", "preset", "filter"))
+@pytest.mark.parametrize("column", (0, 1, 2))
+@pytest.mark.parametrize("multiple", (False, True))
+def test_right_click_copies_clicked_row_without_changing_active_selection(
+    manager: CustomFilterManagerDialog,
+    qt_application: qt.QApplication,
+    kind: ExportKind,
+    column: int,
+    multiple: bool,
+) -> None:
+    """全段・全列で未選択行を右クリックし、現在行・下段・編集状態を保つ。"""
+    manager.show()
+    qt_application.processEvents()
+    tree = _tree(manager, kind)
+    _select(tree, *(0, 1) if multiple else (0,))
+    clicked = tree.topLevelItem(1)
+    before = (
+        tree.currentItem(),
+        tree.selectedItems(),
+        manager.registry.active_group,
+        manager.registry.active_preset,
+        manager.registry.is_dirty,
+    )
+    point = qt.QPoint(
+        tree.header().sectionViewportPosition(column)
+        + tree.columnWidth(column) // 2,
+        tree.visualItemRect(clicked).center().y(),
+    )
+    menus: list[str] = []
+
+    def execute(menu: qt.QMenu) -> None:
+        """表示パスを全文コピーする操作だけを実行し、選択には触れない。"""
+        assert menu.actions()[0].text() == "パス"
+        menu.actions()[-1].trigger()
+        menus.append("copied")
+
+    for event_type in (
+        qt.QEvent.Type.MouseButtonPress,
+        qt.QEvent.Type.MouseButtonRelease,
+    ):
+        event = qt.QtGui.QMouseEvent(
+            event_type,
+            qt.QPointF(point),
+            qt.QPointF(tree.viewport().mapToGlobal(point)),
+            qt.Qt.MouseButton.RightButton,
+            (
+                qt.Qt.MouseButton.RightButton
+                if event_type == qt.QEvent.Type.MouseButtonPress
+                else qt.Qt.MouseButton.NoButton
+            ),
+            qt.Qt.KeyboardModifier.NoModifier,
+        )
+        qt.QApplication.sendEvent(tree.viewport(), event)
+    anchor = tree.viewport().mapToGlobal(point)
+    context = qt.QtGui.QContextMenuEvent(
+        qt.QtGui.QContextMenuEvent.Reason.Mouse, point, anchor
+    )
+    _operate_context_menu(tree.viewport(), context, execute)
+    assert menus == ["copied"]
+    assert qt.QApplication.clipboard().text() == str(
+        Path(clicked.text(1)).absolute()
+    )
+    assert before == (
+        tree.currentItem(),
+        tree.selectedItems(),
+        manager.registry.active_group,
+        manager.registry.active_preset,
+        manager.registry.is_dirty,
+    )
+
+
+@pytest.mark.parametrize("kind", ("preset_group", "preset"))
+def test_pending_rename_path_is_copied_with_open_action_disabled(
+    manager: CustomFilterManagerDialog,
+    kind: ExportKind,
+) -> None:
+    """保存前の改名先を表示どおりにコピーし、保存済みの旧パスを開かない。"""
+    tree = _tree(manager, kind)
+    source = tree.topLevelItem(0).text(1)
+    rename = (
+        manager.registry.rename_group
+        if kind == "preset_group"
+        else manager.registry.rename_preset
+    )
+    assert rename(source, "Renamed")
+    item = tree.topLevelItem(0)
+    assert item.text(1) != source and not Path(item.text(1)).exists()
+
+    def execute(menu: qt.QMenu) -> None:
+        """存在しない予定パスは開く操作だけを無効にする。"""
+        assert not menu.actions()[-2].isEnabled()
+        menu.actions()[-1].trigger()
+
+    tree.setCurrentItem(item)
+    event = qt.QtGui.QContextMenuEvent(
+        qt.QtGui.QContextMenuEvent.Reason.Keyboard, qt.QPoint(), qt.QPoint()
+    )
+    _operate_context_menu(tree.viewport(), event, execute)
+    assert qt.QApplication.clipboard().text() == str(
+        Path(item.text(1)).absolute()
+    )
+
+
+def test_empty_tree_space_does_not_open_path_menu(
+    manager: CustomFilterManagerDialog,
+    qt_application: qt.QApplication,
+) -> None:
+    """余白の右クリックを、現在行や選択行のパス操作へ流用しない。"""
+    manager.show()
+    qt_application.processEvents()
+    tree = manager.tree_widget
+    point = tree.viewport().rect().bottomRight() - qt.QPoint(2, 2)
+    assert tree.itemAt(point) is None
+
+    def refuse(_menu: qt.QMenu) -> None:
+        """行のない場所でメニューが開くことを拒否する。"""
+        raise AssertionError("パスメニューを開いてはいけません")
+
+    event = qt.QtGui.QContextMenuEvent(
+        qt.QtGui.QContextMenuEvent.Reason.Mouse,
+        point,
+        tree.viewport().mapToGlobal(point),
+    )
+    _operate_context_menu(tree.viewport(), event, refuse)
 
 
 @pytest.mark.parametrize("kind", ("preset_group", "preset", "filter"))
@@ -251,11 +414,10 @@ def test_export_tracks_the_initial_target_after_save_rename(
         """同じ位置の完了通知に出力先が表示されることを確認する。"""
         events.append("complete")
         anchors.append(qt.QPoint(anchor))
-        assert isinstance(dialog, qt.QMessageBox)
-        assert dialog.icon() == qt.QMessageBox.Icon.Information
-        assert dialog.standardButtons() == qt.QMessageBox.StandardButton.Ok
-        assert str(output) in dialog.informativeText()
-        return qt.QMessageBox.StandardButton.Ok.value
+        assert isinstance(dialog, CustomFilterExportCompleteDialog)
+        assert dialog.path_edit.isReadOnly()
+        assert dialog.path_edit.text() == str(output)
+        return qt.QDialog.DialogCode.Accepted.value
 
     monkeypatch.setattr(manager, "_dialog_position", position)
     monkeypatch.setattr(manager, "_confirm_export", confirm)
@@ -369,7 +531,7 @@ def test_filter_export_preserves_multiple_paths_and_dialog_anchor(
         """完了通知の起点を記録する。"""
         events.append("complete")
         anchors.append(qt.QPoint(anchor))
-        return qt.QMessageBox.StandardButton.Ok.value
+        return qt.QDialog.DialogCode.Accepted.value
 
     monkeypatch.setattr(manager, "_dialog_position", position)
     monkeypatch.setattr(config, "EXPORT_DIRECTORY_DIALOG_WIDTH", 1100)

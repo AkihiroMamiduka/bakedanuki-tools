@@ -3,9 +3,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Protocol, cast
 
-from bd_util.ui import qt
+from bd_util.ui import add_path_actions, qt
 
 __all__ = ["CustomFilterRegistrationTree", "create_manager_tool_button"]
 
@@ -180,9 +181,12 @@ class CustomFilterRegistrationTree(qt.QTreeWidget):
         self.visibility_clicked.emit(item)
 
     def mousePressEvent(self, event: qt.QtGui.QMouseEvent) -> None:
-        """目の押下を行選択より先に受け取り、切替候補を記憶する。"""
+        """右クリックで選択を変えず、目の左押下を切替候補として記憶する。"""
         self._eye_gesture = False
         self._eye_press = None
+        if event.button() == qt.Qt.MouseButton.RightButton:
+            event.accept()
+            return
         position = event.position().toPoint()
         index = self._visibility_index_at(position)
         if index.isValid():
@@ -209,6 +213,9 @@ class CustomFilterRegistrationTree(qt.QTreeWidget):
 
     def mouseReleaseEvent(self, event: qt.QtGui.QMouseEvent) -> None:
         """同じ目を左で押して離したときだけ一度切り替える。"""
+        if event.button() == qt.Qt.MouseButton.RightButton:
+            event.accept()
+            return
         if self._eye_gesture:
             pressed = self._eye_press
             self._eye_gesture = False
@@ -227,12 +234,39 @@ class CustomFilterRegistrationTree(qt.QTreeWidget):
 
     def mouseDoubleClickEvent(self, event: qt.QtGui.QMouseEvent) -> None:
         """目のダブルクリックを消費し、一回目の切替を打ち消さない。"""
+        if event.button() == qt.Qt.MouseButton.RightButton:
+            event.accept()
+            return
         if self._visibility_index_at(event.position().toPoint()).isValid():
             self._eye_gesture = True
             self._eye_press = None
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
+
+    def contextMenuEvent(self, arg__1: qt.QtGui.QContextMenuEvent) -> None:
+        """選択と現在行を変えず、右クリックした行の表示パスだけを操作する。"""
+        event = arg__1
+        item = cast(
+            qt.QTreeWidgetItem | None,
+            (
+                self.currentItem()
+                if event.reason() == qt.QtGui.QContextMenuEvent.Reason.Keyboard
+                else self.itemAt(event.pos())
+            ),
+        )
+        if item is not None and item.text(1):
+            menu = qt.QMenu(self)
+            try:
+                add_path_actions(menu, item.text(1), event.globalPos())
+                execute = cast(
+                    Callable[[qt.QPoint], qt.QAction | None],
+                    getattr(menu, "exec"),
+                )
+                execute(event.globalPos())
+            finally:
+                menu.deleteLater()
+        event.accept()
 
     def event(self, e: qt.QEvent) -> bool:
         """SpaceをMayaへ受け流し、非活性化では未完了の入力状態を解除する。"""

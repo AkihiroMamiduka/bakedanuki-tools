@@ -9,6 +9,11 @@
 
 ### Changed
 
+- bdChannelBoxの管理画面3一覧に、右クリックした行のパスをExplorerで開く・コピーする
+  メニューを追加。選択と下段表示を保持し、未保存の改名先も表示中のフルパスを扱う。
+  エクスポート完了画面は読み取り専用のパス欄に変更し、標準のコピー操作と同じメニューを提供。
+  ファイルは親で選択、ディレクトリは中身を開く共通仕様をutil側で提供する。
+  toolsとutilを更新し、`bd_tools.reload_package(reload_util=True)`で反映する。
 - bdChannelBoxのエクスポート先選択を、上部のパス欄を編集できるMaya標準画面へ変更。
   初期幅・高さは`bd_channel_box/config.py`の`EXPORT_DIRECTORY_DIALOG_WIDTH`と
   `EXPORT_DIRECTORY_DIALOG_HEIGHT`へ集約し、Qtの論理ピクセルで直接指定する。

@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Literal, cast
 
 from bd_util.maya.ui import get_ui_settings_file
-from bd_util.ui import exec_dialog_near, get_save_file_name_near, qt
+from bd_util.ui import (
+    PathLineEdit,
+    exec_dialog_near,
+    get_save_file_name_near,
+    qt,
+)
 from bd_util.ui import dialog as ui_dialog
 
 from .custom_filter_editor import (
@@ -20,6 +25,7 @@ from .custom_filter_registry import CustomFilterRegistry
 from .custom_filters import CustomFilterError, load_custom_filter
 
 __all__ = [
+    "CustomFilterExportCompleteDialog",
     "confirm_export_save",
     "create_registered_filter",
     "create_registered_preset",
@@ -27,6 +33,30 @@ __all__ = [
     "initial_filter_directory",
     "rename_registered_preset",
 ]
+
+
+class CustomFilterExportCompleteDialog(qt.QDialog):
+    """出力結果と、コピー・Explorer操作が可能なパス欄を表示する。"""
+
+    def __init__(self, destination: Path, parent: qt.QWidget) -> None:
+        """長いパスも横スクロールで確認できる完了画面を構成する。"""
+        super().__init__(parent)
+        self.setObjectName("customFilterExportCompleteDialog")
+        self.setWindowTitle("エクスポート完了")
+        self.resize(640, 150)
+        self.path_edit = PathLineEdit(destination, self)
+        self.path_edit.setObjectName("exportDestinationPath")
+        self.path_edit.setAccessibleName("エクスポート先のフルパス")
+        buttons = qt.QDialogButtonBox(
+            qt.QDialogButtonBox.StandardButton.Ok, self
+        )
+        buttons.accepted.connect(self.accept)
+        layout = qt.QVBoxLayout(self)
+        layout.addWidget(
+            qt.QLabel("カスタムフィルターの関連ファイルを出力しました。", self)
+        )
+        layout.addWidget(self.path_edit)
+        layout.addWidget(buttons)
 
 
 def confirm_export_save(parent: qt.QWidget, position: qt.QPoint) -> bool:

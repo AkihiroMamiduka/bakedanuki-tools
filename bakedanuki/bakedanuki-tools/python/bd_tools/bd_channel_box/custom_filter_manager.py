@@ -19,6 +19,7 @@ from bd_util.ui import dialog as ui_dialog
 from .._shared.window_position import centered_position_within_screen
 from . import config
 from .custom_filter_dialogs import (
+    CustomFilterExportCompleteDialog,
     confirm_export_save,
     create_registered_filter,
     create_registered_preset,
@@ -1151,12 +1152,7 @@ class CustomFilterManagerDialog(qt.QDialog):
             if not directory:
                 return
             destination = export_custom_filter_files(kind, paths, directory)
-            dialog = qt.QMessageBox(self)
-            dialog.setWindowTitle("エクスポート完了")
-            dialog.setIcon(qt.QMessageBox.Icon.Information)
-            dialog.setText("カスタムフィルターの関連ファイルを出力しました。")
-            dialog.setInformativeText(str(destination))
-            dialog.setStandardButtons(qt.QMessageBox.StandardButton.Ok)
+            dialog = CustomFilterExportCompleteDialog(destination, self)
             try:
                 exec_dialog_near(dialog, position)
             finally:

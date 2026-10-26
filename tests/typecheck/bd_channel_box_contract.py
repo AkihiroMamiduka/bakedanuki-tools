@@ -20,6 +20,7 @@ from bd_util.ui import (
     IntValueStepSpinBox,
     IntSliderSpinBox,
     IntStepProfile,
+    PathLineEdit,
     RadioButtonSweep,
     StringLineEdit,
     UiStateManager,
@@ -28,6 +29,7 @@ from bd_util.ui import (
 
 from bd_tools import bd_channel_box
 from bd_tools.bd_channel_box.custom_filter_dialogs import (
+    CustomFilterExportCompleteDialog,
     confirm_export_save,
     initial_filter_directory,
 )
@@ -65,6 +67,10 @@ from bd_tools.bd_channel_box.widget import (
 from bd_tools.bd_channel_box.table import ChannelTableView
 
 assert_type(bd_channel_box.show(), bd_channel_box.ChannelBoxWindow)
+assert_type(
+    CustomFilterExportCompleteDialog(Path("C:/work"), qt.QWidget()).path_edit,
+    PathLineEdit,
+)
 assert_type(bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
 assert_type(bd_channel_box.config.EXPORT_DIRECTORY_DIALOG_WIDTH, int)
 assert_type(bd_channel_box.config.EXPORT_DIRECTORY_DIALOG_HEIGHT, int)

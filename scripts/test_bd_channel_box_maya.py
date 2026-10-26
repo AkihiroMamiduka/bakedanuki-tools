@@ -3194,6 +3194,9 @@ class _MayaSmokeSession:
 
         from bd_util.ui import qt
         from bd_tools.bd_channel_box import config
+        from bd_tools.bd_channel_box.custom_filter_dialogs import (
+            CustomFilterExportCompleteDialog,
+        )
         from bd_tools.bd_channel_box.custom_filter_presets import (
             read_preset_document,
         )
@@ -3279,6 +3282,64 @@ class _MayaSmokeSession:
             )
             for index in range(1, count):
                 tree.topLevelItem(index).setSelected(True)
+
+        def inspect_path_menu(
+            target: qt.QWidget, point: qt.QPoint, expected: str, key: str
+        ) -> None:
+            """実際のパスメニューを撮影し、標準項目と全文コピーを検証する。"""
+            failures: list[str] = []
+            seen = [False]
+            timer = qt.QTimer(target)
+            timer.setSingleShot(True)
+
+            def operate() -> None:
+                """開いたメニューを確認し、失敗した場合も待機を解除する。"""
+                popup = qt.QApplication.activePopupWidget()
+                if not isinstance(popup, qt.QMenu):
+                    failures.append("パスメニューが開いていません")
+                    return
+                try:
+                    actions = popup.actions()
+                    if [a.text() for a in actions[-3:]] != [
+                        "パス",
+                        "エクスプローラで開く",
+                        "パスをコピーする",
+                    ]:
+                        failures.append("パスメニューの項目が違います")
+                    if not actions[-2].isEnabled():
+                        failures.append("存在するパスのExplorer操作が無効です")
+                    if isinstance(target, qt.QLineEdit) and len(actions) <= 3:
+                        failures.append("標準のコピー項目が失われています")
+                    shot = self.output / f"66-path-menu-{key}.png"
+                    popup.grab().save(str(shot))
+                    self.screenshots.append(str(shot))
+                    actions[-1].trigger()
+                    if normalize_filter_path(
+                        clipboard.text()
+                    ) != normalize_filter_path(expected):
+                        failures.append("表示パスの全文をコピーできません")
+                    seen[0] = True
+                except Exception as error:
+                    failures.append(str(error))
+                finally:
+                    popup.close()
+
+            timer.timeout.connect(operate)
+            timer.start(50)
+            try:
+                event = qt.QtGui.QContextMenuEvent(
+                    qt.QtGui.QContextMenuEvent.Reason.Mouse,
+                    point,
+                    target.mapToGlobal(point),
+                )
+                qt.QApplication.sendEvent(target, event)
+            finally:
+                timer.stop()
+                timer.deleteLater()
+            if failures or not seen[0]:
+                raise AssertionError(
+                    "／".join(failures) or "パスメニューを確認できません"
+                )
 
         def export(button: qt.QToolButton, key: str, cancel: bool) -> None:
             """実ダイアログを自動操作し、出力または保存確認の取消を完了する。"""
@@ -3491,6 +3552,31 @@ class _MayaSmokeSession:
                     chosen[0] = True
                     modal.setDirectory(str(destination))
                     modal.accept()
+                elif isinstance(modal, CustomFilterExportCompleteDialog):
+                    if not available.contains(modal.frameGeometry()):
+                        failures.append("完了画面が画面外へ出ています")
+                    if not modal.path_edit.isReadOnly():
+                        failures.append("出力パスが編集可能になっています")
+                    modal.path_edit.selectAll()
+                    self._key(
+                        modal.path_edit,
+                        qt.Qt.Key.Key_C,
+                        modifiers=qt.Qt.KeyboardModifier.ControlModifier,
+                    )
+                    if clipboard.text() != modal.path_edit.text():
+                        failures.append(
+                            "完了画面の出力パスをCtrl+Cでコピーできません"
+                        )
+                    inspect_path_menu(
+                        modal.path_edit,
+                        modal.path_edit.rect().center(),
+                        modal.path_edit.text(),
+                        f"complete-{key}",
+                    )
+                    shot = self.output / f"66-export-complete-{key}.png"
+                    modal.grab().save(str(shot))
+                    self.screenshots.append(str(shot))
+                    modal.accept()
                 elif isinstance(modal, qt.QMessageBox):
                     save = modal.button(qt.QMessageBox.StandardButton.Save)
                     if save is not None:
@@ -3549,6 +3635,40 @@ class _MayaSmokeSession:
                 safety.deleteLater()
 
         try:
+            for tree, key in (
+                (manager.group_tree_widget, "group"),
+                (manager.preset_tree_widget, "preset"),
+                (manager.tree_widget, "filter"),
+            ):
+                select_rows(tree, min(2, tree.topLevelItemCount()))
+                item = tree.topLevelItem(0)
+                before = (
+                    tree.currentItem(),
+                    tree.selectedItems(),
+                    manager.registry.active_group,
+                    manager.registry.active_preset,
+                    manager.registry.is_dirty,
+                )
+                inspect_path_menu(
+                    tree.viewport(),
+                    tree.visualItemRect(item).center(),
+                    item.text(1),
+                    key,
+                )
+                after = (
+                    tree.currentItem(),
+                    tree.selectedItems(),
+                    manager.registry.active_group,
+                    manager.registry.active_preset,
+                    manager.registry.is_dirty,
+                )
+                if before != after:
+                    raise AssertionError(
+                        "パス操作で選択または編集状態が変わりました"
+                    )
+            self.steps.append(
+                "path_menus_preserve_selection_and_copy_full_paths"
+            )
             select_rows(manager.group_tree_widget, 1)
             export(manager.group_export_button, "group", False)
             select_rows(manager.preset_tree_widget, 1)
