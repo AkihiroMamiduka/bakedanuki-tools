@@ -813,9 +813,9 @@ def test_reference_display_reclick_aligns_others_and_undo_restores_each_node(
     _states(state_editor)
     row = _state_row(state_editor)
     assert _checked_display(state_editor) == ("keyable",)
-    assert all(
-        "基準ノードの状態" in b.toolTip() for b in row.display_buttons.values()
-    )
+    assert all(b.toolTip() == "" for b in row.display_buttons.values())
+    assert row.name_label.toolTip() == ""
+    assert row.lock_check_box.toolTip() == ""
     assert not row.name_label.text().startswith("• ")
     assert len(row.row.state_binding.state.targets) == 1
     before = [_flags(name + ".weight") for name in _NODES]

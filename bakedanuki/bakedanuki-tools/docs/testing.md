@@ -1235,3 +1235,24 @@ runnerが起動した専用processを停止したことを確認し、操作成�
 新たなruntime test・Maya本体検証も実施していません。上記の直近の自動検証と本体確認、
 過去の各version検証、今回の利用者報告を組み合わせた記録で、最新HEADの全version全件成功を示すものではありません。
 既知の検証process終了待ちは保守課題として残し、機能の未実装とは分けて扱います。
+
+## 属性行とStep欄のtooltip整理（2026-10-27）
+
+値編集・表示ロックの属性行は説明tooltipを生成せず、float・整数のStep欄の操作説明は
+tools側で解除します。utilの共通部品と、アイコン・メニュー・管理画面の補助tooltipは変更しません。
+既存の接続色、enum未定義値と入力可否、時間キー・SDK・Layerの保存方針、
+状態変更、Step増減、Undoと操作時の通知を維持します。
+
+Maya 2025の関連runtime testは28件成功しました。説明を表示していた既存テストを更新し、
+属性名・接続色帯・値入力・表示ボタン・lock・float／整数Step欄のtooltipが空であることと、
+接続色・入力・通知・Step操作・Undoを確認しています。Pyrightはエラー・警告0件、
+Black checkと`git diff --check`も成功しました。
+
+本体の`--connections-only`初回実行は、起動後の進行・結果記録を生成できず120秒で中止しました。
+資料は`%TEMP%/bd-channel-box-maya2025-szcpe5tx`です。
+起動条件を変えて再実行したMaya 2025本体は6工程の操作確認に成功し、
+`%TEMP%/bd-channel-box-maya2025-561x6p74/result.json`は`success: true`／`error: null`です。
+時間キー・SDK・Layerの入力とAuto Key、接続行とStep欄のtooltip設定、時刻移動での操作終了を確認しました。
+再実行も結果保存後の終了待ちは120秒でタイムアウトし、runnerの終了codeは1です。
+両実行で起動した専用processは停止済みです。操作成功とMayaの正常終了を分けて記録します。
+今回の変更はtoolsだけで、2026／2027の再検証は実施していません。

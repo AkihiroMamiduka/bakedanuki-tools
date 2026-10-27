@@ -124,8 +124,10 @@ Maya操作・Undoは`bd_util`のコマンドを使います。Mayaが両Window�
 値とstepの複合View、属性path・数値種別ごとのprofileと保存基盤はutilへ配置します。
 属性別の初期step、profileの識別子、操作対象の選別はbdChannelBoxが所有します。
 step設定はuser preferencesへ保存し、sceneの値・Undo履歴へ含めません。
-属性名の整列、混在の印、対象情報のtooltip、選択属性を操作する右クリックメニューも
-bdChannelBoxが所有します。値編集モードでは値欄のQt標準編集メニューを表示せず、
+属性名の整列、接続状態の色帯、選択属性を操作する右クリックメニューもbdChannelBoxが所有します。
+値編集・表示ロックの属性行は説明tooltipを設定せず、共通Step部品のtooltipもtools側で解除します。
+入力可否の判定と操作時の通知、メニュー・管理画面の補助tooltipは維持します。
+値編集モードでは値欄のQt標準編集メニューを表示せず、
 属性行のどこを右クリックしても同じツール用メニューを開きます。
 一覧は`QTableView`へ1属性1セルを置き、delegateが既存の属性行Widgetをpersistent editorとして
 常時表示します。modelは行と選択を管理し、値は既存Bindingから同期します。

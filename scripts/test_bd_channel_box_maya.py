@@ -6743,23 +6743,28 @@ class _MayaSmokeSession:
             cmds.autoKeyframe(state=auto_key)
             self._flush_gui()
 
-            # 禁止したconstraintは値欄を無効化し、理由をtooltipへ表示する
+            # tooltipを表示せず、禁止したconstraintの値欄と内部の理由を維持する
             constrained = self._row("translate.translateX")
             assert isinstance(constrained.editor, FloatValueStepSpinBox)
             assert not constrained.editor.spin_box.isEnabled()
             assert constrained.row.binding.target_states[0].reason
+            assert constrained.editor.step_spin_box.toolTip() == ""
             for attribute in ("timeValue", "sdkValue", "layerValue"):
                 row = self._row(attribute)
                 assert isinstance(row.editor, FloatSliderSpinBox)
                 assert row.editor.spin_box.isEnabled()
-                tooltip = row.name_label.toolTip()
+                assert row.name_label.toolTip() == ""
+                assert row.input_indicator.toolTip() == ""
+                assert row.editor.toolTip() == ""
+                description = row.row.binding.target_states[0].edit_description
+                assert description is not None
                 assert (
-                    "SDK" in tooltip
+                    "SDK" in description
                     if attribute == "sdkValue"
-                    else "Auto Key" in tooltip
+                    else "Auto Key" in description
                 )
                 if attribute == "layerValue":
-                    assert layer in tooltip
+                    assert layer in description
                     curves = cast(
                         list[str],
                         cmds.animLayer(layer, query=True, animCurves=True),

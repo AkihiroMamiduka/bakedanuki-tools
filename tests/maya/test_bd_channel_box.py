@@ -818,7 +818,7 @@ def test_locked_secondary_is_reported_and_excluded(
     _events()
     row = _row(editor, "weight")
     assert row.row.binding.writable_count == 1
-    assert "基準ノードのみ" in row.name_label.toolTip()
+    assert row.name_label.toolTip() == ""
     assert isinstance(row.editor, FloatSliderSpinBox)
     row.editor.spin_box.setValue(0.5)
     assert cmds.getAttr("channelA.weight") == 0.5
@@ -892,8 +892,9 @@ def test_animated_representative_follows_auto_key(
     assert binding.view_model.set_value_command.can_execute
     row = _row(editor, "weight")
     assert row.context_menu.align_action.isEnabled()
-    assert "基準ノードのみ" in row.name_label.toolTip()
-    assert "Auto Key" in row.name_label.toolTip()
+    assert row.name_label.toolTip() == ""
+    description = binding.target_states[0].edit_description
+    assert description is not None and "Auto Key" in description
     assert isinstance(row.editor, FloatSliderSpinBox)
     cmds.flushUndo()
     row.editor.spin_box.setValue(0.5)
@@ -966,6 +967,7 @@ def test_step_defaults_by_attribute_kind(
     assert view.singleStep() == view.step_spin_box.value() == step
     assert view.step_spin_box.stepMode() == mode
     assert view.step_spin_box.singleStep() == increment
+    assert view.step_spin_box.toolTip() == ""
     view.step_spin_box.stepUp()
     assert view.singleStep() == (step * 10 if mode == "multiplicative" else 30)
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)

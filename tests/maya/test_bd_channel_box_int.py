@@ -96,6 +96,12 @@ def test_integer_rows_edit_align_and_respect_limits(
         and isinstance(row.row.binding, MayaIntPlugsBinding)
         for row in (byte_row, short_row, long_row)
     )
+    for row in (byte_row, short_row, long_row):
+        assert row.name_label.toolTip() == ""
+        assert row.input_indicator.toolTip() == ""
+        assert row.editor.toolTip() == ""
+        if isinstance(row.editor, IntValueStepSpinBox):
+            assert row.editor.step_spin_box.toolTip() == ""
     byte_spin = cast(IntValueStepSpinBox, byte_row.editor).spin_box
     assert isinstance(short_row.editor, IntSliderSpinBox)
     short_spin = short_row.editor.spin_box

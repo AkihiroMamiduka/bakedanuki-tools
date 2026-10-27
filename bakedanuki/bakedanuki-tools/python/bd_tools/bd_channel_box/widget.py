@@ -106,21 +106,6 @@ _INPUT_STATE_COLORS: dict[_IndicatorState, str] = {
     "connected": "#F1F1A5",
     "locked": "#5C6874",
 }
-_INPUT_STATE_LABELS: dict[MayaPlugInputState, str] = {
-    "unconnected": "入力接続なし",
-    "nonkeyable": "入力接続なし・キー設定不可",
-    "keyed": "現在時刻にキーあり",
-    "animated": "アニメーションあり・現在時刻にキーなし",
-    "key_altered": "キーの評価値と現在値が異なります",
-    "driven_key": "Driven Keyの入力接続あり",
-    "expression": "Expressionの入力接続あり",
-    "animation_layer": "Animation Layerの入力接続あり",
-    "animation_clip": "Animation Clipの入力接続あり",
-    "muted": "入力接続がミュートされています",
-    "pair_blend": "pairBlendの入力接続あり",
-    "constraint": "constraintの入力接続あり",
-    "connected": "その他の入力接続あり",
-}
 _PASTE_FILTER_OPTIONS: tuple[tuple[ChannelAttributeFilter, str, str], ...] = (
     ("all", "全て", "コピーした全項目を"),
     (
@@ -763,6 +748,8 @@ class AttributeRowWidget(qt.QWidget):
         if isinstance(
             self.editor, (FloatValueStepSpinBox, IntValueStepSpinBox)
         ):
+            # Stepの共通操作説明は、このツールの属性行では表示しない
+            self.editor.step_spin_box.setToolTip("")
             self.editor.settingsChanged.connect(self._notify_step_changed)
 
         # 値の混在と編集可能数はBindingの読み取り通知だけで更新する
@@ -970,17 +957,9 @@ class AttributeRowWidget(qt.QWidget):
             self.step_changed.emit(self.editor.singleStep())
 
     def _update_state(self) -> None:
-        """代表の接続・ロック色と混在を表示し、理由をtooltipへまとめる。"""
+        """基準の接続・ロック色と、値を揃える操作の可否を更新する。"""
         binding = self.row.binding
         editable = binding.view_model.set_value_command.can_execute
-        details = [self.row.attribute.nice_name, self.row.attribute.path]
-        details.extend(
-            (
-                "表示・接続状態: 基準ノードのみ",
-                f"適用候補: 選択中の{self.selection_count}ノード",
-                "他ノードの編集可否と値の違いは、操作時に確認します",
-            )
-        )
         visible_targets = tuple(
             target
             for target in binding.target_states
@@ -995,46 +974,12 @@ class AttributeRowWidget(qt.QWidget):
             self.input_indicator.set_input_state(
                 "locked" if visible_targets[0].is_locked else representative
             )
-            details.append(
-                "基準の接続状態: " + _INPUT_STATE_LABELS[representative]
-            )
-            if visible_targets[0].is_locked:
-                details.append("基準のロック状態: ロックされています")
-            if any(state != representative for state in input_states[1:]):
-                counts = ", ".join(
-                    f"{_INPUT_STATE_LABELS[state]} {input_states.count(state)}件"
-                    for state in _INPUT_STATE_LABELS
-                    if state in input_states
-                )
-                details.append("接続状態は選択ノード間で混在: " + counts)
-            lock_states = tuple(target.is_locked for target in visible_targets)
-            if any(locked != lock_states[0] for locked in lock_states[1:]):
-                details.append("ロック状態は選択ノード間で混在")
         self.name_label.setText(self.row.attribute.nice_name)
-        reasons = list(self.row.excluded)
-        for target in binding.target_states:
-            if target.edit_description:
-                details.append(f"{target.name}: {target.edit_description}")
-            if target.reason:
-                reasons.append(f"{target.name}: {target.reason}")
-        details.extend(reasons)
-        defined = True
-        if isinstance(binding, MayaEnumPlugsBinding):
-            defined = binding.is_value_defined
-            item = binding.definition.item_for_value(binding.value)
-            details.append(
-                f"基準値: {item.name} ({item.value})"
-                if item is not None
-                else f"基準値: 未定義 ({binding.value}) — 揃える操作はできません"
-            )
-            if not binding.definition.items:
-                details.append("enumの選択肢がないため入力できません")
-            details.append("他ノードのenum定義は、操作時に照合します")
-        details.append("属性行を右クリック: 表示ノードの値に揃える")
-        tooltip = "\n".join(details)
-        self.name_label.setToolTip(tooltip)
-        self.input_indicator.setToolTip(tooltip)
-        self.editor.setToolTip(tooltip)
+        defined = (
+            binding.is_value_defined
+            if isinstance(binding, MayaEnumPlugsBinding)
+            else True
+        )
         can_align = self.selection_count > 1
         self._align_enabled = editable and can_align and defined
         if self._context_menu is not None:
@@ -1146,37 +1091,6 @@ class AttributeStateRowWidget(qt.QWidget):
             self.lock_check_box.blockSignals(old_lock)
 
         self.name_label.setText(self.row.attribute.nice_name)
-        details = [self.row.attribute.nice_name, self.row.attribute.path]
-        details.append("表示・ロックは末尾の基準ノードの状態です")
-        details.append(
-            "対応する全選択ノードへ適用し、操作時に対象と変更可否を確認します"
-        )
-        details.append("全対象の混在や変更可能件数は常時計算しません")
-        for target in state.targets[:1]:
-            reasons = tuple(
-                dict.fromkeys(
-                    reason
-                    for reason in (target.display_reason, target.lock_reason)
-                    if reason
-                )
-            )
-            if reasons:
-                details.append(f"{target.plug_name}: {' / '.join(reasons)}")
-        tooltip = "\n".join(details)
-        self.name_label.setToolTip(tooltip)
-        for value, _label, description in _DISPLAY_OPTIONS:
-            self.display_buttons[value].setToolTip(
-                f"{description}\n"
-                "操作行が選択中なら、選択属性へ一括適用\n"
-                f"左ドラッグで通過行だけをなぞり操作\n{tooltip}"
-            )
-        self.lock_check_box.setToolTip(
-            "Lock: 属性自身のロック／解除\n"
-            "基準がOFFなら全対象をロック、ONなら全対象を解除\n"
-            "操作行が選択中なら、選択属性へ一括適用\n"
-            "左ドラッグで開始時の操作を通過行だけへ適用\n"
-            f"{tooltip}"
-        )
 
     def set_display_state(
         self, value: ChannelDisplayState, _checked: bool = False

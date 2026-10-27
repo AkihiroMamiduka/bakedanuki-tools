@@ -619,18 +619,9 @@ def test_connection_indicators_match_maya_colors(
         assert row.row.binding.target_states[0].input_state == (
             "unconnected" if state == "locked" else state
         )
-    assert (
-        "ロックされています"
-        in _row(editor, "visibility").input_indicator.toolTip()
-    )
-    assert (
-        "基準ノードのみ"
-        in _row(editor, "visibility").input_indicator.toolTip()
-    )
-    assert (
-        "基準ノードのみ"
-        in _row(editor, "translateX").input_indicator.toolTip()
-    )
+        assert row.name_label.toolTip() == ""
+        assert row.input_indicator.toolTip() == ""
+        assert row.editor.toolTip() == ""
     cmds.flushUndo()
     _click(_row(editor, "translateX").input_indicator)
     assert editor.table_view.selected_keys() == _keys(editor, "translateX")
@@ -656,7 +647,7 @@ def test_indicator_tracks_equal_value_keys_time_lock_and_selection(
     assert not row.row.binding.view_model.set_value_command.can_execute
     assert _indicator_color(row) == "#5C6874"
     assert row.row.binding.target_states[0].input_state == "keyed"
-    assert "現在時刻にキーあり" in row.input_indicator.toolTip()
+    assert row.input_indicator.toolTip() == ""
     cmds.setAttr("multiA.translateX", lock=False)
     _events()
     assert _indicator_color(row) == "#CD2729"
@@ -1600,7 +1591,9 @@ def test_layer_input_uses_native_key_target_and_one_undo(
     _events()
     row = _row(editor, "gain")
     assert row.row.binding.writable_count == 1
-    assert layer in row.name_label.toolTip()
+    assert row.name_label.toolTip() == ""
+    description = row.row.binding.target_states[0].edit_description
+    assert description is not None and layer in description
     curves = (
         cast(
             list[str] | None,

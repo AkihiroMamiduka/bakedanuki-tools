@@ -98,7 +98,7 @@ def test_enum_initial_refresh_and_same_index_only_read(
     item = combo.currentData()
     assert isinstance(item, EnumItem) and item.value == 5
     assert not _row(enum_editor).name_label.text().startswith("• ")
-    assert "基準ノードのみ" in combo.toolTip()
+    assert combo.toolTip() == ""
     combo.setCurrentIndex(combo.currentIndex())
     enum_editor.refresh()
     _events()
@@ -202,7 +202,7 @@ def test_enum_mismatched_definitions_are_excluded_on_input(
     _events()
     assert _row(enum_editor, "translate.translateX")
     assert not enum_editor.message_label.isVisible()
-    assert "基準ノードのみ" in _combo(enum_editor).toolTip()
+    assert _combo(enum_editor).toolTip() == ""
     _combo(enum_editor).setCurrentIndex(3)
     assert _values() == [10, 0, 10]
     assert "enumB: enum定義" in enum_editor.message_label.text()
@@ -249,7 +249,7 @@ def test_enum_undefined_representative_can_be_replaced_but_not_aligned(
     assert combo.placeholderText() == "未定義 (2)"
     assert combo.isEnabled()
     assert not _row(enum_editor).context_menu.align_action.isEnabled()
-    assert "未定義 (2)" in combo.toolTip()
+    assert combo.toolTip() == ""
     cmds.flushUndo()
     combo.setCurrentIndex(0)
     assert _values() == [-2, -2, -2]
@@ -266,14 +266,14 @@ def test_enum_lock_and_animation_respect_representative_policy(
     """後続lockを除外し、キー付き基準と未接続の後続へ同じ項目を適用する。"""
     cmds.setAttr("enumB.mode", lock=True)
     _events()
-    assert "基準ノードのみ" in _combo(enum_editor).toolTip()
+    assert _combo(enum_editor).toolTip() == ""
     _combo(enum_editor).setCurrentIndex(3)
     assert _values() == [10, 0, 10]
     cmds.setKeyframe("enumA.mode")
     cmds.autoKeyframe(state=auto_key)
     _events()
     assert _combo(enum_editor).isEnabled()
-    assert "基準ノードのみ" in _combo(enum_editor).toolTip()
+    assert _combo(enum_editor).toolTip() == ""
     cmds.flushUndo()
     _combo(enum_editor).setCurrentIndex(2)
     assert _values() == [5, 0, 5]

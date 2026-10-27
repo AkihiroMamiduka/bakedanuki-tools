@@ -9,6 +9,10 @@
 
 ### Changed
 
+- bdChannelBoxの値編集・表示ロックの属性行から、属性名・入力欄・接続色帯・状態ボタンの
+  説明tooltipを削除。float・整数のStep欄の操作説明も、このツール内では表示しない。
+  接続色・入力制限・Step操作・操作時の通知と、メニュー・管理画面の補助tooltipは維持する。
+  toolsだけを更新し、`bd_tools.reload_package()`で反映する。設定・sceneの移行は不要。
 - bdChannelBoxの共通ヘッダーを、Mode・プリセット・Attribute Filterの順へ変更。
   設定Modeのプリセット新規作成・名前変更も同じ行へ移し、3行のラベルと選択欄の左端を揃える。
   区切り線と全体保存・破棄・管理は3行の下へ配置し、Mode切替でも列位置を維持する。
