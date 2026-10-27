@@ -2972,8 +2972,8 @@ class _MayaSmokeSession:
                 for buttons in (toolbar, global_toolbar)
                 for left, right in zip(buttons, buttons[1:])
             ) or not (
-                panel.save_button.mapToGlobal(qt.QPoint()).y()
-                < panel.preset_combo.mapToGlobal(qt.QPoint()).y()
+                panel.preset_combo.mapToGlobal(qt.QPoint()).y()
+                < panel.save_button.mapToGlobal(qt.QPoint()).y()
                 < panel.target_combo.mapToGlobal(qt.QPoint()).y()
             ):
                 raise AssertionError(
@@ -5006,10 +5006,12 @@ class _MayaSmokeSession:
         from bd_util.ui import qt
 
         widget = self._require_window().widget
+        panel = widget.setup_panel
         saved_mode = widget.controller.mode
         saved_filter = widget.controller.values_attribute_filter
         expected = (
             widget.mode_combo.geometry(),
+            panel.preset_controls.geometry(),
             widget.filter_combo.geometry(),
         )
         for mode in ("states", "custom_filter_setup", "values"):
@@ -5019,10 +5021,34 @@ class _MayaSmokeSession:
                 self._flush_gui()
                 if (
                     widget.mode_combo.geometry(),
+                    panel.preset_controls.geometry(),
                     widget.filter_combo.geometry(),
                 ) != expected:
                     raise AssertionError(
                         "モードまたは検索の切替でヘッダー幅が変わりました"
+                    )
+                if not (
+                    expected[0].bottom() < expected[1].top()
+                    and expected[1].bottom() < expected[2].top()
+                    and widget.preset_combo.mapTo(widget, qt.QPoint()).x()
+                    == widget.mode_combo.x()
+                    == widget.filter_combo.x()
+                ):
+                    raise AssertionError(
+                        "Mode・プリセット・Attribute Filterの順序や列位置が不正です"
+                    )
+                setup = mode == "custom_filter_setup"
+                if panel.preset_label.text() != (
+                    "編集するプリセット:" if setup else "プリセット:"
+                ) or any(
+                    button.isVisible() != setup
+                    for button in (
+                        panel.preset_new_button,
+                        panel.preset_rename_button,
+                    )
+                ):
+                    raise AssertionError(
+                        "モードに応じたプリセット編集操作が表示されません"
                     )
                 separator = widget.header_separator
                 if (
@@ -5038,6 +5064,11 @@ class _MayaSmokeSession:
                     and widget.search_edit.y() <= separator.geometry().bottom()
                 ):
                     raise AssertionError("検索欄が区切り線の下にありません")
+                if setup and (
+                    panel.global_controls.y() <= separator.geometry().bottom()
+                ):
+                    raise AssertionError("全体操作が区切り線の下にありません")
+            self._capture(f"preset-header-{mode}.png")
         widget.controller.set_attribute_filter(saved_filter)
         widget.controller.set_mode(saved_mode)
         self.steps.append("common_header_geometry_across_modes_and_search")

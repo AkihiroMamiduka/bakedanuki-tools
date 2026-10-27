@@ -1435,27 +1435,6 @@ class ChannelBoxWidget(qt.QWidget):
             "Nice Name・属性名・正式pathを、大文字小文字を区別せず検索します。\n"
             "空白で区切った語は、すべて含む属性だけを表示します。"
         )
-        # 共通ヘッダーを検索欄から分離し、表示切替による列幅の変化を防ぐ
-        controls_layout = qt.QGridLayout()
-        controls_layout.setContentsMargins(0, 0, 0, 0)
-        controls_layout.setSpacing(6)
-        controls_layout.setColumnStretch(1, 1)
-        for index, (label, control) in enumerate(
-            (
-                (self.mode_label, self.mode_combo),
-                (self.filter_label, self.filter_combo),
-            )
-        ):
-            label.setAlignment(
-                qt.Qt.AlignmentFlag.AlignRight
-                | qt.Qt.AlignmentFlag.AlignVCenter
-            )
-            label.setBuddy(control)
-            control.setSizePolicy(
-                qt.QSizePolicy.Policy.Ignored, qt.QSizePolicy.Policy.Fixed
-            )
-            controls_layout.addWidget(label, index, 0)
-            controls_layout.addWidget(control, index, 1)
         self.header_separator = qt.QFrame(self)
         self.header_separator.setObjectName("channelBoxHeaderSeparator")
         self.header_separator.setFrameShape(qt.QFrame.Shape.HLine)
@@ -1529,6 +1508,39 @@ class ChannelBoxWidget(qt.QWidget):
         self.preset_combo = self.setup_panel.preset_combo
         self.setup_panel.set_setup_mode(False)
         self.setup_panel.hide()
+        # プリセットのラベルも共通列へ移し、設定時の長い表記の幅を確保する
+        preset_label = self.setup_panel.preset_label
+        preset_layout = self.setup_panel.preset_controls.layout()
+        assert preset_layout is not None
+        preset_layout.removeWidget(preset_label)
+        preset_label.setMinimumWidth(
+            preset_label.fontMetrics().horizontalAdvance("編集するプリセット:")
+        )
+        controls_layout = qt.QGridLayout()
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(6)
+        controls_layout.setColumnStretch(1, 1)
+        for index, (label, control, row_widget) in enumerate(
+            (
+                (self.mode_label, self.mode_combo, self.mode_combo),
+                (
+                    preset_label,
+                    self.preset_combo,
+                    self.setup_panel.preset_controls,
+                ),
+                (self.filter_label, self.filter_combo, self.filter_combo),
+            )
+        ):
+            label.setAlignment(
+                qt.Qt.AlignmentFlag.AlignRight
+                | qt.Qt.AlignmentFlag.AlignVCenter
+            )
+            label.setBuddy(control)
+            control.setSizePolicy(
+                qt.QSizePolicy.Policy.Ignored, qt.QSizePolicy.Policy.Fixed
+            )
+            controls_layout.addWidget(label, index, 0)
+            controls_layout.addWidget(row_widget, index, 1)
         self.empty_label = qt.QLabel("", self)
         self.empty_label.setWordWrap(True)
         layout = qt.QVBoxLayout(self)
@@ -1537,9 +1549,8 @@ class ChannelBoxWidget(qt.QWidget):
         layout.setMenuBar(self.menu_bar)
         layout.addLayout(controls_layout)
         layout.addWidget(self.header_separator)
-        # 設定用の全体操作と、全モード共通のプリセット行を同じ場所で使う
+        # 設定用の全体操作は共通ヘッダーの下に配置する
         layout.addWidget(self.setup_panel.global_controls)
-        layout.addWidget(self.setup_panel.preset_controls)
         layout.addLayout(search_layout)
         layout.addWidget(self.filter_fallback_label)
         layout.addLayout(self.header_layout)

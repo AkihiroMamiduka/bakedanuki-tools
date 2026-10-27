@@ -114,27 +114,71 @@ def search_editor(
 def test_common_header_stays_aligned_across_modes_and_search_visibility(
     search_editor: ChannelBoxWidget, width: int
 ) -> None:
-    """同じWindow幅ではモードや検索の有無を変えても共通2行の配置を保つ。"""
+    """共通3行の順序と列位置を保ち、設定時だけプリセット編集を表示する。"""
     editor = search_editor
+    panel = editor.setup_panel
     editor.resize(width, 720)
     _events()
-    expected = (editor.mode_combo.geometry(), editor.filter_combo.geometry())
+    expected = (
+        editor.mode_combo.geometry(),
+        panel.preset_controls.geometry(),
+        editor.filter_combo.geometry(),
+    )
     for mode in ("states", "custom_filter_setup", "values"):
         editor.controller.set_mode(mode)
         for value in ("all", "visible"):
             _set_filter(editor, value)
-            assert editor.mode_combo.geometry() == expected[0]
-            assert editor.filter_combo.geometry() == expected[1]
+            assert (
+                editor.mode_combo.geometry(),
+                panel.preset_controls.geometry(),
+                editor.filter_combo.geometry(),
+            ) == expected
+            assert expected[0].bottom() < expected[1].top()
+            assert expected[1].bottom() < expected[2].top()
+            assert (
+                editor.preset_combo.mapTo(editor, qt.QPoint()).x()
+                == editor.mode_combo.x()
+                == editor.filter_combo.x()
+            )
+            assert (
+                panel.preset_label.geometry().right()
+                == editor.mode_label.geometry().right()
+                == editor.filter_label.geometry().right()
+            )
+            setup = mode == "custom_filter_setup"
+            assert panel.preset_label.text() == (
+                "編集するプリセット:" if setup else "プリセット:"
+            )
+            for button in (
+                panel.preset_new_button,
+                panel.preset_rename_button,
+            ):
+                assert button.isVisible() == setup
+                if setup:
+                    assert (
+                        abs(
+                            button.mapTo(editor, button.rect().center()).y()
+                            - editor.preset_combo.mapTo(
+                                editor, editor.preset_combo.rect().center()
+                            ).y()
+                        )
+                        <= 1
+                    )
             separator = editor.header_separator
             assert separator.isVisible()
             assert separator.frameShape() == qt.QFrame.Shape.HLine
             assert separator.y() > editor.filter_combo.geometry().bottom()
+            if setup:
+                assert (
+                    panel.global_controls.y() > separator.geometry().bottom()
+                )
             if editor.search_edit.isVisible():
                 assert editor.search_edit.y() > separator.geometry().bottom()
     editor.resize(width + 100, 720)
     _events()
     assert editor.mode_combo.width() > expected[0].width()
-    assert editor.filter_combo.width() > expected[1].width()
+    assert panel.preset_controls.width() > expected[1].width()
+    assert editor.filter_combo.width() > expected[2].width()
 
 
 def test_search_visibility_has_three_exclusive_modes(
