@@ -375,6 +375,7 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.discard_button.clicked.connect(self.discard)
         self.registry.changed.connect(self.refresh_entries)
         self.registry.path_changed.connect(self._replace_draft_path)
+        self.registry.path_removed.connect(self._remove_draft_path)
         self.refresh_entries()
         self._refresh_view()
 
@@ -498,6 +499,11 @@ class CustomFilterSetupPanel(qt.QWidget):
                 path,
                 position=self._popup_position(),
             )
+
+    def _remove_draft_path(self, path: str) -> None:
+        """実削除したフィルターを編集下書きからも外す。"""
+        if self.draft is not None and self.draft.path == path:
+            self._load_target(None)
 
     def _replace_draft_path(self, old_path: str, new_path: str) -> None:
         """全体保存中の改名通知では作業中の同じ下書きを維持する。"""

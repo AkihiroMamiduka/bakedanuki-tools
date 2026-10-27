@@ -393,8 +393,8 @@ def test_export_tracks_the_initial_target_after_save_rename(
         anchors.append(qt.QPoint(anchor))
         assert Path(directory) == tmp_path
         assert initial_size == qt.QSize(
-            config.EXPORT_DIRECTORY_DIALOG_WIDTH,
-            config.EXPORT_DIRECTORY_DIALOG_HEIGHT,
+            config.PATH_DIALOG_WIDTH,
+            config.PATH_DIALOG_HEIGHT,
         )
         return str(tmp_path)
 
@@ -534,8 +534,8 @@ def test_filter_export_preserves_multiple_paths_and_dialog_anchor(
         return qt.QDialog.DialogCode.Accepted.value
 
     monkeypatch.setattr(manager, "_dialog_position", position)
-    monkeypatch.setattr(config, "EXPORT_DIRECTORY_DIALOG_WIDTH", 1100)
-    monkeypatch.setattr(config, "EXPORT_DIRECTORY_DIALOG_HEIGHT", 620)
+    monkeypatch.setattr(config, "PATH_DIALOG_WIDTH", 1100)
+    monkeypatch.setattr(config, "PATH_DIALOG_HEIGHT", 620)
     monkeypatch.setattr(
         manager_module, "confirm_export_save", refuse_confirmation
     )

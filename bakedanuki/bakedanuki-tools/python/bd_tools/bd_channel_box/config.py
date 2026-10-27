@@ -1,17 +1,18 @@
 # coding: utf-8
-"""bdChannelBoxの表示順とエクスポート画面の初期サイズを調整する設定。"""
+"""bdChannelBoxの表示順と、パス選択画面共通の初期サイズを調整する設定。"""
 
 __all__ = [
     "ATTRIBUTE_PRIORITY_PATHS",
-    "EXPORT_DIRECTORY_DIALOG_WIDTH",
-    "EXPORT_DIRECTORY_DIALOG_HEIGHT",
+    "PATH_DIALOG_WIDTH",
+    "PATH_DIALOG_HEIGHT",
 ]
 
-# エクスポート先選択の初期幅・高さをQtの論理ピクセルで直接指定する
+# 新規作成・追加・複製・移動・エクスポートの初期幅・高さを直接指定する
+# 単位はQtの論理ピクセルとする
 # 値を変更した後はbd_tools.reload_package()で再読込みする
 # 画面より大きい場合は作業領域へ収め、表示後は手動リサイズも可能とする
-EXPORT_DIRECTORY_DIALOG_WIDTH: int = 1200
-EXPORT_DIRECTORY_DIALOG_HEIGHT: int = 650
+PATH_DIALOG_WIDTH: int = 1200
+PATH_DIALOG_HEIGHT: int = 650
 
 # 上から順に優先表示する属性の正式な相対pathを指定する
 # 順番の変更・追加・削除後はbd_tools.reload_package()で再読込みする

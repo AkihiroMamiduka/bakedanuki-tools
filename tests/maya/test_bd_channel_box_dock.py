@@ -446,7 +446,7 @@ def test_custom_filter_manager_keeps_errors_and_controls_visibility(
     assert tree.topLevelItem(0).text(0) == first.stem
     assert tree.topLevelItem(0).text(1) == paths[0]
     assert tree.topLevelItem(0).toolTip(1) == paths[0]
-    assert tree.topLevelItem(0).text(2) == "読込済み"
+    assert tree.topLevelItem(0).text(2) == "済"
     assert tree.topLevelItem(2).text(2) == "読込エラー"
     read_error = widget.custom_filter_registry.entries[2].error
     assert read_error is not None
@@ -476,7 +476,7 @@ def test_custom_filter_manager_keeps_errors_and_controls_visibility(
     widget.custom_filter_registry.save()
     dialog.reload_all_button.click()
     assert widget.custom_filter_registry.entries[2].error is None
-    assert tree.topLevelItem(2).text(2) == "読込済み"
+    assert tree.topLevelItem(2).text(2) == "済"
     assert "読込エラー" not in tree.topLevelItem(2).toolTip(2)
     assert widget.filter_combo.count() == 7
     tree.topLevelItem(1).setCheckState(0, qt.Qt.CheckState.Checked)
@@ -1172,7 +1172,7 @@ def test_custom_filter_manager_visibility_is_independent_of_read_errors(
     assert widget.filter_combo.count() == 7
     _click_registration_eye(tree, 1)
     assert not registry.entries[1].enabled
-    assert tree.topLevelItem(1).text(2) == "読込済み"
+    assert tree.topLevelItem(1).text(2) == "済"
     assert widget.filter_combo.count() == 6
 
 
@@ -1210,7 +1210,7 @@ def test_custom_filter_manager_shows_only_registration_storage_errors(
     registry.changed.emit()
     assert dialog.storage_error_label.isVisible()
     assert dialog.storage_error_label.text() == storage_failure
-    assert dialog.tree_widget.topLevelItem(0).text(2) == "読込済み"
+    assert dialog.tree_widget.topLevelItem(0).text(2) == "済"
     storage_failure = None
     registry.changed.emit()
     assert dialog.storage_error_label.isHidden()

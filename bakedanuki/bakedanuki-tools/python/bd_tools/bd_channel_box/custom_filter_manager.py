@@ -11,7 +11,6 @@ from typing import Literal, cast
 from bd_util.maya.ui import get_existing_directory_near
 from bd_util.ui import (
     exec_dialog_near,
-    get_open_file_names_near,
     qt,
 )
 from bd_util.ui import dialog as ui_dialog
@@ -21,6 +20,9 @@ from . import config
 from .custom_filter_dialogs import (
     CustomFilterExportCompleteDialog,
     confirm_export_save,
+    confirm_file_operation_save,
+    confirm_file_delete,
+    get_open_file_names_near,
     create_registered_filter,
     create_registered_preset,
     initial_filter_directory,
@@ -83,6 +85,19 @@ def _configure_button(
     button.setAccessibleName(label)
 
 
+def _set_load_status(item: qt.QTreeWidgetItem, error: str | None) -> None:
+    """読込状態だけにエラー色を付け、回復時は標準色へ戻す。"""
+    item.setText(2, "済" if error is None else "読込エラー")
+    item.setForeground(
+        2,
+        (
+            qt.QtGui.QBrush(qt.QColor(255, 96, 96))
+            if error is not None
+            else qt.QtGui.QBrush()
+        ),
+    )
+
+
 class _PresetSection(qt.QWidget):
     """上位ドキュメントの見出し、操作列、一覧をまとめる。"""
 
@@ -97,7 +112,9 @@ class _PresetSection(qt.QWidget):
         self.add_button = create_manager_tool_button(self)
         self.duplicate_button = create_manager_tool_button(self)
         self.rename_button = create_manager_tool_button(self)
+        self.move_file_button = create_manager_tool_button(self)
         self.remove_button = create_manager_tool_button(self)
+        self.delete_file_button = create_manager_tool_button(self)
         self.move_up_button = create_manager_tool_button(self)
         self.move_down_button = create_manager_tool_button(self)
         self.export_button = create_manager_tool_button(self)
@@ -105,7 +122,7 @@ class _PresetSection(qt.QWidget):
         toolbar.setSpacing(4)
         for button, label, icon in (
             (self.new_button, f"{name}を新規作成", "fileNew.png"),
-            (self.add_button, f"既存の{name}を追加", "item_add.png"),
+            (self.add_button, f"既存の{name}を追加", "UVTBAdd.png"),
             (self.duplicate_button, f"選択した{name}を複製", "polyCopyUV.png"),
             (
                 self.rename_button,
@@ -113,8 +130,18 @@ class _PresetSection(qt.QWidget):
                 "fileTextureEdit.png",
             ),
             (
+                self.move_file_button,
+                f"選択した{name}のファイルを移動",
+                "selectByHierarchy.png",
+            ),
+            (
                 self.remove_button,
-                "登録から削除（JSONファイルは削除しません）",
+                "除外（JSONファイルは残します）",
+                "UVTBRemove.png",
+            ),
+            (
+                self.delete_file_button,
+                f"選択した{name}のファイルを削除",
                 "RS_delete.png",
             ),
             (self.move_up_button, "上へ", "nodeGrapherArrowUp.png"),
@@ -185,7 +212,9 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.group_add_button = self._group_section.add_button
         self.group_duplicate_button = self._group_section.duplicate_button
         self.group_rename_button = self._group_section.rename_button
+        self.group_move_file_button = self._group_section.move_file_button
         self.group_remove_button = self._group_section.remove_button
+        self.group_delete_file_button = self._group_section.delete_file_button
         self.group_move_up_button = self._group_section.move_up_button
         self.group_move_down_button = self._group_section.move_down_button
         self.group_export_button = self._group_section.export_button
@@ -194,7 +223,11 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.preset_add_button = self._preset_section.add_button
         self.preset_duplicate_button = self._preset_section.duplicate_button
         self.preset_rename_button = self._preset_section.rename_button
+        self.preset_move_file_button = self._preset_section.move_file_button
         self.preset_remove_button = self._preset_section.remove_button
+        self.preset_delete_file_button = (
+            self._preset_section.delete_file_button
+        )
         self.preset_move_up_button = self._preset_section.move_up_button
         self.preset_move_down_button = self._preset_section.move_down_button
         self.preset_export_button = self._preset_section.export_button
@@ -228,7 +261,9 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.duplicate_button = create_manager_tool_button(self)
         self.duplicate_button.setObjectName("duplicateCustomFilterButton")
         self.rename_button = create_manager_tool_button(self)
+        self.move_file_button = create_manager_tool_button(self)
         self.remove_button = create_manager_tool_button(self)
+        self.delete_file_button = create_manager_tool_button(self)
         self.move_up_button = create_manager_tool_button(self)
         self.move_down_button = create_manager_tool_button(self)
         self.export_button = create_manager_tool_button(self)
@@ -240,7 +275,7 @@ class CustomFilterManagerDialog(qt.QDialog):
             (
                 self.add_button,
                 "既存のカスタムフィルターを追加",
-                "item_add.png",
+                "UVTBAdd.png",
             ),
             (
                 self.duplicate_button,
@@ -253,8 +288,18 @@ class CustomFilterManagerDialog(qt.QDialog):
                 "fileTextureEdit.png",
             ),
             (
+                self.move_file_button,
+                "選択したカスタムフィルターのファイルを移動",
+                "selectByHierarchy.png",
+            ),
+            (
                 self.remove_button,
-                "登録から削除（JSONファイルは削除しません）",
+                "除外（JSONファイルは残します）",
+                "UVTBRemove.png",
+            ),
+            (
+                self.delete_file_button,
+                "選択したカスタムフィルターのファイルを削除",
                 "RS_delete.png",
             ),
             (self.move_up_button, "上へ", "nodeGrapherArrowUp.png"),
@@ -330,6 +375,12 @@ class CustomFilterManagerDialog(qt.QDialog):
             section.remove_button.clicked.connect(
                 partial(self._remove_documents, typed_kind)
             )
+            section.move_file_button.clicked.connect(
+                partial(self._file_operation, typed_kind, False)
+            )
+            section.delete_file_button.clicked.connect(
+                partial(self._file_operation, typed_kind, True)
+            )
             section.move_up_button.clicked.connect(
                 partial(self._move_documents, typed_kind, -1)
             )
@@ -346,6 +397,12 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.duplicate_button.clicked.connect(self._duplicate_selected)
         self.rename_button.clicked.connect(self._rename_filter)
         self.remove_button.clicked.connect(self._remove_selected)
+        self.move_file_button.clicked.connect(
+            partial(self._file_operation, "filter", False)
+        )
+        self.delete_file_button.clicked.connect(
+            partial(self._file_operation, "filter", True)
+        )
         self.move_up_button.clicked.connect(self._move_up)
         self.move_down_button.clicked.connect(self._move_down)
         self.export_button.clicked.connect(partial(self._export, "filter"))
@@ -494,7 +551,7 @@ class CustomFilterManagerDialog(qt.QDialog):
         )
         item.setText(0, name)
         item.setText(1, entry.path)
-        item.setText(2, "読込済み" if entry.error is None else "読込エラー")
+        _set_load_status(item, entry.error)
         item.setData(0, qt.Qt.ItemDataRole.UserRole, entry.path)
         item.setFlags(item.flags() | qt.Qt.ItemFlag.ItemIsUserCheckable)
         item.setCheckState(
@@ -517,7 +574,7 @@ class CustomFilterManagerDialog(qt.QDialog):
         """上位JSONの予定名と未保存印、実パス、読込結果を描画する。"""
         item.setText(0, entry.name + (" *" if entry.is_dirty else ""))
         item.setText(1, entry.destination_path)
-        item.setText(2, "読込済み" if entry.error is None else "読込エラー")
+        _set_load_status(item, entry.error)
         item.setData(0, qt.Qt.ItemDataRole.UserRole, entry.path)
         item.setToolTip(0, entry.name)
         item.setToolTip(1, entry.destination_path)
@@ -790,6 +847,18 @@ class CustomFilterManagerDialog(qt.QDialog):
             len(indices) == 1 and single is not None and single.error is None
         )
         section.remove_button.setEnabled(bool(indices))
+        files_exist = bool(selected) and all(
+            Path(path).is_file() for path in selected
+        )
+        section.move_file_button.setEnabled(
+            files_exist
+            and all(
+                entry.error is None
+                for entry in entries
+                if entry.path in selected
+            )
+        )
+        section.delete_file_button.setEnabled(files_exist)
         section.move_up_button.setEnabled(bool(indices) and indices[0] > 0)
         section.move_down_button.setEnabled(
             bool(indices) and indices[-1] < len(entries) - 1
@@ -813,6 +882,11 @@ class CustomFilterManagerDialog(qt.QDialog):
         self.new_button.setEnabled(editable)
         self.add_button.setEnabled(editable)
         self.remove_button.setEnabled(bool(indices))
+        files_exist = bool(selected) and all(
+            Path(path).is_file() for path in selected
+        )
+        self.move_file_button.setEnabled(files_exist)
+        self.delete_file_button.setEnabled(files_exist)
         single = (
             len(indices) == 1
             and entry is not None
@@ -1069,6 +1143,83 @@ class CustomFilterManagerDialog(qt.QDialog):
         """選択フィルターの相対順を保ち、一段下へ移動する。"""
         self.registry.move_many(self._selected_paths(), 1)
 
+    def _file_operation(self, kind: ExportKind, deleting: bool) -> None:
+        """保存前の選択を改名後も追跡し、実ファイルの移動または削除を行う。"""
+        tree = (
+            self.tree_widget if kind == "filter" else self._section(kind).tree
+        )
+        paths = list(self._tree_selected_paths(tree))
+        if not paths:
+            return
+        position = self._popup_position()
+
+        def replace_filter(old: str, new: str) -> None:
+            """選択したフィルターの保存時改名を追跡する。"""
+            if kind == "filter":
+                paths[:] = [new if path == old else path for path in paths]
+
+        def replace_document(changed_kind: str, old: str, new: str) -> None:
+            """選択した上位文書の保存時改名を追跡する。"""
+            if kind == changed_kind:
+                paths[:] = [new if path == old else path for path in paths]
+
+        self.registry.path_changed.connect(replace_filter)
+        self.registry.document_path_changed.connect(replace_document)
+        try:
+            if self._export_changes_pending():
+                if not confirm_file_operation_save(self, position):
+                    return
+                if self._save_changes is not None:
+                    if not self._save_changes():
+                        return
+                else:
+                    self.registry.save()
+                if self._export_changes_pending():
+                    return
+            if deleting:
+                plan = self.registry.prepare_file_delete(kind, paths)
+                if not confirm_file_delete(self, plan, position):
+                    return
+                self.registry.delete_files(plan)
+            else:
+                directory = get_existing_directory_near(
+                    self,
+                    "移動先のフォルダーを選択",
+                    str(Path(paths[0]).parent),
+                    position,
+                    initial_size=qt.QSize(
+                        config.PATH_DIALOG_WIDTH, config.PATH_DIALOG_HEIGHT
+                    ),
+                )
+                if not directory:
+                    return
+                moved = set(self.registry.move_files(kind, paths, directory))
+                self._refresh()
+                blocked = tree.blockSignals(True)
+                try:
+                    for index in range(tree.topLevelItemCount()):
+                        item = tree.topLevelItem(index)
+                        item.setSelected(self._item_path(item) in moved)
+                finally:
+                    tree.blockSignals(blocked)
+        except (CustomFilterError, OSError, RuntimeError, ValueError) as error:
+            ui_dialog.warning_near(
+                self,
+                (
+                    "ファイルを削除できません"
+                    if deleting
+                    else "ファイルを移動できません"
+                ),
+                str(error),
+                position,
+            )
+        finally:
+            self.registry.path_changed.disconnect(replace_filter)
+            self.registry.document_path_changed.disconnect(replace_document)
+            self._sync_selection()
+            self._sync_document_buttons("preset_group")
+            self._sync_document_buttons("preset")
+
     def _export_paths(self, kind: ExportKind) -> tuple[str, ...]:
         """選択行を全件検証し、上位一件または正常な複数フィルターを返す。"""
         tree = (
@@ -1145,8 +1296,8 @@ class CustomFilterManagerDialog(qt.QDialog):
                 str(Path(paths[0]).parent),
                 position,
                 initial_size=qt.QSize(
-                    config.EXPORT_DIRECTORY_DIALOG_WIDTH,
-                    config.EXPORT_DIRECTORY_DIALOG_HEIGHT,
+                    config.PATH_DIALOG_WIDTH,
+                    config.PATH_DIALOG_HEIGHT,
                 ),
             )
             if not directory:

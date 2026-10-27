@@ -8,6 +8,7 @@ import json
 import os
 import stat
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
@@ -19,6 +20,7 @@ __all__ = [
     "FilterReference",
     "PresetDocument",
     "FileUpdate",
+    "FileDeletion",
     "commit_file_updates",
     "create_preset_document",
     "read_preset_document",
@@ -102,6 +104,14 @@ class FileUpdate:
     destination: str
     content: bytes
     source_digest: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class FileDeletion:
+    """内容を再確認してから削除する、一件の実ファイルを保持する。"""
+
+    source: str
+    source_digest: str
 
 
 def _digest(content: bytes) -> str:
@@ -243,6 +253,7 @@ def _validate_update(update: FileUpdate) -> None:
                 f"保存元を読み込めません: {source}（{error}）"
             ) from error
         _check_writable(source)
+        _check_writable(source.parent)
     if destination.exists():
         if update.source is None or normalize_filter_path(
             destination
@@ -318,24 +329,48 @@ def _rollback(
         if normalize_filter_path(destination) in original_ids:
             continue
         try:
-            if (
-                destination.exists()
-                and destination.read_bytes() == update.content
-            ):
+            if destination.exists():
+                if destination.read_bytes() != update.content:
+                    raise OSError(
+                        "保存中に移動先が別の内容へ更新されたため復元を中止しました"
+                    )
                 destination.unlink()
         except OSError as error:
             errors.append(f"{destination}: {error}")
     return tuple(errors)
 
 
-def commit_file_updates(updates: tuple[FileUpdate, ...]) -> None:
-    """全件検証と一時保存の後に確定し、失敗時は今回の内容を巻き戻す。"""
-    if not updates:
+def _validate_deletion(deletion: FileDeletion) -> None:
+    """削除元の内容と書込可否を再確認し、確認後の外部変更を保護する。"""
+    source = Path(deletion.source)
+    if (
+        not source.is_file()
+        or _digest(source.read_bytes()) != deletion.source_digest
+    ):
+        raise CustomFilterError(f"削除対象が外部で変更されました: {source}")
+    _check_writable(source)
+    _check_writable(source.parent)
+
+
+def commit_file_updates(
+    updates: tuple[FileUpdate, ...],
+    deletions: tuple[FileDeletion, ...] = (),
+    *,
+    finalize: Callable[[], None] | None = None,
+) -> None:
+    """全件検証後に保存・移動・削除を確定し、失敗時は今回の内容を戻す。
+
+    `finalize`はファイル操作後に登録情報などを確定する処理です。
+    この処理の失敗も巻戻し対象です。OSや他者の変更により復元できない場合は、
+    対象を含めた`CustomFilterError`を返します。
+    """
+    if not updates and not deletions:
         return
     originals: dict[str, bytes] = {}
     temporaries: list[Path] = []
     destinations: set[str] = set()
     applied: list[FileUpdate] = []
+    removed: set[str] = set()
     try:
         # 競合を先に検査し、一件の検証失敗でほかのJSONを更新しない
         for update in updates:
@@ -348,12 +383,33 @@ def commit_file_updates(updates: tuple[FileUpdate, ...]) -> None:
             _validate_update(update)
             if update.source is not None:
                 originals[update.source] = Path(update.source).read_bytes()
+        deleted_ids: set[str] = set()
+        source_ids = {
+            normalize_filter_path(update.source)
+            for update in updates
+            if update.source is not None
+        }
+        for deletion in deletions:
+            source_id = normalize_filter_path(deletion.source)
+            if (
+                source_id in deleted_ids
+                or source_id in destinations
+                or source_id in source_ids
+            ):
+                raise CustomFilterError(
+                    f"保存と削除の対象が重複しています: {deletion.source}"
+                )
+            deleted_ids.add(source_id)
+            _validate_deletion(deletion)
+            originals[deletion.source] = Path(deletion.source).read_bytes()
         for update in updates:
             temporaries.append(
                 _temporary(Path(update.destination), update.content)
             )
         for update in updates:
             _validate_update(update)
+        for deletion in deletions:
+            _validate_deletion(deletion)
 
         # 新しい参照元をすべて用意してから、改名前のファイルを削除する
         for update, temporary in zip(updates, temporaries, strict=True):
@@ -379,7 +435,14 @@ def commit_file_updates(updates: tuple[FileUpdate, ...]) -> None:
                         f"共有ファイルが外部で変更されました: {update.source}"
                     )
                 Path(update.source).unlink()
-    except (OSError, CustomFilterError) as error:
+        # 参照元をすべて保存してから、確認時と同じ内容の実ファイルだけを削除する
+        for deletion in deletions:
+            _validate_deletion(deletion)
+            Path(deletion.source).unlink()
+            removed.add(normalize_filter_path(deletion.source))
+        if finalize is not None:
+            finalize()
+    except Exception as error:
         applied_sources = {
             normalize_filter_path(update.source)
             for update in applied
@@ -388,10 +451,12 @@ def commit_file_updates(updates: tuple[FileUpdate, ...]) -> None:
         rollback_originals = {
             path: content
             for path, content in originals.items()
-            if normalize_filter_path(path) in applied_sources
+            if normalize_filter_path(path) in applied_sources | removed
         }
         rollback_errors = (
-            _rollback(tuple(applied), rollback_originals) if applied else ()
+            _rollback(tuple(applied), rollback_originals)
+            if applied or removed
+            else ()
         )
         detail = (
             "\n復元できない項目: " + "／".join(rollback_errors)

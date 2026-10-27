@@ -958,6 +958,79 @@ runnerが起動した専用processは停止し、残存していないことを�
 終了時の根因と今回の変更との関連は未確定で、通常環境での正常終了まで
 検証済みとは扱いません。
 
+### 削除確認の補足文言の整理（2026-10-27）
+
+参照元0件は「更新する参照元ファイル（0件）」と空の一覧で示し、
+重複する説明文とグループ登録情報の更新を説明する補足文を削除しました。
+登録整理の処理は維持します。
+Maya 2025の関連UIテスト17件、Pyright、Black、`git diff --check`が成功しました。
+
+### 削除確認の対象別参照元表示（2026-10-26）
+
+対象別の参照元は削除予定の生成時に確定し、直接参照していて実際に書き換える共有JSONだけを
+表示します。共有する親は各対象へ表示し、書換え予定全体では一回にまとめます。
+単体テストでは共有・異なる親・未参照対象・プリセットグループ・順序の保持を確認します。
+Maya UIテストではコンボの切替に伴う参照元と件数・0件の空一覧・全文ツールチップを確認し、
+確認対象を切り替えた後もOKは元の全件を削除、Cancelは全ファイルを保持することを検証します。
+実Mayaの`--file-operations-only`でも、3階層で複数対象の確認切替と取消、
+全件数を表示する確定ボタン、参照元0件の空一覧を確認します。
+
+追加した単体6件を含むunit全135件、Maya 2025・2026・2027の関連runtime各36件が成功しました。
+3バージョンのPyright、Black、`git diff --check`も通過しています。今回はtoolsだけを変更し、
+`bd_tools.reload_package()`で反映します。実画面の結果保存先は次のとおりです。
+
+| Maya | `%TEMP%`内の確認ディレクトリ |
+| --- | --- |
+| 2025 | `bd-channel-box-maya2025-9faxno6f` |
+| 2026 | `bd-channel-box-maya2026-sblapmss` |
+| 2027 | `bd-channel-box-maya2027-jdvilsnu` |
+
+上表の3バージョンとも`result.json`は`success: true`／`error: null`です。
+確認切替・参照元一覧・全件削除・取消の操作は成功しましたが、
+検証用Mayaの終了待ちは全てtimeoutとなり、runnerの終了codeは1です。
+実画面の操作成功とMaya本体の正常終了は分けて扱います。
+
+### 管理JSONの実ファイル移動・削除とパス選択統一（2026-10-26）
+
+`test_bd_channel_box_file_operations.py`と`test_bd_channel_box_file_operation_ui.py`で、
+3階層の複数移動・削除、全共有親の参照更新、相対参照の再計算、OFFと順序の維持、
+同じフォルダーへの移動、同名衝突、読取専用、壊れたJSON、確認後の外部変更、
+保存確認の取消・失敗・変更残存・改名後の対象追跡、編集対象の解除を検証します。
+途中のファイル削除と個人設定確定を失敗させ、ファイル・メモリー・個人設定の復元を確認します。
+状態列のエラー色は選択時のpaletteと再読込後の解除も検査します。
+単体の実削除復元と、外部再作成・外部更新を保護して復元不能箇所を報告する検証は
+`tests/unit/test_bd_channel_box_file_delete.py`に置きます。
+
+toolsのunitは129件、Maya 2025・2026・2027の全runtimeは各824件を通過しました。
+追加した読取専用・衝突・編集解除4件を含む対象29件も全3バージョンで通過しています。
+3バージョンのPyright、Black、両リポジトリの`git diff --check`を確認しました。
+utilは最終の`verify.cmd`が成功し、Maya 2025 full pytest 8495件と、全3バージョンの
+Qt UI各1170件・Maya UI各1035件を通過しました。
+
+実Mayaの`--dialogs-only`は新規作成・追加・複製・移動と設定モードの新規作成を開き、
+Maya標準の編集可能なアドレス欄、共通寸法、画面端への配置と取消を確認します。
+操作数増加に合わせ、全操作の配置確認は先頭モニターの両端で行います。
+汎用Qtの上書き確認の配置は引き続き全モニターで確認します。
+`--file-operations-only`は一時JSONだけで、全3段のアイコンと配置、複数移動、
+キャンセルが既定の削除確認、実削除、子ファイルの維持と全親参照更新を確認します。
+全3バージョンで実画面の操作結果を確認しました。Maya本体の終了待機が時間切れになる場合は、
+`result.json`の操作結果とrunnerの終了コードを分けて記録します。
+
+| Maya | `%TEMP%`内の最終確認ディレクトリ | runnerの終了 |
+| --- | --- | --- |
+| 2025 | `bd-channel-box-maya2025-zebvu0f9` | 操作成功後の終了待ちtimeout、code 1 |
+| 2026 | `bd-channel-box-maya2026-fe0_vbln` | 操作成功後、Maya終了時のstack trace、code 1 |
+| 2027 | `bd-channel-box-maya2027-0m3hl2hv` | 操作成功後の終了待ちtimeout、code 1 |
+
+上表の`result.json`はいずれも`success: true`／`error: null`です。
+2026の終了ログにはArnoldのunload後のstack traceがありますが、原因と今回の変更との関連は
+未確定です。通常環境でのMayaの正常終了まで確認済みとは扱いません。
+
+```powershell
+.\.venv-format\Scripts\python.exe -B scripts/test_bd_channel_box_maya.py --maya-version 2026 --util-root ../bakedanuki-util --dialogs-only --timeout 180
+.\.venv-format\Scripts\python.exe -B scripts/test_bd_channel_box_maya.py --maya-version 2027 --util-root ../bakedanuki-util --file-operations-only --timeout 90
+```
+
 ### Maya標準の保存先選択と初期サイズの直接指定（2026-10-25）
 
 unit 125件、Maya 2025／2026／2027の全runtime test各778件、

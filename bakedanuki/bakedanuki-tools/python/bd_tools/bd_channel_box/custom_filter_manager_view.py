@@ -61,6 +61,32 @@ class _PathStyleOption(Protocol):
     textElideMode: qt.Qt.TextElideMode
 
 
+class _StatusStyleOption(Protocol):
+    """選択中も状態列の文字色を維持する公開palette属性を型付けする。"""
+
+    palette: qt.QPalette
+
+
+class _LoadStatusDelegate(qt.QStyledItemDelegate):
+    """読込エラーの文字色を、行選択のハイライト上でも維持する。"""
+
+    def initStyleOption(
+        self,
+        option: qt.QtWidgets.QStyleOptionViewItem,
+        index: qt.QModelIndex | qt.QtCore.QPersistentModelIndex,
+    ) -> None:
+        """明示した前景色がある状態だけ、選択時の文字色にも適用する。"""
+        super().initStyleOption(option, index)
+        brush: object = index.data(qt.Qt.ItemDataRole.ForegroundRole)
+        if (
+            isinstance(brush, qt.QtGui.QBrush)
+            and brush.style() != qt.Qt.BrushStyle.NoBrush
+        ):
+            cast(_StatusStyleOption, option).palette.setBrush(
+                qt.QPalette.ColorRole.HighlightedText, brush
+            )
+
+
 class _FilePathDelegate(qt.QStyledItemDelegate):
     """実パスを保持したまま、末尾のファイル名を優先して描画する。"""
 
@@ -141,6 +167,8 @@ class CustomFilterRegistrationTree(qt.QTreeWidget):
             self.setItemDelegateForColumn(0, self._visibility_delegate)
         self._path_delegate = _FilePathDelegate(self)
         self.setItemDelegateForColumn(1, self._path_delegate)
+        self._status_delegate = _LoadStatusDelegate(self)
+        self.setItemDelegateForColumn(2, self._status_delegate)
         self._eye_gesture = False
         self._eye_press: qt.QtCore.QPersistentModelIndex | None = None
         self._eye_press_position = qt.QPoint()

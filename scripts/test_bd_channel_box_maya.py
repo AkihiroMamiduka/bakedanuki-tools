@@ -35,6 +35,7 @@ _CONNECTIONS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CONNECTIONS_ONLY"
 _CUSTOM_FILTERS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CUSTOM_FILTERS_ONLY"
 _DIALOGS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_DIALOGS_ONLY"
 _EXPORTS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_EXPORTS_ONLY"
+_FILE_OPERATIONS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_FILE_OPERATIONS_ONLY"
 _CHILD_SET_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CHILD_SET_ONLY"
 _POSE_SET_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_POSE_SET_ONLY"
 _PERSISTED_STEP = 0.5
@@ -194,6 +195,13 @@ class _MayaSmokeSession:
                 self._inspect_node_name_enter,
                 self._finish,
             )
+        elif os.environ.get(_FILE_OPERATIONS_ONLY_VARIABLE) == "1":
+            self._stages = (
+                self._setup_scene,
+                self._show,
+                self._inspect_custom_filter_file_operations,
+                self._finish,
+            )
         elif os.environ.get(_EXPORTS_ONLY_VARIABLE) == "1":
             self._stages = (
                 self._setup_scene,
@@ -209,6 +217,7 @@ class _MayaSmokeSession:
                 self._inspect_custom_filters,
                 self._inspect_custom_filter_modal_placement,
                 self._inspect_custom_filter_overwrite_placement,
+                self._inspect_custom_filter_file_operations,
                 self._finish,
             )
         elif os.environ.get(_CUSTOM_FILTERS_ONLY_VARIABLE) == "1":
@@ -1737,11 +1746,7 @@ class _MayaSmokeSession:
             tree.columnCount() != 3
             or tuple(item.text(1) for item in items if item is not None)
             != paths
-            or any(
-                item.text(2) != "読込済み"
-                for item in items
-                if item is not None
-            )
+            or any(item.text(2) != "済" for item in items if item is not None)
             or not dialog.storage_error_label.isHidden()
         ):
             raise AssertionError("管理画面のパス・読込状態の列表示が不正です")
@@ -1835,7 +1840,7 @@ class _MayaSmokeSession:
                 )
         toolbar = (
             (dialog.new_button, "fileNew.png"),
-            (dialog.add_button, "item_add.png"),
+            (dialog.add_button, "UVTBAdd.png"),
             (dialog.duplicate_button, "polyCopyUV.png"),
             (dialog.rename_button, "fileTextureEdit.png"),
             (dialog.remove_button, "RS_delete.png"),
@@ -2526,7 +2531,7 @@ class _MayaSmokeSession:
             selected = (temporary_paths[0], temporary_paths[2])
             if (
                 manager.duplicate_button.isEnabled()
-                or tree.topLevelItem(2).text(2) != "読込済み"
+                or tree.topLevelItem(2).text(2) != "済"
                 or tree.topLevelItem(4).text(2) != "読込エラー"
                 or not tree.topLevelItem(4).toolTip(2)
             ):
@@ -3371,12 +3376,12 @@ class _MayaSmokeSession:
                     frame = modal.frameGeometry().size()
                     expected_size = qt.QSize(
                         min(
-                            config.EXPORT_DIRECTORY_DIALOG_WIDTH,
+                            config.PATH_DIALOG_WIDTH,
                             available.width()
                             - max(0, frame.width() - modal.width()),
                         ),
                         min(
-                            config.EXPORT_DIRECTORY_DIALOG_HEIGHT,
+                            config.PATH_DIALOG_HEIGHT,
                             available.height()
                             - max(0, frame.height() - modal.height()),
                         ),
@@ -3775,19 +3780,27 @@ class _MayaSmokeSession:
             )
 
         operations: tuple[tuple[str, Callable[[], object], bool], ...] = (
+            ("group-new", manager.group_new_button.click, True),
+            ("group-duplicate", manager.group_duplicate_button.click, True),
+            ("manager-preset-new", manager.preset_new_button.click, True),
+            ("preset-duplicate", manager.preset_duplicate_button.click, True),
             ("preset-new", panel.preset_new_button.click, True),
             ("preset-rename", panel.preset_rename_button.click, False),
             ("filter-new", panel.new_button.click, True),
+            ("filter-duplicate", manager.duplicate_button.click, True),
             ("filter-rename", panel.rename_button.click, False),
             ("group-add", manager.group_add_button.click, True),
             ("preset-add", manager.preset_add_button.click, True),
             ("filter-add", manager.add_button.click, True),
+            ("group-move", manager.group_move_file_button.click, True),
+            ("preset-move", manager.preset_move_file_button.click, True),
+            ("filter-move", manager.move_file_button.click, True),
             ("unsaved", confirm_unsaved, False),
             ("error", warn_missing_source, False),
         )
         try:
             for screen_index, screen in enumerate(
-                qt.QtGui.QGuiApplication.screens()
+                qt.QtGui.QGuiApplication.screens()[:1]
             ):
                 available = screen.availableGeometry()
                 for edge, anchor in (
@@ -3803,10 +3816,8 @@ class _MayaSmokeSession:
                             """表示と位置補正が終わった実ダイアログを撮影して閉じる。"""
                             modal = qt.QApplication.activeModalWidget()
                             if not isinstance(modal, qt.QDialog):
-                                failures.append(
-                                    f"{key}: モーダル画面がありません"
-                                )
                                 return
+                            timer.stop()
                             try:
                                 if not available.contains(
                                     modal.frameGeometry()
@@ -3841,15 +3852,47 @@ class _MayaSmokeSession:
                                     failures.append(
                                         f"{key}: 操作位置の基準が違います {frame}"
                                     )
-                                if is_file and (
-                                    not isinstance(modal, qt.QFileDialog)
-                                    or not modal.testOption(
-                                        qt.QFileDialog.Option.DontUseNativeDialog
-                                    )
-                                ):
-                                    failures.append(
-                                        f"{key}: Qt版ファイル画面ではありません"
-                                    )
+                                if is_file:
+                                    if not isinstance(modal, qt.QFileDialog):
+                                        failures.append(
+                                            f"{key}: Maya標準ファイル画面ではありません"
+                                        )
+                                    else:
+                                        from bd_tools.bd_channel_box import (
+                                            config,
+                                        )
+
+                                        expected_size = qt.QSize(
+                                            min(
+                                                config.PATH_DIALOG_WIDTH,
+                                                available.width()
+                                                - (
+                                                    frame.width()
+                                                    - modal.width()
+                                                ),
+                                            ),
+                                            min(
+                                                config.PATH_DIALOG_HEIGHT,
+                                                available.height()
+                                                - (
+                                                    frame.height()
+                                                    - modal.height()
+                                                ),
+                                            ),
+                                        )
+                                        if modal.size() != expected_size:
+                                            failures.append(
+                                                f"{key}: 共通の初期寸法が違います {modal.size()}"
+                                            )
+                                        if not any(
+                                            combo.isEditable()
+                                            for combo in modal.findChildren(
+                                                qt.QComboBox
+                                            )
+                                        ):
+                                            failures.append(
+                                                f"{key}: 編集できるアドレス欄がありません"
+                                            )
                                 checked.append(key)
                                 image_path = (
                                     self.output
@@ -3871,7 +3914,7 @@ class _MayaSmokeSession:
                         )
                         qt.QCursor.setPos(anchor)
                         timer = qt.QTimer(widget)
-                        timer.setSingleShot(True)
+                        timer.setSingleShot(False)
                         timer.timeout.connect(inspect)
                         timer.start(150)
                         try:
@@ -3882,7 +3925,9 @@ class _MayaSmokeSession:
                         if failures:
                             raise AssertionError("／".join(failures))
             if len(checked) != (
-                len(qt.QtGui.QGuiApplication.screens()) * 2 * len(operations)
+                min(1, len(qt.QtGui.QGuiApplication.screens()))
+                * 2
+                * len(operations)
             ):
                 raise AssertionError(
                     "対象のモーダル画面を検証しきれていません"
@@ -3896,6 +3941,329 @@ class _MayaSmokeSession:
             else:
                 panel.target_combo.setCurrentIndex(0)
             widget.controller.set_mode(saved_mode)
+
+    def _inspect_custom_filter_file_operations(self) -> None:
+        """一時JSONだけで3一覧のアイコン・複数移動・削除確認と参照更新を実行する。"""
+        from bd_util.ui import qt
+        from bd_tools.bd_channel_box.custom_filter_editor import (
+            create_custom_filter,
+        )
+        from bd_tools.bd_channel_box.custom_filter_presets import (
+            FilterReference,
+            create_preset_document,
+            read_preset_document,
+        )
+        from bd_tools.bd_channel_box.custom_filters import (
+            normalize_filter_path,
+        )
+
+        widget = self._require_window().widget
+        registry = widget.custom_filter_registry
+        panel = widget.setup_panel
+        if not panel.save():
+            raise AssertionError("実ファイル操作前の保存に失敗しました")
+        root = self.output / "FileOperations"
+        root.mkdir()
+        paths = {
+            key: root / f"{key}.json"
+            for key in ("g1", "g2", "p1", "p2", "f1", "f2")
+        }
+        for key in ("f1", "f2"):
+            create_custom_filter(paths[key], key)
+        for key in ("p1", "p2"):
+            create_preset_document(
+                paths[key],
+                "preset",
+                tuple(
+                    FilterReference(
+                        normalize_filter_path(paths[item]), item != "f1"
+                    )
+                    for item in ("f1", "f2")
+                ),
+            )
+        for key in ("g1", "g2"):
+            create_preset_document(
+                paths[key],
+                "preset_group",
+                tuple(
+                    FilterReference(normalize_filter_path(paths[item]))
+                    for item in ("p1", "p2")
+                ),
+            )
+        registry.add_group_paths((paths["g1"], paths["g2"]))
+        registry.select_group(str(paths["g1"]))
+        registry.select_preset(str(paths["p1"]))
+        registry.save()
+        widget.manage_custom_filters_action.trigger()
+        manager = widget.custom_filter_dialog
+        if manager is None:
+            raise AssertionError("実ファイル操作の管理画面がありません")
+        manager.resize(1000, 800)
+        self._flush_gui()
+        failures: list[str] = []
+
+        def select_rows(tree, selected) -> None:
+            """現在の表示先を変えず、指定の一時JSONだけを操作対象にする。"""
+            selected_ids = {normalize_filter_path(path) for path in selected}
+            blocked = tree.blockSignals(True)
+            try:
+                for index in range(tree.topLevelItemCount()):
+                    item = tree.topLevelItem(index)
+                    item.setSelected(
+                        item.data(0, qt.Qt.ItemDataRole.UserRole)
+                        in selected_ids
+                    )
+            finally:
+                tree.blockSignals(blocked)
+            tree.itemSelectionChanged.emit()
+            self._flush_gui()
+
+        for prefix, tree, move, exclude, delete, rename, up, add in (
+            (
+                "f",
+                manager.tree_widget,
+                manager.move_file_button,
+                manager.remove_button,
+                manager.delete_file_button,
+                manager.rename_button,
+                manager.move_up_button,
+                manager.add_button,
+            ),
+            (
+                "p",
+                manager.preset_tree_widget,
+                manager.preset_move_file_button,
+                manager.preset_remove_button,
+                manager.preset_delete_file_button,
+                manager.preset_rename_button,
+                manager.preset_move_up_button,
+                manager.preset_add_button,
+            ),
+            (
+                "g",
+                manager.group_tree_widget,
+                manager.group_move_file_button,
+                manager.group_remove_button,
+                manager.group_delete_file_button,
+                manager.group_rename_button,
+                manager.group_move_up_button,
+                manager.group_add_button,
+            ),
+        ):
+            for button, resource in (
+                (move, "selectByHierarchy.png"),
+                (exclude, "UVTBRemove.png"),
+                (delete, "RS_delete.png"),
+                (add, "UVTBAdd.png"),
+            ):
+                expected = qt.QIcon(f":/{resource}").pixmap(16, 16)
+                if (
+                    expected.isNull()
+                    or button.icon().pixmap(16, 16).toImage()
+                    != expected.toImage()
+                ):
+                    raise AssertionError(
+                        f"{prefix}: アイコンが違います {resource}"
+                    )
+            positions = [
+                button.mapTo(manager, qt.QPoint()).x()
+                for button in (rename, move, exclude, delete, up)
+            ]
+            if positions != sorted(set(positions)):
+                raise AssertionError(
+                    f"{prefix}: 実ファイル操作の並びが違います"
+                )
+            selected = (paths[f"{prefix}1"], paths[f"{prefix}2"])
+            select_rows(tree, selected)
+            destination = root / f"Moved_{prefix}"
+            destination.mkdir()
+
+            def choose_directory() -> None:
+                """実際のMaya標準画面で移動先を選び、画面を確定する。"""
+                modal = qt.QApplication.activeModalWidget()
+                if not isinstance(modal, qt.QDialog):
+                    return
+                timer.stop()
+                try:
+                    if not isinstance(modal, qt.QFileDialog):
+                        raise AssertionError("Mayaの移動先選択がありません")
+                    modal.setDirectory(str(destination))
+                    self.diagnostics.append(
+                        {
+                            "move_picker": prefix,
+                            "directory": modal.directory().absolutePath(),
+                            "selected": modal.selectedFiles(),
+                        }
+                    )
+                    modal.accept()
+                except Exception as error:
+                    failures.append(str(error))
+                    if isinstance(modal, qt.QDialog):
+                        modal.reject()
+
+            timer = qt.QTimer(manager)
+            timer.setSingleShot(False)
+            timer.timeout.connect(choose_directory)
+            timer.start(200)
+            try:
+                move.click()
+            finally:
+                timer.stop()
+                timer.deleteLater()
+            self._flush_gui()
+            if failures:
+                raise AssertionError("／".join(failures))
+            for key in (f"{prefix}1", f"{prefix}2"):
+                old = paths[key]
+                paths[key] = destination / old.name
+                if old.exists() or not paths[key].is_file():
+                    raise AssertionError(f"{key}: 実ファイルを移動できません")
+            if len(tree.selectedItems()) != 2:
+                raise AssertionError("移動後の複数選択が失われました")
+            for target_count, accepted in ((2, False), (1, False), (1, True)):
+                select_rows(
+                    tree,
+                    tuple(
+                        paths[f"{prefix}{index}"]
+                        for index in range(1, target_count + 1)
+                    ),
+                )
+
+                def inspect_delete() -> None:
+                    """対象別の参照元と全件削除ボタンを確認し、取消または削除を選ぶ。"""
+                    modal = qt.QApplication.activeModalWidget()
+                    try:
+                        if (
+                            not isinstance(modal, qt.QDialog)
+                            or modal.objectName()
+                            != "customFilterFileDeleteConfirm"
+                        ):
+                            raise AssertionError(
+                                "実削除の確認画面がありません"
+                            )
+                        buttons = modal.findChild(qt.QDialogButtonBox)
+                        if (
+                            buttons is None
+                            or not buttons.button(
+                                qt.QDialogButtonBox.StandardButton.Cancel
+                            ).isDefault()
+                        ):
+                            raise AssertionError(
+                                "実削除の既定ボタンが取消ではありません"
+                            )
+                        if (
+                            buttons.button(
+                                qt.QDialogButtonBox.StandardButton.Ok
+                            ).text()
+                            != f"{target_count}件のファイルを削除"
+                        ):
+                            raise AssertionError(
+                                "全件を削除する件数がボタンに表示されません"
+                            )
+                        combo = modal.findChild(
+                            qt.QComboBox, "deleteFileCombo"
+                        )
+                        references = modal.findChild(
+                            qt.QListWidget, "deleteReferenceList"
+                        )
+                        label = modal.findChild(
+                            qt.QLabel, "deleteReferenceLabel"
+                        )
+                        if any(
+                            item is None for item in (combo, references, label)
+                        ):
+                            raise AssertionError(
+                                "削除対象と対象別の参照元を確認する部品がありません"
+                            )
+                        if combo.count() != target_count or combo.isEditable():
+                            raise AssertionError(
+                                "削除対象の確認リストが違います"
+                            )
+                        expected_prefix = "p" if prefix == "f" else "g"
+                        expected_sources = (
+                            set()
+                            if prefix == "g"
+                            else {
+                                normalize_filter_path(
+                                    paths[f"{expected_prefix}{index}"]
+                                )
+                                for index in (1, 2)
+                            }
+                        )
+                        for index in range(combo.count()):
+                            combo.setCurrentIndex(index)
+                            if (
+                                combo.currentText()
+                                != str(paths[f"{prefix}{index + 1}"].resolve())
+                                or combo.toolTip() != combo.currentText()
+                            ):
+                                raise AssertionError(
+                                    "確認対象のフルパスが違います"
+                                )
+                            actual_sources = {
+                                normalize_filter_path(
+                                    references.item(row).text()
+                                )
+                                for row in range(references.count())
+                            }
+                            if (
+                                actual_sources != expected_sources
+                                or label.text()
+                                != f"更新する参照元ファイル（{len(expected_sources)}件）"
+                            ):
+                                raise AssertionError(
+                                    "確認対象の参照元または件数が違います"
+                                )
+                            if not references.isVisible():
+                                raise AssertionError(
+                                    "参照元の一覧が表示されていません"
+                                )
+                        if not accepted:
+                            image_path = (
+                                self.output
+                                / f"66-delete-{prefix}-confirm-{target_count}.png"
+                            )
+                            if not modal.grab().save(str(image_path)):
+                                raise AssertionError(
+                                    "削除確認を撮影できません"
+                                )
+                            self.screenshots.append(str(image_path))
+                        modal.accept() if accepted else modal.reject()
+                    except Exception as error:
+                        failures.append(str(error))
+                        if isinstance(modal, qt.QDialog):
+                            modal.reject()
+
+                timer = qt.QTimer(manager)
+                timer.setSingleShot(True)
+                timer.timeout.connect(inspect_delete)
+                timer.start(150)
+                try:
+                    delete.click()
+                finally:
+                    timer.stop()
+                    timer.deleteLater()
+                if failures or paths[f"{prefix}1"].exists() == accepted:
+                    raise AssertionError(
+                        "／".join(failures) or "実削除・取消の結果が違います"
+                    )
+            self.steps.append(
+                f"bulk_move_and_delete_{prefix}_files_with_confirmation"
+            )
+        if read_preset_document(paths["g2"], "preset_group").references != (
+            FilterReference(normalize_filter_path(paths["p2"])),
+        ):
+            raise AssertionError("全グループのプリセット参照を更新できません")
+        if read_preset_document(paths["p2"], "preset").references != (
+            FilterReference(normalize_filter_path(paths["f2"])),
+        ):
+            raise AssertionError(
+                "全プリセットのフィルター参照を更新できません"
+            )
+        self.steps.append(
+            "file_operations_preserve_children_and_update_all_known_parents"
+        )
+        manager.hide()
 
     def _inspect_custom_filter_overwrite_placement(self) -> None:
         """Qt内部の上書き確認を各モニターの両端で開き、実際の外枠を確認する。"""
@@ -7402,6 +7770,7 @@ def _launch(
     custom_filters_only: bool = False,
     dialogs_only: bool = False,
     exports_only: bool = False,
+    file_operations_only: bool = False,
     child_set_only: bool = False,
     pose_set_only: bool = False,
 ) -> int:
@@ -7456,6 +7825,9 @@ def _launch(
     )
     environment[_DIALOGS_ONLY_VARIABLE] = "1" if dialogs_only else "0"
     environment[_EXPORTS_ONLY_VARIABLE] = "1" if exports_only else "0"
+    environment[_FILE_OPERATIONS_ONLY_VARIABLE] = (
+        "1" if file_operations_only else "0"
+    )
     environment[_CHILD_SET_ONLY_VARIABLE] = "1" if child_set_only else "0"
     environment[_POSE_SET_ONLY_VARIABLE] = "1" if pose_set_only else "0"
     environment["BAKEDANUKI_UTIL_ROOT"] = str(util_root)
@@ -7557,6 +7929,7 @@ def main() -> int:
     restart_group.add_argument("--custom-filters-only", action="store_true")
     restart_group.add_argument("--dialogs-only", action="store_true")
     restart_group.add_argument("--exports-only", action="store_true")
+    restart_group.add_argument("--file-operations-only", action="store_true")
     parser.add_argument("--child-set-only", action="store_true")
     parser.add_argument("--pose-set-only", action="store_true")
     arguments = parser.parse_args()
@@ -7577,6 +7950,7 @@ def main() -> int:
         custom_filters_only=arguments.custom_filters_only,
         dialogs_only=arguments.dialogs_only,
         exports_only=arguments.exports_only,
+        file_operations_only=arguments.file_operations_only,
         child_set_only=arguments.child_set_only,
         pose_set_only=arguments.pose_set_only,
     )

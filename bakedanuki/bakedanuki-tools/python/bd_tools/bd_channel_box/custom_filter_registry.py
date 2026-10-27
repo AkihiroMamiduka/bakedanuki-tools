@@ -14,6 +14,11 @@ from bd_util.maya.ui import get_ui_settings_file
 from bd_util.ui import qt
 
 from .custom_filter_editor import CustomFilterDraft, filter_file_name
+from .custom_filter_files import (
+    FileKind,
+    FileOperationPlan,
+    plan_file_operation,
+)
 from .custom_filter_presets import (
     DocumentKind,
     FileUpdate,
@@ -92,6 +97,7 @@ class CustomFilterRegistry(qt.QObject):
     changed = qt.Signal()
     selection_changed = qt.Signal()
     path_changed = qt.Signal(str, str)
+    path_removed = qt.Signal(str)
     document_path_changed = qt.Signal(str, str, str)
 
     def __init__(self, parent: qt.QObject | None = None) -> None:
@@ -470,6 +476,200 @@ class CustomFilterRegistry(qt.QObject):
         self.changed.emit()
         if self._storage_error is not None:
             raise CustomFilterError(self._storage_error)
+
+    def move_files(
+        self, kind: FileKind, paths: Iterable[str], directory: str | Path
+    ) -> tuple[str, ...]:
+        """選択JSONだけを移動し、既知の全参照と個人設定を同時に確定する。"""
+        selected = self._validate_file_operation(kind, paths)
+        plan = plan_file_operation(
+            kind, selected, self._documents.values(), directory
+        )
+        self._commit_file_operation(plan)
+        return tuple(new for _, new in plan.mapping)
+
+    def prepare_file_delete(
+        self, kind: FileKind, paths: Iterable[str]
+    ) -> FileOperationPlan:
+        """削除確認に使う対象と参照元を固定し、確認後の外部変更検査を準備する。"""
+        selected = self._validate_file_operation(kind, paths, deleting=True)
+        return plan_file_operation(
+            kind, selected, self._documents.values(), None
+        )
+
+    def delete_files(self, plan: FileOperationPlan) -> None:
+        """確認時と同じJSONを実削除し、全既知参照から対象を取り除く。"""
+        if not plan.deletions or plan.mapping:
+            raise CustomFilterError("削除予定が正しくありません")
+        self._validate_file_operation(plan.kind, plan.paths, deleting=True)
+        if plan != plan_file_operation(
+            plan.kind, plan.paths, self._documents.values(), None
+        ):
+            raise CustomFilterError(
+                "削除確認後に対象または参照元が変わりました。確認し直してください"
+            )
+        self._commit_file_operation(plan)
+
+    def _validate_file_operation(
+        self, kind: FileKind, paths: Iterable[str], *, deleting: bool = False
+    ) -> tuple[str, ...]:
+        """保存済みの選択と全参照元を検査し、不完全な参照更新を防ぐ。"""
+        if self.is_dirty or self._storage_error is not None:
+            raise CustomFilterError("未保存変更を保存してから操作してください")
+        selected = tuple(
+            dict.fromkeys(normalize_filter_path(path) for path in paths)
+        )
+        available = {
+            item.path
+            for item in (
+                self.groups
+                if kind == "preset_group"
+                else self.presets if kind == "preset" else self.entries
+            )
+        }
+        if not selected or not set(selected) <= available:
+            raise CustomFilterError(
+                "操作するファイルを現在の一覧から選択してください"
+            )
+        self._load_graph()
+        for document in self._documents.values():
+            removing = (
+                deleting
+                and document.kind == kind
+                and document.path in selected
+            )
+            if document.error is not None and not removing:
+                raise CustomFilterError(
+                    "参照先を確認できない共有文書があります。\n"
+                    + document.error
+                )
+            try:
+                digest = hashlib.sha256(
+                    Path(document.path).read_bytes()
+                ).hexdigest()
+            except OSError as error:
+                raise CustomFilterError(
+                    f"参照元を確認できません: {document.path}（{error}）"
+                ) from error
+            if digest != document.source_digest:
+                raise CustomFilterError(
+                    "共有ファイルが外部で変更されました。再読込してください。\n"
+                    + document.path
+                )
+        return selected
+
+    def _commit_file_operation(self, plan: FileOperationPlan) -> None:
+        """実ファイルと個人設定を確定し、成功後だけ変更通知を送る。"""
+        if not plan.updates and not plan.deletions:
+            return
+        mapping = dict(plan.mapping)
+        saved_contents = {
+            normalize_filter_path(update.destination): update.content
+            for update in plan.updates
+        }
+        removed: set[str] = set(plan.paths) if plan.deletions else set()
+        # ファイル操作後の設定確定にも失敗できるよう、元の状態を変更せず保持する
+        roots, saved_roots = self._roots, self._saved_roots
+        documents, filters = self._documents, self._filters
+        group, preset = self._active_group, self._active_preset
+        selections, storage_error = (
+            self._preset_selections,
+            self._storage_error,
+        )
+        settings_values = {
+            key: self._settings.value(key, None)
+            for key in (_SETTINGS_KEY, _SELECTION_KEY)
+        }
+
+        def finalize() -> None:
+            """保存成功後のメモリーと個人設定を確定し、失敗時は両方を復元する。"""
+            try:
+                # 検証済みの実際の保存bytesで基準を更新し、パス表記の補正差を避ける
+                self._documents = dict(documents)
+                for document in plan.documents:
+                    saved = replace(document)
+                    old, new = saved.mark_saved(
+                        saved_contents[
+                            normalize_filter_path(saved.destination_path)
+                        ]
+                    )
+                    self._documents.pop((saved.kind, old), None)
+                    self._documents[saved.kind, new] = saved
+                if plan.kind != "filter":
+                    self._documents = {
+                        key: value
+                        for key, value in self._documents.items()
+                        if not (key[0] == plan.kind and key[1] in removed)
+                    }
+                # 登録と現在選択を同じ対象の移動先へ引き継ぐ
+                self._roots = [
+                    mapping.get(path, path)
+                    for path in roots
+                    if path not in removed or plan.kind != "preset_group"
+                ]
+                self._active_group = (
+                    mapping.get(group, group) if group is not None else None
+                )
+                self._active_preset = (
+                    mapping.get(preset, preset) if preset is not None else None
+                )
+                self._preset_selections = {
+                    mapping.get(key, key): mapping.get(value, value)
+                    for key, value in selections.items()
+                    if key not in removed and value not in removed
+                }
+                self._filters = dict(filters)
+                if plan.kind == "filter":
+                    for old, new in plan.mapping:
+                        self._filters.pop(old, None)
+                        self._filters[new] = self._read_entry(new, True)
+                    for path in removed:
+                        self._filters.pop(path, None)
+                # 不要な文書を外し、残った選択と個人設定を最後に確定する
+                self._prune_documents()
+                if self._active_group not in self._roots:
+                    self._active_group = (
+                        self._roots[0] if self._roots else None
+                    )
+                self._ensure_preset()
+                self._save()
+                self._persist_selection()
+                if self._storage_error is not None:
+                    raise CustomFilterError(self._storage_error)
+            except Exception as error:
+                # ファイル層の巻戻しに先立ち、メモリーと個人設定も元へ戻す
+                self._roots, self._saved_roots = roots, saved_roots
+                self._documents, self._filters = documents, filters
+                self._active_group, self._active_preset = group, preset
+                self._preset_selections, self._storage_error = (
+                    selections,
+                    storage_error,
+                )
+                for key, value in settings_values.items():
+                    if value is None:
+                        self._settings.remove(key)
+                    else:
+                        self._settings.setValue(key, value)
+                self._settings.sync()
+                if self._settings.status() != qt.QSettings.Status.NoError:
+                    raise CustomFilterError(
+                        f"{error}\n個人設定を復元できませんでした"
+                    ) from error
+                raise
+
+        commit_file_updates(plan.updates, plan.deletions, finalize=finalize)
+        # 識別パスの通知を先に送り、通常の一覧更新で選択を失わないようにする
+        for old, new in plan.mapping:
+            if old == new:
+                continue
+            if plan.kind == "filter":
+                self.path_changed.emit(old, new)
+            else:
+                self.document_path_changed.emit(plan.kind, old, new)
+        if plan.kind == "filter":
+            for path in plan.paths if plan.deletions else ():
+                self.path_removed.emit(path)
+        self.changed.emit()
 
     def discard(self) -> None:
         """構成下書きを破棄し、保存済みの登録とJSONを読み直す。"""

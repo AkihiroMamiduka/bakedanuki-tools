@@ -56,6 +56,7 @@ from bd_tools.bd_channel_box.custom_filter_registry import (
     CustomFilterRegistry,
     PresetRegistration,
 )
+from bd_tools.bd_channel_box.custom_filter_files import FileOperationPlan
 from bd_tools.bd_channel_box.custom_filter_setup import CustomFilterSetupPanel
 from bd_tools.bd_channel_box.filter_preferences import ValueFilterPreferences
 from bd_tools.bd_channel_box.widget import (
@@ -72,8 +73,8 @@ assert_type(
     PathLineEdit,
 )
 assert_type(bd_channel_box.config.ATTRIBUTE_PRIORITY_PATHS, tuple[str, ...])
-assert_type(bd_channel_box.config.EXPORT_DIRECTORY_DIALOG_WIDTH, int)
-assert_type(bd_channel_box.config.EXPORT_DIRECTORY_DIALOG_HEIGHT, int)
+assert_type(bd_channel_box.config.PATH_DIALOG_WIDTH, int)
+assert_type(bd_channel_box.config.PATH_DIALOG_HEIGHT, int)
 assert_type(bd_channel_box.show().widget, ChannelBoxWidget)
 manager = bd_channel_box.show().widget.custom_filter_dialog
 if manager is not None:
@@ -88,6 +89,12 @@ if manager is not None:
     assert_type(manager.add_button, qt.QToolButton)
     assert_type(manager.duplicate_button, qt.QToolButton)
     assert_type(manager.remove_button, qt.QToolButton)
+    assert_type(manager.move_file_button, qt.QToolButton)
+    assert_type(manager.delete_file_button, qt.QToolButton)
+    assert_type(manager.group_move_file_button, qt.QToolButton)
+    assert_type(manager.group_delete_file_button, qt.QToolButton)
+    assert_type(manager.preset_move_file_button, qt.QToolButton)
+    assert_type(manager.preset_delete_file_button, qt.QToolButton)
     assert_type(manager.move_up_button, qt.QToolButton)
     assert_type(manager.move_down_button, qt.QToolButton)
     assert_type(manager.reload_all_button, qt.QToolButton)
@@ -98,6 +105,19 @@ assert_type(
     export_custom_filter_files("filter", [Path("Filter.json")], Path("out")),
     Path,
 )
+file_registry = CustomFilterRegistry()
+assert_type(
+    file_registry.move_files("filter", ["Filter.json"], Path("out")),
+    tuple[str, ...],
+)
+file_plan = file_registry.prepare_file_delete("filter", ["Filter.json"])
+assert_type(file_plan, FileOperationPlan)
+assert_type(file_plan.reference_sources_for("Filter.json"), tuple[str, ...])
+assert_type(
+    file_plan.reference_sources_by_path,
+    tuple[tuple[str, tuple[str, ...]], ...],
+)
+assert_type(file_registry.delete_files(file_plan), None)
 assert_type(confirm_export_save(qt.QWidget(), qt.QPoint(10, 20)), bool)
 assert_type(
     bd_channel_box.show().widget.setup_panel.confirm_export(qt.QPoint(10, 20)),
