@@ -16,6 +16,8 @@
   version 1/2は追加OFFで読み、読込だけでは書き換えない。version 3を共有する全環境もtoolsを更新する。
   utilの共通ComboBoxは画面内で可能な限り全件を表示し、収まらない場合はスクロールする。
   toolsとutilを両方更新し、`bd_tools.reload_package(reload_util=True)`で反映する。sceneの移行は不要。
+  2026-11-01に利用者の動作確認・コミット・プッシュが完了し、今回の拡張を完了とした。
+  利用者の確認Maya versionは未申告。
 - bdChannelBoxの値編集・表示ロックの属性行から、属性名・入力欄・接続色帯・状態ボタンの
   説明tooltipを削除。float・整数のStep欄の操作説明も、このツール内では表示しない。
   接続色・入力制限・Step操作・操作時の通知と、メニュー・管理画面の補助tooltipは維持する。

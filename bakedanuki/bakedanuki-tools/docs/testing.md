@@ -172,6 +172,13 @@ MayaがKeyableとChannelBoxを排他的に変更するテストデータと、�
 テストを修正し、追加した分類境界3件と設定UIを含む関連22件を各versionで再実行して全件成功しました。
 サンドボックスの一時領域にアクセスできない実行は除き、通常の一時領域で確認しています。
 
+2026-11-01に、利用者から標準属性追加とComboBox全件表示が問題なく動作すること、
+コミット・プッシュの完了、今回の拡張を完了とする旨の報告を受けました。
+利用者の確認Maya versionと個別の操作条件は未申告です。参照commitはtoolsが`5922438`、
+utilが`1c3f0b3c`です。今回の追記は利用者確認と完了状態の記録で、新たなruntime testは実施していません。
+開発時の自動検証・専用Maya終了待ちの結果と利用者報告を区別し、機能開発は完了として扱います。
+維持事項は[完了記録](bd_channel_box.md#標準属性追加とcombobox全件表示の完了記録)を参照してください。
+
 ```powershell
 & "C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe" -B `
     scripts/test_bd_channel_box_maya.py --maya-version 2025 --custom-filters-only --timeout 300
