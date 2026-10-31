@@ -92,7 +92,7 @@ def test_creation_uses_only_save_dialog_and_selected_file_name(
     assert load_custom_filter(source).name == "source"
     for path in (source, destination):
         payload = json.loads(path.read_text(encoding="utf-8"))
-        assert payload["schema_version"] == 2
+        assert payload["schema_version"] == 3
         assert "name" not in payload
 
 

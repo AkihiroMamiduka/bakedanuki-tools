@@ -18,9 +18,11 @@ if TYPE_CHECKING:
     from bd_tools.bd_channel_box.custom_filters import (
         CustomFilterError,
         CustomFilterSelection,
+        StandardAttributeOptions,
         filter_display_name,
         load_custom_filter,
         normalize_filter_path,
+        serialize_custom_filter,
     )
 else:
     _ROOT = Path(__file__).resolve().parents[2]
@@ -43,9 +45,11 @@ else:
     _SPEC.loader.exec_module(_MODULE)
     CustomFilterError = _MODULE.CustomFilterError
     CustomFilterSelection = _MODULE.CustomFilterSelection
+    StandardAttributeOptions = _MODULE.StandardAttributeOptions
     filter_display_name = _MODULE.filter_display_name
     load_custom_filter = _MODULE.load_custom_filter
     normalize_filter_path = _MODULE.normalize_filter_path
+    serialize_custom_filter = _MODULE.serialize_custom_filter
 
 
 def _write_json(path: Path, value: object) -> Path:
@@ -135,7 +139,7 @@ def test_display_name_uses_actual_file_case_without_rewriting(
             {"schema_version": True, "name": "Rig", "node_types": {}},
             "schema_version",
         ),
-        ({"schema_version": 3, "node_types": {}}, "schema_version"),
+        ({"schema_version": 4, "node_types": {}}, "schema_version"),
         (
             {"schema_version": 2, "name": "Old", "node_types": {}},
             "未対応",
@@ -202,6 +206,152 @@ def test_duplicate_json_key_is_rejected(tmp_path: Path) -> None:
     )
 
     with pytest.raises(CustomFilterError, match="キーが重複"):
+        load_custom_filter(path)
+
+
+@pytest.mark.parametrize(
+    "display_filter", ("keyable", "channel_box", "visible")
+)
+@pytest.mark.parametrize("position", ("first", "last"))
+@pytest.mark.parametrize("enabled", (False, True))
+def test_version_three_preserves_per_type_standard_options(
+    tmp_path: Path,
+    display_filter: str,
+    position: str,
+    enabled: bool,
+) -> None:
+    """標準追加の有効状態・条件・位置と個別属性順を往復保存する。"""
+    path = _write_json(
+        tmp_path / "Rig.json",
+        {
+            "schema_version": 3,
+            "node_types": {
+                "joint": {
+                    "include": [".visibility", "rigMode", "rigMode"],
+                    "standard": {
+                        "enabled": enabled,
+                        "filter": display_filter,
+                        "position": position,
+                    },
+                },
+                "network": {
+                    "include": [],
+                    "standard": {
+                        "enabled": False,
+                        "filter": "visible",
+                        "position": "last",
+                    },
+                },
+            },
+        },
+    )
+    original = path.read_bytes()
+    definition = load_custom_filter(path)
+    assert definition.node_types == {
+        "joint": (".visibility", "rigMode"),
+        "network": (),
+    }
+    options = definition.standard_options["joint"]
+    assert options.enabled is enabled
+    assert options.display_filter == display_filter
+    assert options.position == position
+    assert definition.standard_options["network"] == StandardAttributeOptions()
+    assert path.read_bytes() == original
+    path.write_bytes(serialize_custom_filter(definition))
+    assert load_custom_filter(path) == definition
+
+
+@pytest.mark.parametrize("version", (1, 2))
+def test_legacy_standard_options_stay_disabled_until_explicit_save(
+    tmp_path: Path, version: int
+) -> None:
+    """旧形式は読込だけでは変えず、新形式で標準追加を無効として保存する。"""
+    value: dict[str, object] = {
+        "schema_version": version,
+        "node_types": {"joint": ["visibility"]},
+    }
+    if version == 1:
+        value["name"] = "Legacy"
+    path = _write_json(tmp_path / "Legacy.json", value)
+    original = path.read_bytes()
+    definition = load_custom_filter(path)
+    assert definition.standard_options.get(
+        "joint", StandardAttributeOptions()
+    ) == (StandardAttributeOptions())
+    assert path.read_bytes() == original
+    assert json.loads(serialize_custom_filter(definition)) == {
+        "schema_version": 3,
+        "node_types": {
+            "joint": {
+                "include": ["visibility"],
+                "standard": {
+                    "enabled": False,
+                    "filter": "visible",
+                    "position": "last",
+                },
+            }
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "rule",
+    (
+        [],
+        {"include": []},
+        {"include": [], "standard": {}},
+        {
+            "include": [],
+            "standard": {
+                "enabled": 1,
+                "filter": "visible",
+                "position": "last",
+            },
+        },
+        {
+            "include": [],
+            "standard": {
+                "enabled": False,
+                "filter": "hidden",
+                "position": "last",
+            },
+        },
+        {
+            "include": [],
+            "standard": {
+                "enabled": True,
+                "filter": "visible",
+                "position": "middle",
+            },
+        },
+        {
+            "include": "visibility",
+            "standard": {
+                "enabled": True,
+                "filter": "visible",
+                "position": "last",
+            },
+        },
+        {
+            "include": [],
+            "standard": {
+                "enabled": True,
+                "filter": "visible",
+                "position": "last",
+            },
+            "exclude": [],
+        },
+    ),
+)
+def test_invalid_version_three_rule_is_rejected(
+    tmp_path: Path, rule: object
+) -> None:
+    """型別の不足項目・未対応項目・不正な条件を黙って既定値にしない。"""
+    path = _write_json(
+        tmp_path / "Invalid.json",
+        {"schema_version": 3, "node_types": {"joint": rule}},
+    )
+    with pytest.raises(CustomFilterError):
         load_custom_filter(path)
 
 

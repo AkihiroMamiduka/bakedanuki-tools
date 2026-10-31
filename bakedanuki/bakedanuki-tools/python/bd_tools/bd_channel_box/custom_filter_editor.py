@@ -12,6 +12,7 @@ from pathlib import Path
 from .custom_filters import (
     CustomFilterDefinition,
     CustomFilterError,
+    StandardAttributeOptions,
     filter_display_name,
     load_custom_filter,
     normalize_filter_path,
@@ -114,7 +115,7 @@ def _write_temporary(path: Path, content: bytes) -> Path:
 
 def create_custom_filter(path: str | Path, name: str | None = None) -> str:
     """実ファイル名を名前として空のJSONを作り、旧name引数は保存しない。"""
-    return _create_definition(path, {})
+    return _create_definition(path, CustomFilterDefinition("", {}))
 
 
 def duplicate_custom_filter(
@@ -122,11 +123,11 @@ def duplicate_custom_filter(
 ) -> str:
     """元JSONを読み直し、全ノード型と属性順を別ファイルへ複製する。"""
     draft = CustomFilterDraft(source)
-    return _create_definition(path, draft.node_types)
+    return _create_definition(path, draft.definition())
 
 
 def _create_definition(
-    path: str | Path, node_types: dict[str, list[str]]
+    path: str | Path, definition: CustomFilterDefinition
 ) -> str:
     """検証済みの定義を新しいJSONとして保存し、既存ファイルを保護する。"""
     normalized = normalize_filter_path(path)
@@ -140,10 +141,8 @@ def _create_definition(
     content = serialize_custom_filter(
         CustomFilterDefinition(
             filter_display_name(destination),
-            {
-                node_type: tuple(paths)
-                for node_type, paths in node_types.items()
-            },
+            definition.node_types,
+            definition.standard_options,
         )
     )
     temporary = _write_temporary(destination, content)
@@ -178,18 +177,27 @@ class CustomFilterDraft:
             node_type: list(paths)
             for node_type, paths in definition.node_types.items()
         }
+        self._standard_options = dict(definition.standard_options)
         self._explicit_types = set(self.node_types)
         self._saved = self._snapshot()
 
     def _snapshot(
         self,
-    ) -> tuple[str, str, tuple[tuple[str, tuple[str, ...]], ...]]:
-        """名前・保存先・ノード型・属性順を変更判定用に固定する。"""
+    ) -> tuple[
+        str,
+        str,
+        tuple[tuple[str, tuple[str, ...], StandardAttributeOptions], ...],
+    ]:
+        """名前・保存先・型別の属性順と標準追加を変更判定用に固定する。"""
         return (
             self.name,
             self.destination_path,
             tuple(
-                (node_type, tuple(paths))
+                (
+                    node_type,
+                    tuple(paths),
+                    self.standard_options(node_type),
+                )
                 for node_type, paths in self.node_types.items()
             ),
         )
@@ -227,6 +235,10 @@ class CustomFilterDraft:
                 node_type: tuple(paths)
                 for node_type, paths in self.node_types.items()
             },
+            {
+                node_type: self.standard_options(node_type)
+                for node_type in self.node_types
+            },
         )
 
     def set_name(self, name: str) -> None:
@@ -263,6 +275,19 @@ class CustomFilterDraft:
         """指定型の属性をJSONの順序で返す。"""
         return tuple(self.node_types.get(node_type, ()))
 
+    def standard_options(self, node_type: str) -> StandardAttributeOptions:
+        """指定型の標準追加設定を返し、未設定なら無効の既定値を使う。"""
+        return self._standard_options.get(
+            node_type, StandardAttributeOptions()
+        )
+
+    def set_standard_options(
+        self, node_type: str, options: StandardAttributeOptions
+    ) -> None:
+        """標準追加を下書きへ反映し、個別指定が0件でも型を明示して残す。"""
+        self.ensure_node_type(node_type)
+        self._standard_options[node_type] = options
+
     def is_included(self, node_type: str, path: str) -> bool:
         """先頭ドットの表記差を吸収して所属を返す。"""
         key = _attribute_key(path)
@@ -297,6 +322,7 @@ class CustomFilterDraft:
             and node_type not in self._explicit_types
         ):
             del self.node_types[node_type]
+            self._standard_options.pop(node_type, None)
 
     def set_many_included(
         self, node_type: str, paths: Iterable[str], included: bool
@@ -336,6 +362,7 @@ class CustomFilterDraft:
     def remove_node_type(self, node_type: str) -> None:
         """型の定義を削除し、標準条件への切替に戻す。"""
         self.node_types.pop(node_type, None)
+        self._standard_options.pop(node_type, None)
         self._explicit_types.discard(node_type)
 
     def move(self, node_type: str, path: str, offset: int) -> bool:

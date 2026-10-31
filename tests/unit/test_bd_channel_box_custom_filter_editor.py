@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     )
     from bd_tools.bd_channel_box.custom_filters import (
         CustomFilterError,
+        StandardAttributeOptions,
         load_custom_filter,
     )
 else:
@@ -61,6 +62,7 @@ else:
         "custom_filter_editor", _PACKAGE_NAME, _PACKAGE_PATH
     )
     CustomFilterError = _FILTERS.CustomFilterError
+    StandardAttributeOptions = _FILTERS.StandardAttributeOptions
     load_custom_filter = _FILTERS.load_custom_filter
     CustomFilterConflictError = _EDITOR.CustomFilterConflictError
     CustomFilterDraft = _EDITOR.CustomFilterDraft
@@ -203,7 +205,7 @@ def test_create_empty_definition_and_refuse_overwrite(tmp_path: Path) -> None:
     assert load_custom_filter(path).node_types == {}
     assert load_custom_filter(path).name == "rig"
     assert json.loads(path.read_text(encoding="utf-8")) == {
-        "schema_version": 2,
+        "schema_version": 3,
         "node_types": {},
     }
     source = path.read_bytes()
@@ -244,8 +246,17 @@ def test_legacy_draft_prepares_name_free_json_and_commits_external_save(
     draft.validate_save()
     content = draft.prepared_content()
     assert json.loads(content) == {
-        "schema_version": 2,
-        "node_types": {"joint": ["visibility", "rigMode"]},
+        "schema_version": 3,
+        "node_types": {
+            "joint": {
+                "include": ["visibility", "rigMode"],
+                "standard": {
+                    "enabled": False,
+                    "filter": "visible",
+                    "position": "last",
+                },
+            }
+        },
     }
     assert source.read_bytes() == original
     assert not destination.exists()
@@ -315,6 +326,9 @@ def test_duplicate_preserves_all_types_order_empty_definitions_and_source(
     draft = CustomFilterDraft(source)
     draft.set_many_included("joint", (".visibility", "rigMode"), True)
     draft.ensure_node_type("network")
+    draft.set_standard_options(
+        "network", StandardAttributeOptions(True, "channel_box", "first")
+    )
     draft.set_many_included("transform", ("rotateOrder", "visibility"), True)
     draft.save()
     before = source.read_bytes()
@@ -326,6 +340,9 @@ def test_duplicate_preserves_all_types_order_empty_definitions_and_source(
     assert definition.name == "rig-copy"
     assert tuple(definition.node_types) == ("joint", "network", "transform")
     assert definition.node_types == load_custom_filter(source).node_types
+    assert definition.standard_options == (
+        load_custom_filter(source).standard_options
+    )
     assert source.read_bytes() == before
     copied = copy.read_bytes()
     with pytest.raises(CustomFilterError, match="既に存在"):
@@ -485,6 +502,66 @@ def test_reverting_first_inclusion_restores_undefined_type(
     draft.set_included("joint", "visibility", False)
     assert not draft.has_node_type("joint")
     assert not draft.is_dirty
+
+
+def test_standard_only_rule_survives_last_inclusion_removal(
+    tmp_path: Path,
+) -> None:
+    """標準追加を設定した新規型は個別指定が0件でも明示定義として残す。"""
+    path = tmp_path / "Rig.json"
+    create_custom_filter(path)
+    draft = CustomFilterDraft(path)
+    options = StandardAttributeOptions(True, "keyable", "first")
+    draft.set_included("joint", "visibility", True)
+    draft.set_standard_options("joint", options)
+    draft.set_included("joint", "visibility", False)
+    assert draft.has_node_type("joint")
+    assert draft.paths("joint") == ()
+    assert draft.standard_options("joint") == options
+    assert draft.is_dirty
+    draft.save()
+    restored = CustomFilterDraft(path)
+    assert restored.paths("joint") == ()
+    assert restored.standard_options("joint") == options
+    assert not restored.is_dirty
+
+
+def test_standard_options_are_draft_only_and_removed_with_node_type(
+    tmp_path: Path,
+) -> None:
+    """追加設定の編集・無効化・取消・型削除を同じ下書き状態で管理する。"""
+    path = tmp_path / "Rig.json"
+    create_custom_filter(path)
+    draft = CustomFilterDraft(path)
+    assert draft.standard_options("joint") == StandardAttributeOptions()
+    assert not draft.has_node_type("joint")
+    original = path.read_bytes()
+    options = StandardAttributeOptions(True, "channel_box", "first")
+    draft.set_standard_options("joint", options)
+    assert draft.is_dirty
+    assert path.read_bytes() == original
+    discarded = CustomFilterDraft(path)
+    assert not discarded.has_node_type("joint")
+    assert discarded.standard_options("joint") == StandardAttributeOptions()
+
+    # 無効時も最後の条件・位置を保持し、全体保存後の変更判定へ含める
+    disabled = StandardAttributeOptions(False, "channel_box", "first")
+    draft.set_standard_options("joint", disabled)
+    draft.ensure_node_type("network")
+    draft.save()
+    assert not draft.is_dirty
+    assert CustomFilterDraft(path).standard_options("joint") == disabled
+    draft.set_standard_options("joint", options)
+    assert draft.is_dirty
+    draft.set_standard_options("joint", disabled)
+    assert not draft.is_dirty
+    draft.remove_node_type("joint")
+    assert draft.standard_options("joint") == StandardAttributeOptions()
+    assert draft.has_node_type("network")
+    draft.save()
+    definition = load_custom_filter(path)
+    assert "joint" not in definition.node_types
+    assert "joint" not in definition.standard_options
 
 
 def test_batch_include_preserves_order_other_types_and_missing_paths(

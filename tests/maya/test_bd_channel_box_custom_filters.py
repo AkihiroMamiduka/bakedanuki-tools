@@ -11,7 +11,10 @@ from typing import cast
 import pytest
 from maya import cmds
 
-from bd_util.maya.node.inspection import ScalarAttributeInfo
+from bd_util.maya.node.inspection import (
+    ScalarAttributeInfo,
+    matches_scalar_attribute_display_filter,
+)
 from bd_util.maya.ui import MayaFloatPlugsBinding
 from bd_util.maya.ui import settings as maya_settings
 from bd_util.ui import dialog as ui_dialog
@@ -25,6 +28,10 @@ from bd_tools.bd_channel_box.custom_filter_setup import CustomFilterSetupPanel
 from bd_tools.bd_channel_box.custom_filters import (
     CustomFilterDefinition,
     CustomFilterSelection,
+    StandardAttributeDisplayFilter,
+    StandardAttributeOptions,
+    StandardAttributePosition,
+    load_custom_filter,
 )
 from bd_tools.bd_channel_box.widget import ChannelBoxWidget
 
@@ -48,18 +55,29 @@ def _register_saved_filter(editor: ChannelBoxWidget, path: Path) -> None:
 
 
 def _selection(
-    node_types: dict[str, tuple[str, ...]], *, name: str = "Rig"
+    node_types: dict[str, tuple[str, ...]],
+    *,
+    name: str = "Rig",
+    standard_options: dict[str, StandardAttributeOptions] | None = None,
 ) -> CustomFilterSelection:
     """ファイル管理に依存しない表示フィルター選択を作る。"""
     return CustomFilterSelection(
         "C:/filters/rig.json",
-        CustomFilterDefinition(name, node_types),
+        CustomFilterDefinition(name, node_types, standard_options or {}),
     )
 
 
 def _paths(editor: ChannelBoxWidget) -> tuple[str, ...]:
     """表示基準ノードから構築された行の正式pathを返す。"""
     return tuple(row.attribute.path for row in editor.controller.rows)
+
+
+def _saved_includes(path: Path) -> dict[str, list[str]]:
+    """保存形式に依存せず、型別の個別指定順をファイルから取得する。"""
+    return {
+        node_type: list(paths)
+        for node_type, paths in load_custom_filter(path).node_types.items()
+    }
 
 
 def _candidate_label(panel: CustomFilterSetupPanel, path: str) -> qt.QLabel:
@@ -504,7 +522,7 @@ def test_setup_reference_type_switch_preserves_unsaved_definitions(
     assert draft.paths("transform") == ("unchangedTransform",)
     panel.save_button.click()
     _events()
-    assert json.loads(path.read_text(encoding="utf-8"))["node_types"] == {
+    assert _saved_includes(path) == {
         "joint": ["missingJoint", "jointOnly"],
         "network": ["networkOnly"],
         "transform": ["unchangedTransform"],
@@ -563,9 +581,7 @@ def test_setup_mode_saves_hidden_attribute_without_scene_edit(
 
     panel.save_button.click()
     _events()
-    assert json.loads(path.read_text(encoding="utf-8"))["node_types"] == {
-        "transform": ["hiddenRig"]
-    }
+    assert _saved_includes(path) == {"transform": ["hiddenRig"]}
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
     editor.mode_combo.setCurrentIndex(0)
@@ -691,7 +707,7 @@ def test_setup_order_multi_selection_moves_and_removes_as_one_action(
 
     panel.save_button.click()
     _events()
-    assert json.loads(path.read_text(encoding="utf-8"))["node_types"] == {
+    assert _saved_includes(path) == {
         "joint": ["orderD"],
         "transform": ["other"],
     }
@@ -737,8 +753,8 @@ def test_setup_toolbox_and_selected_candidates_keep_other_definitions(
     _events()
 
     assert panel.tool_box.count() == 2
-    assert panel.tool_box.itemText(0) == "フィルターの表示順"
-    assert panel.tool_box.itemText(1) == "属性をフィルターに含める"
+    assert panel.tool_box.itemText(0) == "手動登録の表示順"
+    assert panel.tool_box.itemText(1) == "属性を手動登録する"
     assert panel.tool_box.currentWidget() is panel.candidate_page
     assert panel.candidate_scroll.isVisible()
     assert not panel.order_list.isVisible()
@@ -804,7 +820,7 @@ def test_setup_toolbox_and_selected_candidates_keep_other_definitions(
     assert path.read_bytes() == original_json
     panel.save_button.click()
     _events()
-    assert json.loads(path.read_text(encoding="utf-8"))["node_types"] == {
+    assert _saved_includes(path) == {
         "transform": ["legacyMissing", "hiddenOther"],
         "joint": ["jointOnly"],
     }
@@ -849,9 +865,7 @@ def test_setup_radio_exclusion_saves_explicit_empty_type(
 
     panel.save_button.click()
     _events()
-    assert json.loads(path.read_text(encoding="utf-8"))["node_types"] == {
-        "transform": []
-    }
+    assert _saved_includes(path) == {"transform": []}
     editor.mode_combo.setCurrentIndex(0)
     _events()
     index = next(
@@ -1096,8 +1110,7 @@ def test_setup_radio_sweep_finishes_before_context_changes(
         assert panel.draft is not None and not panel.draft.is_dirty
         assert panel.draft.paths("transform") == ("legacyMissing",)
     elif interruption == "save":
-        saved = json.loads(path.read_text(encoding="utf-8"))
-        assert saved["node_types"] == {
+        assert _saved_includes(path) == {
             "transform": ["legacyMissing", "sweepB", "sweepA"],
             "joint": ["jointOnly"],
         }
@@ -1372,8 +1385,11 @@ def test_setup_rename_is_draft_only_until_save_and_can_be_discarded(
     destination = tmp_path / "Saved.json"
     assert not source.exists()
     saved = json.loads(destination.read_text(encoding="utf-8"))
-    assert saved["schema_version"] == 2 and "name" not in saved
-    assert saved["node_types"] == {"transform": ["visibility"], "joint": []}
+    assert saved["schema_version"] == 3 and "name" not in saved
+    assert _saved_includes(destination) == {
+        "transform": ["visibility"],
+        "joint": [],
+    }
     assert tuple(tmp_path.glob("*.json")) == (destination,)
     assert cmds.undoInfo(query=True, undoQueueEmpty=True)
 
@@ -1466,10 +1482,10 @@ def test_manager_duplicates_saved_changes_and_all_types_with_copy_suffix(
         (tmp_path / "Updated Rig.json").read_text(encoding="utf-8")
     )
     copied = json.loads(destination.read_text(encoding="utf-8"))
-    assert original["schema_version"] == copied["schema_version"] == 2
+    assert original["schema_version"] == copied["schema_version"] == 3
     assert "name" not in original and "name" not in copied
     assert copied["node_types"] == original["node_types"]
-    assert copied["node_types"]["network"] == []
+    assert copied["node_types"]["network"]["include"] == []
     assert registry.entries[-1].enabled
     assert not registry.entries[0].enabled
     assert panel.draft is not None and panel.draft.name == "Updated Rig_copy"
@@ -1588,7 +1604,7 @@ def test_setup_type_editor_works_without_nodes_and_preserves_saved_candidates(
     assert panel.node_type_combo.findData("network") == -1
     assert panel.node_type_combo.currentIndex() == 0
     assert panel.save()
-    saved = json.loads(source.read_text(encoding="utf-8"))["node_types"]
+    saved = _saved_includes(source)
     assert saved["transform"] == [
         "visibility",
         "translate.translateX",
@@ -1673,11 +1689,179 @@ def test_unknown_type_keeps_saved_paths_editable_without_loading_plugin(
     assert panel.draft.paths("bdUnavailablePluginType") == ("amount", "mode")
     assert "型の情報を取得できない" in editor.message_label.text()
     assert panel.save()
-    saved = json.loads(source.read_text(encoding="utf-8"))["node_types"]
+    saved = _saved_includes(source)
     assert saved == {
         "bdUnavailablePluginType": ["amount", "mode"],
         "transform": [],
     }
+
+
+@pytest.mark.parametrize("mode", ("values", "states"))
+@pytest.mark.parametrize(
+    "display_filter", ("keyable", "channel_box", "visible")
+)
+@pytest.mark.parametrize("position", ("first", "last"))
+def test_standard_addition_preserves_manual_order_and_standard_order(
+    editor: ChannelBoxWidget,
+    mode: ChannelBoxMode,
+    display_filter: StandardAttributeDisplayFilter,
+    position: StandardAttributePosition,
+) -> None:
+    """個別指定を重複の所属先として優先し、残りの標準行だけを前後へ補う。"""
+    node = cmds.createNode("transform", name="standardAdditionBase")
+    cmds.addAttr(node, longName="manualHidden", attributeType="double")
+    cmds.addAttr(
+        node, longName="dynamicKeyable", attributeType="double", keyable=True
+    )
+    cmds.addAttr(node, longName="dynamicChannel", attributeType="double")
+    cmds.setAttr(f"{node}.dynamicChannel", channelBox=True)
+    cmds.select(node, replace=True)
+    _events()
+    editor.controller.set_mode(mode)
+    editor.controller.set_attribute_filter(display_filter)
+    standard_paths = _paths(editor)
+    manual_paths = ("manualHidden", "visibility", "translate.translateX")
+    additional_paths = tuple(
+        path for path in standard_paths if path not in manual_paths
+    )
+    cmds.flushUndo()
+
+    editor.controller.set_attribute_filter(
+        _selection(
+            {
+                "transform": (
+                    "manualHidden",
+                    ".visibility",
+                    "translate.translateX",
+                    "visibility",
+                    "missingAttribute",
+                    "matrix",
+                )
+            },
+            standard_options={
+                "transform": StandardAttributeOptions(
+                    True, display_filter, position
+                )
+            },
+        )
+    )
+    _events()
+    expected = (
+        additional_paths + manual_paths
+        if position == "first"
+        else manual_paths + additional_paths
+    )
+    assert _paths(editor) == expected
+    assert len(expected) == len(set(expected))
+    assert ("dynamicChannel" in expected) is (display_filter != "keyable")
+    assert ("dynamicKeyable" in expected) is (display_filter != "channel_box")
+    assert editor.controller.custom_filter_fallback_node_type is None
+    assert cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+@pytest.mark.parametrize(
+    ("display_filter", "expected"),
+    (("keyable", True), ("channel_box", False), ("visible", True)),
+)
+def test_standard_addition_prioritizes_keyable_when_both_flags_are_true(
+    display_filter: StandardAttributeDisplayFilter, expected: bool
+) -> None:
+    """両フラグが立つ情報は標準追加でもKeyable側の分類を優先する。"""
+    attribute = ScalarAttributeInfo(
+        name="bothFlags",
+        path="bothFlags",
+        nice_name="Both Flags",
+        kind="number",
+        keyable=True,
+        channel_box=True,
+    )
+    assert (
+        matches_scalar_attribute_display_filter(attribute, display_filter)
+        is expected
+    )
+
+
+@pytest.mark.parametrize("paths", ((), ("missingAttribute",)))
+def test_standard_only_rule_uses_current_node_flags_with_empty_manual_paths(
+    editor: ChannelBoxWidget,
+    paths: tuple[str, ...],
+) -> None:
+    """個別指定が0件または全欠落でも、有効な標準追加は標準行を表示する。"""
+    node = cmds.createNode("transform", name="standardOnlyBase")
+    cmds.select(node, replace=True)
+    _events()
+    editor.controller.set_attribute_filter("visible")
+    expected = _paths(editor)
+    assert expected
+    editor.controller.set_attribute_filter(
+        _selection(
+            {"transform": paths},
+            standard_options={
+                "transform": StandardAttributeOptions(enabled=True)
+            },
+        )
+    )
+    _events()
+    assert _paths(editor) == expected
+    assert editor.controller.custom_filter_fallback_node_type is None
+
+
+def test_standard_addition_follows_flags_without_removing_manual_paths(
+    editor: ChannelBoxWidget,
+) -> None:
+    """実plugの表示変更へ追従し、手動登録の所属と位置を維持する。"""
+    node = cmds.createNode("network", name="standardFlagBase")
+    for name in ("manualHidden", "automatic", "future"):
+        cmds.addAttr(node, longName=name, attributeType="double")
+    cmds.setAttr(f"{node}.automatic", keyable=True)
+    cmds.select(node, replace=True)
+    _events()
+    editor.controller.set_attribute_filter(
+        _selection(
+            {"network": ("manualHidden",)},
+            standard_options={
+                "network": StandardAttributeOptions(enabled=True)
+            },
+        )
+    )
+    _events()
+    assert _paths(editor) == ("manualHidden", "automatic")
+
+    cmds.setAttr(f"{node}.automatic", keyable=False, channelBox=False)
+    cmds.setAttr(f"{node}.future", channelBox=True)
+    _events()
+    assert _paths(editor) == ("manualHidden", "future")
+    cmds.setAttr(f"{node}.manualHidden", keyable=True)
+    _events()
+    assert _paths(editor) == ("manualHidden", "future")
+
+
+def test_standard_addition_uses_only_last_selected_nodes_display_flags(
+    editor: ChannelBoxWidget,
+) -> None:
+    """複数選択でも標準追加を基準ノードだけで評価し、各個体を和集合にしない。"""
+    first = cmds.createNode("network", name="firstStandardBase")
+    last = cmds.createNode("network", name="lastStandardBase")
+    for node in (first, last):
+        for name in ("manualHidden", "firstOnly", "lastOnly"):
+            cmds.addAttr(node, longName=name, attributeType="double")
+    cmds.setAttr(f"{first}.firstOnly", keyable=True)
+    cmds.setAttr(f"{last}.lastOnly", channelBox=True)
+    cmds.select(first, last, replace=True)
+    _events()
+    editor.controller.set_attribute_filter(
+        _selection(
+            {"network": ("manualHidden",)},
+            standard_options={
+                "network": StandardAttributeOptions(enabled=True)
+            },
+        )
+    )
+    _events()
+    assert _paths(editor) == ("manualHidden", "lastOnly")
+    cmds.select(last, first, replace=True)
+    _events()
+    assert _paths(editor) == ("manualHidden", "firstOnly")
 
 
 @pytest.mark.parametrize("mode", ("values", "states"))

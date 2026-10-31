@@ -150,6 +150,28 @@ tooltip、constraintの入力禁止、Undo／Redo、時刻変更でのSlider終�
 共有カスタムフィルターの管理画面と表示・値入力を検証する場合は、
 独立した`--custom-filters-only`工程を実行します。
 
+標準属性追加とComboBoxの全件表示だけを確認する場合は、同じrunnerへ
+`--standard-options-only`を指定します。標準追加の保存・破棄、前後の合成と重複除外、
+25件の全件表示と画面を超える候補のスクロールを実Mayaで確認し、画像を保存します。
+`tests/maya/test_bd_channel_box_standard_options.py`は、型別のUI状態・保存・破棄・型削除、
+手動登録から除外した属性の標準追加、sceneとUndoの不変を検証します。
+モデルと合成は、schema 1/2の読込、schema 3の保存・複製、3条件と前後の全組合せ、
+空の手動登録、表示フラグの追従と複数選択の基準を関連unit・Maya testで固定します。
+
+2026-11-01のMaya 2025本体確認では、最小幅340pxの設定、保存・破棄、前後合成と重複除外、
+25件の全件表示と1000件の末尾までのスクロールが成功しました。画像は
+`64-standard-attribute-controls.png`・`65-combo-popup-all-items.png`・
+`66-combo-popup-screen-limit.png`へ保存します。WindowsではQt標準のpopupがタスクバー領域も
+使うため、画面端は`screen.geometry()`で検証し、作業領域との差は診断へ残します。
+操作とUI破棄の成功結果は保存されましたが、検証用Mayaの終了はプラグイン解放後に
+240秒の待機上限へ達しました。runner全体の成功とは区別し、終了処理の原因は未特定です。
+
+同日の自動検証は、toolsのBlack・3 versionのPyright・unit 159件、utilの`verify.cmd`が成功です。
+toolsのMaya runtimeは各versionで全855件を実行し、846件が成功しました。残る9件は
+MayaがKeyableとChannelBoxを排他的に変更するテストデータと、旧JSON形式の期待値が原因でした。
+テストを修正し、追加した分類境界3件と設定UIを含む関連22件を各versionで再実行して全件成功しました。
+サンドボックスの一時領域にアクセスできない実行は除き、通常の一時領域で確認しています。
+
 ```powershell
 & "C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe" -B `
     scripts/test_bd_channel_box_maya.py --maya-version 2025 --custom-filters-only --timeout 300

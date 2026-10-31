@@ -9,6 +9,13 @@
 
 ### Changed
 
+- bdChannelBoxのカスタムフィルターに、ノード型ごとの標準属性追加を導入。
+  手動登録を優先して重複を除き、Keyable・ChannelBox・両方の条件に合う現在の属性を
+  先頭または末尾へ追加できる。初期値は追加OFF・両方・末尾で、「含めない」は手動登録だけを外す。
+  フィルターの新規・明示保存は型ごとの`include`と`standard`を持つschema version 3へ更新。
+  version 1/2は追加OFFで読み、読込だけでは書き換えない。version 3を共有する全環境もtoolsを更新する。
+  utilの共通ComboBoxは画面内で可能な限り全件を表示し、収まらない場合はスクロールする。
+  toolsとutilを両方更新し、`bd_tools.reload_package(reload_util=True)`で反映する。sceneの移行は不要。
 - bdChannelBoxの値編集・表示ロックの属性行から、属性名・入力欄・接続色帯・状態ボタンの
   説明tooltipを削除。float・整数のStep欄の操作説明も、このツール内では表示しない。
   接続色・入力制限・Step操作・操作時の通知と、メニュー・管理画面の補助tooltipは維持する。

@@ -73,7 +73,7 @@ from bd_util.maya.ui import (
 from bd_util.ui import qt
 
 from . import config
-from .custom_filters import CustomFilterSelection
+from .custom_filters import CustomFilterSelection, StandardAttributeOptions
 
 ChannelBinding: TypeAlias = (
     MayaBoolPlugsBinding
@@ -648,7 +648,7 @@ class ChannelBoxController(qt.QObject):
         lookup = tuple(
             {a.path: a for a in items} for items in matching_attributes
         )
-        base_lookup = {a.path: a for a in attributes[-1]}
+        base_lookup = {a.path.removeprefix("."): a for a in attributes[-1]}
         # 基準を先頭にしてBindingへ渡し、選択リスト自体の順序は維持する
         names = (
             self.node_names[-1:] if representative_only else self.node_names
@@ -684,10 +684,16 @@ class ChannelBoxController(qt.QObject):
                 )
                 return ()
             custom_paths: tuple[str, ...] | None = None
+            standard_options = StandardAttributeOptions()
             if isinstance(effective_filter, CustomFilterSelection):
                 node_type = cast(str, cmds.nodeType(self.node_names[-1]))
                 custom_paths = effective_filter.definition.node_types.get(
                     node_type
+                )
+                standard_options = (
+                    effective_filter.definition.standard_options.get(
+                        node_type, StandardAttributeOptions()
+                    )
                 )
                 if custom_paths is None and display_filter is None:
                     self._custom_filter_fallback_node_type = node_type
@@ -696,14 +702,36 @@ class ChannelBoxController(qt.QObject):
                 custom_attributes: list[ScalarAttributeInfo] = []
                 seen_paths: set[str] = set()
                 for path in custom_paths:
-                    attribute = base_lookup.get(path)
-                    if attribute is None and path.startswith("."):
-                        attribute = base_lookup.get(path[1:])
-                    if attribute is None or attribute.path in seen_paths:
+                    attribute = base_lookup.get(path.removeprefix("."))
+                    if attribute is None:
+                        continue
+                    key = attribute.path.removeprefix(".")
+                    if key in seen_paths:
                         continue
                     custom_attributes.append(attribute)
-                    seen_paths.add(attribute.path)
+                    seen_paths.add(key)
                 ordered_attributes = tuple(custom_attributes)
+                if standard_options.enabled:
+                    # 個別指定を優先し、現在の標準条件に合う残りだけを補う
+                    additional_attributes = tuple(
+                        attribute
+                        for attribute in sorted(
+                            attributes[-1],
+                            key=partial(
+                                _attribute_display_priority,
+                                priorities=priorities,
+                            ),
+                        )
+                        if attribute.path.removeprefix(".") not in seen_paths
+                        and matches_scalar_attribute_display_filter(
+                            attribute, standard_options.display_filter
+                        )
+                    )
+                    ordered_attributes = (
+                        additional_attributes + ordered_attributes
+                        if standard_options.position == "first"
+                        else ordered_attributes + additional_attributes
+                    )
             else:
                 # 組込み条件か、型未定義時の既定条件で既存の優先順を使う
                 builtin_filter: ChannelAttributeFilter = (

@@ -33,6 +33,9 @@ _PREPARE_RESTART_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PREPARE_RESTART"
 _NAME_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_NAME_ONLY"
 _CONNECTIONS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CONNECTIONS_ONLY"
 _CUSTOM_FILTERS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CUSTOM_FILTERS_ONLY"
+_STANDARD_OPTIONS_ONLY_VARIABLE = (
+    "BAKEDANUKI_TOOLS_UI_QA_STANDARD_OPTIONS_ONLY"
+)
 _DIALOGS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_DIALOGS_ONLY"
 _EXPORTS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_EXPORTS_ONLY"
 _FILE_OPERATIONS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_FILE_OPERATIONS_ONLY"
@@ -193,6 +196,13 @@ class _MayaSmokeSession:
                 self._show,
                 self._inspect,
                 self._inspect_node_name_enter,
+                self._finish,
+            )
+        elif os.environ.get(_STANDARD_OPTIONS_ONLY_VARIABLE) == "1":
+            self._stages = (
+                self._setup_scene,
+                self._show,
+                self._inspect_standard_attribute_options,
                 self._finish,
             )
         elif os.environ.get(_FILE_OPERATIONS_ONLY_VARIABLE) == "1":
@@ -4874,7 +4884,16 @@ class _MayaSmokeSession:
             if (
                 panel.is_dirty
                 or json.loads(saved_content)["node_types"]
-                != {"transform": ["visibility"]}
+                != {
+                    "transform": {
+                        "include": ["visibility"],
+                        "standard": {
+                            "enabled": False,
+                            "filter": "visible",
+                            "position": "last",
+                        },
+                    }
+                }
                 or tuple(entry.enabled for entry in registry.entries)
                 != (True, False)
             ):
@@ -5092,6 +5111,369 @@ class _MayaSmokeSession:
             ):
                 return button
         raise AssertionError(f"候補ラジオがありません: {path}/{label}")
+
+    def _inspect_standard_attribute_options(self) -> None:
+        """標準属性の前後追加・保存破棄と共通コンボの表示件数を本体で確認する。"""
+        from maya import cmds
+
+        from bd_tools import bd_channel_box
+        from bd_tools.bd_channel_box.custom_filter_editor import (
+            CustomFilterDraft,
+            create_custom_filter,
+        )
+        from bd_tools.bd_channel_box.custom_filters import (
+            CustomFilterSelection,
+            StandardAttributeOptions,
+        )
+        from bd_util.ui import (
+            BoolCheckBox,
+            EnumComboBox,
+            FloatSliderSpinBox,
+            qt,
+        )
+
+        window = self._require_window()
+        widget = window.widget
+        registry = widget.custom_filter_registry
+        saved_group = registry.active_group
+        saved_preset = registry.active_preset
+        saved_mode = widget.controller.mode
+        saved_filter = widget.controller.values_attribute_filter
+        source = self.output / "standard-attribute-options.json"
+        path = create_custom_filter(source, "Standard Attribute Options")
+        initial = CustomFilterDraft(path)
+        manual = ("hiddenWeight", "visibility")
+        for attribute_path in manual:
+            initial.set_included("transform", attribute_path, True)
+        initial.save()
+
+        def click(control: qt.QWidget) -> None:
+            """設定部品をマウスで押して通常の変更通知を処理する。"""
+            position = control.rect().center()
+            if isinstance(control, qt.QCheckBox):
+                position.setX(8)
+            for event_type in (
+                qt.QEvent.Type.MouseButtonPress,
+                qt.QEvent.Type.MouseButtonRelease,
+            ):
+                self._mouse(control, event_type, position)
+            self._flush_gui()
+
+        def choose(combo: qt.QComboBox, value: str) -> None:
+            """保存用dataから候補を探して実マウス入力で選択する。"""
+            self._select_combo_item(combo, combo.findData(value))
+
+        def show_values() -> tuple[str, ...]:
+            """通常表示へ切り替え、検証用フィルターの実際の表示順を返す。"""
+            choose(widget.mode_combo, "values")
+            index = next(
+                (
+                    index
+                    for index in range(widget.filter_combo.count())
+                    if isinstance(
+                        selection := widget.filter_combo.itemData(index),
+                        CustomFilterSelection,
+                    )
+                    and selection.path == path
+                ),
+                -1,
+            )
+            self._select_combo_item(widget.filter_combo, index)
+            return tuple(row.attribute.path for row in widget.controller.rows)
+
+        # 判定専用のChannelBox属性を用意し、以降のUI操作がsceneを変えないことを確認する
+        for node in self.nodes:
+            cmds.addAttr(
+                node, longName="standardChannel", attributeType="double"
+            )
+            cmds.setAttr(f"{node}.standardChannel", channelBox=True)
+        cmds.select(list(reversed(self.nodes)), replace=True)
+        self._flush_gui()
+        scene_nodes = tuple(cmds.ls(long=True) or [])
+        initial_states = {
+            name: self._attribute_states(name)
+            for name in (*manual, "weight", "standardChannel")
+        }
+        cmds.flushUndo()
+        try:
+            registry.create_group(
+                self.output / "standard-attribute-group.json"
+            )
+            registry.create_preset(
+                self.output / "standard-attribute-preset.json"
+            )
+            registry.add_paths((path,))
+            registry.save()
+            cmds.workspaceControl(
+                bd_channel_box.WORKSPACE_CONTROL_NAME,
+                edit=True,
+                floating=True,
+                resizeWidth=340,
+                resizeHeight=700,
+            )
+            window.window().resize(340, 700)
+            choose(widget.mode_combo, "custom_filter_setup")
+            panel = widget.setup_panel
+            panel.set_target(path)
+            self._flush_gui()
+            if (
+                panel.standard_enabled_checkbox.isChecked()
+                or panel.standard_filter_combo.isEnabled()
+                or panel.standard_position_combo.isEnabled()
+                or panel.is_dirty
+            ):
+                raise AssertionError("標準属性追加の初期状態が不正です")
+
+            # 条件の3候補を選び、手動登録順を維持したまま先頭追加を保存する
+            click(panel.standard_enabled_checkbox)
+            for condition in ("keyable", "channel_box", "visible"):
+                choose(panel.standard_filter_combo, condition)
+                if (
+                    panel.draft is None
+                    or panel.draft.standard_options("transform").display_filter
+                    != condition
+                ):
+                    raise AssertionError(
+                        "標準条件の選択が下書きへ反映されません"
+                    )
+            choose(panel.standard_position_combo, "first")
+            click(panel.save_button)
+            first_options = StandardAttributeOptions(True, "visible", "first")
+            saved = CustomFilterDraft(path)
+            if (
+                saved.standard_options("transform") != first_options
+                or saved.paths("transform") != manual
+                or panel.is_dirty
+            ):
+                raise AssertionError("先頭への標準追加を保存できません")
+            self.measurements["standard_options_window_width"] = window.width()
+            if window.width() > 340:
+                raise AssertionError(
+                    "標準属性追加の画面を最小幅340pxへ縮小できません"
+                )
+            for control in (
+                panel.standard_enabled_checkbox,
+                panel.standard_filter_combo,
+                panel.standard_position_combo,
+            ):
+                bounds = qt.QRect(
+                    control.mapTo(panel, qt.QPoint()), control.size()
+                )
+                if not panel.rect().contains(bounds):
+                    raise AssertionError(
+                        "標準属性追加の操作部品が最小幅からはみ出します"
+                    )
+            self._capture("64-standard-attribute-controls.png")
+            first_rows = show_values()
+            if (
+                first_rows[-len(manual) :] != manual
+                or first_rows.count("visibility") != 1
+                or "weight" not in first_rows
+                or "standardChannel" not in first_rows
+            ):
+                raise AssertionError(
+                    f"先頭追加の表示順か重複が不正です: {first_rows}"
+                )
+            if (
+                not isinstance(self._row("mode").editor, EnumComboBox)
+                or not isinstance(
+                    self._row("weight").editor, FloatSliderSpinBox
+                )
+                or not isinstance(self._row("enabled").editor, BoolCheckBox)
+            ):
+                raise AssertionError(
+                    "標準追加後に既存の属性入力欄が失われました"
+                )
+            self._assert_values("mode", (5, -2))
+
+            # 同じ手動登録を末尾追加へ切り替え、重複する標準属性は一回だけ表示する
+            choose(widget.mode_combo, "custom_filter_setup")
+            choose(panel.standard_position_combo, "last")
+            click(panel.save_button)
+            last_rows = show_values()
+            if (
+                last_rows[: len(manual)] != manual
+                or last_rows.count("visibility") != 1
+                or set(last_rows) != set(first_rows)
+            ):
+                raise AssertionError(
+                    f"末尾追加の表示順か重複が不正です: {last_rows}"
+                )
+
+            # 条件・位置・有効状態を未保存で変更し、一括破棄で保存済み状態へ戻す
+            choose(widget.mode_combo, "custom_filter_setup")
+            saved_content = source.read_bytes()
+            choose(panel.standard_filter_combo, "keyable")
+            choose(panel.standard_position_combo, "first")
+            click(panel.standard_enabled_checkbox)
+            if not panel.is_dirty:
+                raise AssertionError("標準属性追加の変更が未保存になりません")
+            click(panel.discard_button)
+            if (
+                panel.is_dirty
+                or not panel.standard_enabled_checkbox.isChecked()
+                or panel.standard_filter_combo.currentData() != "visible"
+                or panel.standard_position_combo.currentData() != "last"
+                or source.read_bytes() != saved_content
+            ):
+                raise AssertionError("標準属性追加の変更を一括破棄できません")
+            payload = json.loads(saved_content)
+            if payload["schema_version"] != 3 or payload["node_types"] != {
+                "transform": {
+                    "include": list(manual),
+                    "standard": {
+                        "enabled": True,
+                        "filter": "visible",
+                        "position": "last",
+                    },
+                }
+            }:
+                raise AssertionError("標準属性追加の保存形式が不正です")
+            if (
+                tuple(cmds.ls(long=True) or []) != scene_nodes
+                or {
+                    name: self._attribute_states(name)
+                    for name in initial_states
+                }
+                != initial_states
+                or not cmds.undoInfo(query=True, undoQueueEmpty=True)
+            ):
+                raise AssertionError(
+                    "フィルター設定の操作でsceneが変更されました"
+                )
+            self.diagnostics.append(
+                {
+                    "standard_attribute_first": first_rows,
+                    "standard_attribute_last": last_rows,
+                    "standard_attribute_saved": payload,
+                }
+            )
+            self.steps.append(
+                "standard_attribute_save_discard_first_last_unique"
+            )
+            self._inspect_combo_popup_capacity()
+        finally:
+            registry.select_group(saved_group)
+            registry.select_preset(saved_preset)
+            widget.controller.set_attribute_filter(saved_filter)
+            widget.controller.set_mode(saved_mode)
+            self._flush_gui()
+
+    def _inspect_combo_popup_capacity(self) -> None:
+        """共通コンボの全件表示と、画面を超える候補へのスクロールを確認する。"""
+        from bd_util.ui import qt
+
+        dialog = qt.QDialog(self._require_window())
+        dialog.setWindowTitle("ComboBox popup QA")
+        layout = qt.QVBoxLayout(dialog)
+        layout.addWidget(qt.QLabel("画面に収まる候補は全件表示", dialog))
+        combo = qt.QComboBox(dialog)
+        layout.addWidget(combo)
+        screen = self._require_window().screen()
+        if screen is None:
+            raise AssertionError("コンボ検証用の画面を取得できません")
+        available = screen.availableGeometry()
+        dialog.resize(320, 100)
+        dialog.move(available.topLeft() + qt.QPoint(40, 40))
+        dialog.show()
+        self._flush_gui()
+        try:
+            for count in (25, 1000):
+                combo.clear()
+                combo.addItems(
+                    [f"Candidate {index:04d}" for index in range(count)]
+                )
+                combo.showPopup()
+                self._flush_gui()
+                popup = combo.view().window()
+                option = qt.QtWidgets.QStyleOptionComboBox()
+                combo.initStyleOption(option)
+                self.diagnostics.append(
+                    {
+                        "combo_popup": {
+                            "count": count,
+                            "geometry": popup.geometry().getRect(),
+                            "frame_geometry": popup.frameGeometry().getRect(),
+                            "screen": screen.name(),
+                            "screen_geometry": screen.geometry().getRect(),
+                            "available_geometry": available.getRect(),
+                            "inside_screen": screen.geometry().contains(
+                                popup.geometry()
+                            ),
+                            "inside_available": available.contains(
+                                popup.geometry()
+                            ),
+                            "device_pixel_ratio": popup.devicePixelRatioF(),
+                            "style": combo.style().objectName(),
+                            "popup_style_hint": combo.style().styleHint(
+                                qt.QtWidgets.QStyle.StyleHint.SH_ComboBox_Popup,
+                                option,
+                                combo,
+                            ),
+                            "platform": qt.QApplication.platformName(),
+                            "all_screens": [
+                                {
+                                    "name": other.name(),
+                                    "geometry": other.geometry().getRect(),
+                                    "available_geometry": other.availableGeometry().getRect(),
+                                    "device_pixel_ratio": other.devicePixelRatio(),
+                                }
+                                for other in qt.QApplication.screens()
+                            ],
+                        }
+                    }
+                )
+                # 失敗時にもpopup自体の描画と画面領域の診断を残す
+                image_path = self.output / (
+                    "65-combo-popup-all-items.png"
+                    if count == 25
+                    else "66-combo-popup-screen-limit.png"
+                )
+                if not popup.grab().save(str(image_path)):
+                    raise RuntimeError("候補のpopup画像を保存できません")
+                self.screenshots.append(str(image_path))
+                # Windows標準のpopupはタスクバー領域も使うため画面全体を上限にする
+                if not screen.geometry().contains(popup.geometry()):
+                    raise AssertionError(
+                        "候補popupが画面全体の領域外へ広がっています: "
+                        f"popup={popup.geometry().getRect()}, "
+                        f"available={available.getRect()}, "
+                        f"screen={screen.geometry().getRect()}"
+                    )
+                maximum = combo.view().verticalScrollBar().maximum()
+                self.measurements[f"combo_{count}_scroll_maximum"] = maximum
+                self.measurements[f"combo_{count}_popup_height"] = (
+                    popup.height()
+                )
+                if count == 25:
+                    if maximum:
+                        raise AssertionError(
+                            "画面に収まる25候補が全件表示されません"
+                        )
+                else:
+                    if maximum <= 0:
+                        raise AssertionError(
+                            "画面を超える候補をスクロールできません"
+                        )
+                    combo.view().verticalScrollBar().setValue(maximum)
+                    self._flush_gui()
+                    last_index = combo.model().index(count - 1, 0)
+                    if (
+                        not combo.view()
+                        .viewport()
+                        .rect()
+                        .intersects(combo.view().visualRect(last_index))
+                    ):
+                        raise AssertionError(
+                            "スクロール後に末尾候補が表示されません"
+                        )
+                combo.hidePopup()
+            self.steps.append("combo_all_items_and_screen_bounded_scrolling")
+        finally:
+            combo.hidePopup()
+            dialog.close()
+            dialog.deleteLater()
+            self._flush_gui()
 
     def _inspect_value_filter_preferences(self) -> None:
         """別モードから閉じたツールを再表示し、値編集の標準・カスタム選択を復元する。"""
@@ -7804,6 +8186,7 @@ def _launch(
     name_only: bool = False,
     connections_only: bool = False,
     custom_filters_only: bool = False,
+    standard_options_only: bool = False,
     dialogs_only: bool = False,
     exports_only: bool = False,
     file_operations_only: bool = False,
@@ -7858,6 +8241,9 @@ def _launch(
     environment[_CONNECTIONS_ONLY_VARIABLE] = "1" if connections_only else "0"
     environment[_CUSTOM_FILTERS_ONLY_VARIABLE] = (
         "1" if custom_filters_only else "0"
+    )
+    environment[_STANDARD_OPTIONS_ONLY_VARIABLE] = (
+        "1" if standard_options_only else "0"
     )
     environment[_DIALOGS_ONLY_VARIABLE] = "1" if dialogs_only else "0"
     environment[_EXPORTS_ONLY_VARIABLE] = "1" if exports_only else "0"
@@ -7963,6 +8349,7 @@ def main() -> int:
     restart_group.add_argument("--name-only", action="store_true")
     restart_group.add_argument("--connections-only", action="store_true")
     restart_group.add_argument("--custom-filters-only", action="store_true")
+    restart_group.add_argument("--standard-options-only", action="store_true")
     restart_group.add_argument("--dialogs-only", action="store_true")
     restart_group.add_argument("--exports-only", action="store_true")
     restart_group.add_argument("--file-operations-only", action="store_true")
@@ -7984,6 +8371,7 @@ def main() -> int:
         name_only=arguments.name_only,
         connections_only=arguments.connections_only,
         custom_filters_only=arguments.custom_filters_only,
+        standard_options_only=arguments.standard_options_only,
         dialogs_only=arguments.dialogs_only,
         exports_only=arguments.exports_only,
         file_operations_only=arguments.file_operations_only,

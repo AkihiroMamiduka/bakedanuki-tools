@@ -22,7 +22,10 @@ from bd_tools.bd_channel_box.custom_filter_presets import (
     create_preset_document,
 )
 from bd_tools.bd_channel_box.custom_filter_registry import CustomFilterRegistry
-from bd_tools.bd_channel_box.custom_filters import normalize_filter_path
+from bd_tools.bd_channel_box.custom_filters import (
+    load_custom_filter,
+    normalize_filter_path,
+)
 from bd_tools.bd_channel_box.widget import ChannelBoxWidget
 
 
@@ -122,9 +125,9 @@ def test_common_save_and_discard_cover_structure_and_filter_contents(
     assert panel.is_dirty and panel.save_button.isEnabled()
     panel.save_button.click()
     assert not panel.is_dirty
-    assert json.loads(Path(paths[0]).read_text(encoding="utf-8"))[
-        "node_types"
-    ] == {"transform": ["visibility"]}
+    assert load_custom_filter(paths[0]).node_types == {
+        "transform": ("visibility",)
+    }
     restored = CustomFilterRegistry()
     assert tuple(entry.enabled for entry in restored.entries) == (True, False)
     draft = panel.draft

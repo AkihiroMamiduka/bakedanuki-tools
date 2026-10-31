@@ -15,6 +15,7 @@ from bd_util.ui import qt
 
 from bd_tools.bd_channel_box.controller import ChannelBoxMode
 from bd_tools.bd_channel_box.custom_filter_setup import CustomFilterSetupPanel
+from bd_tools.bd_channel_box.custom_filters import load_custom_filter
 from bd_tools.bd_channel_box.widget import ChannelBoxWidget
 
 
@@ -190,11 +191,11 @@ def test_order_context_removes_selected_paths_and_uses_draft_save_discard(
     )
     panel.remove_order_action.trigger()
     panel.save_button.click()
-    saved = json.loads(source.read_text(encoding="utf-8"))["node_types"]
+    saved = load_custom_filter(source).node_types
     assert saved == {
-        "transform": ["legacyMissing", "rigC"],
-        "joint": ["visibility"],
-        "network": [],
+        "transform": ("legacyMissing", "rigC"),
+        "joint": ("visibility",),
+        "network": (),
     }
     assert not panel.save_button.isEnabled()
     assert panel.target_combo.currentText() == "context-rig"

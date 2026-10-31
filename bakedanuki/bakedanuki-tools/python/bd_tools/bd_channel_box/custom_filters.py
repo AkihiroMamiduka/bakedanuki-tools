@@ -5,14 +5,17 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import Literal, TypeAlias, cast
 
 __all__ = [
     "CustomFilterDefinition",
     "CustomFilterError",
     "CustomFilterSelection",
+    "StandardAttributeDisplayFilter",
+    "StandardAttributeOptions",
+    "StandardAttributePosition",
     "filter_display_name",
     "load_custom_filter",
     "normalize_filter_path",
@@ -22,8 +25,13 @@ __all__ = [
 _SCHEMA_KEYS = {
     1: frozenset(("schema_version", "name", "node_types")),
     2: frozenset(("schema_version", "node_types")),
+    3: frozenset(("schema_version", "node_types")),
 }
 _INVALID_PATH_CHARACTERS = frozenset("[]*?")
+StandardAttributeDisplayFilter: TypeAlias = Literal[
+    "keyable", "channel_box", "visible"
+]
+StandardAttributePosition: TypeAlias = Literal["first", "last"]
 
 
 class CustomFilterError(ValueError):
@@ -31,11 +39,23 @@ class CustomFilterError(ValueError):
 
 
 @dataclass(frozen=True)
+class StandardAttributeOptions:
+    """個別指定にない現在の標準表示属性を前後へ補う設定。"""
+
+    enabled: bool = False
+    display_filter: StandardAttributeDisplayFilter = "visible"
+    position: StandardAttributePosition = "last"
+
+
+@dataclass(frozen=True)
 class CustomFilterDefinition:
-    """実ファイル名から導いた表示名とノード型別の正式属性path。"""
+    """実ファイル名、型別の個別属性path、標準表示属性の追加条件。"""
 
     name: str
     node_types: dict[str, tuple[str, ...]]
+    standard_options: dict[str, StandardAttributeOptions] = field(
+        default_factory=dict[str, StandardAttributeOptions]
+    )
 
 
 @dataclass(frozen=True)
@@ -99,6 +119,46 @@ def _valid_attribute_path(value: str) -> bool:
     return all(bool(segment) for segment in relative.split("."))
 
 
+def _parse_standard_options(
+    raw: object, node_type: str
+) -> StandardAttributeOptions:
+    """標準追加の有効状態・条件・位置を厳密に検証する。"""
+    if not isinstance(raw, dict):
+        raise CustomFilterError(
+            f"{node_type}のstandardはオブジェクトにしてください。"
+        )
+    data = cast(dict[str, object], raw)
+    if data.keys() != {"enabled", "filter", "position"}:
+        raise CustomFilterError(
+            f"{node_type}のstandardにはenabled・filter・positionを指定してください。"
+        )
+    enabled = data["enabled"]
+    display_filter = data["filter"]
+    position = data["position"]
+    if type(enabled) is not bool:
+        raise CustomFilterError(
+            f"{node_type}のstandard.enabledは真偽値にしてください。"
+        )
+    if not isinstance(display_filter, str) or display_filter not in (
+        "keyable",
+        "channel_box",
+        "visible",
+    ):
+        raise CustomFilterError(
+            f"{node_type}のstandard.filterはkeyable・channel_box・visible"
+            "のいずれかにしてください。"
+        )
+    if not isinstance(position, str) or position not in ("first", "last"):
+        raise CustomFilterError(
+            f"{node_type}のstandard.positionはfirstまたはlastにしてください。"
+        )
+    return StandardAttributeOptions(
+        enabled,
+        display_filter,
+        position,
+    )
+
+
 def _parse_definition(raw: object, name: str) -> CustomFilterDefinition:
     """対応schemaの型と属性pathを検証し、実ファイル由来の名前を付ける。"""
     if not isinstance(raw, dict):
@@ -111,7 +171,7 @@ def _parse_definition(raw: object, name: str) -> CustomFilterDefinition:
     version = data["schema_version"]
     if type(version) is not int or version not in _SCHEMA_KEYS:
         raise CustomFilterError(
-            "schema_versionは整数の1または2にしてください。"
+            "schema_versionは整数の1・2・3のいずれかにしてください。"
         )
     keys = _SCHEMA_KEYS[version]
     if data.keys() != keys:
@@ -139,13 +199,30 @@ def _parse_definition(raw: object, name: str) -> CustomFilterDefinition:
         raise CustomFilterError("node_typesはオブジェクトにしてください。")
     node_types = cast(dict[str, object], raw_node_types)
     parsed: dict[str, tuple[str, ...]] = {}
+    standard_options: dict[str, StandardAttributeOptions] = {}
 
     # JSONのノード型と属性pathの記載順を維持し、同じpathは最初の指定だけ採用する
-    for node_type, raw_paths in node_types.items():
+    for node_type, raw_rule in node_types.items():
         if not _valid_node_type(node_type):
             raise CustomFilterError(
                 f"ノード型名が正しくありません: {node_type}"
             )
+        if version == 3:
+            if not isinstance(raw_rule, dict):
+                raise CustomFilterError(
+                    f"{node_type}はinclude・standardを持つオブジェクトにしてください。"
+                )
+            rule = cast(dict[str, object], raw_rule)
+            if rule.keys() != {"include", "standard"}:
+                raise CustomFilterError(
+                    f"{node_type}にはinclude・standardを指定してください。"
+                )
+            raw_paths = rule["include"]
+            standard_options[node_type] = _parse_standard_options(
+                rule["standard"], node_type
+            )
+        else:
+            raw_paths = raw_rule
         if not isinstance(raw_paths, list):
             raise CustomFilterError(
                 f"{node_type}の属性pathは配列にしてください。"
@@ -166,16 +243,32 @@ def _parse_definition(raw: object, name: str) -> CustomFilterDefinition:
                 seen.add(attribute_path)
         parsed[node_type] = tuple(unique)
 
-    return CustomFilterDefinition(name=name, node_types=parsed)
+    return CustomFilterDefinition(
+        name=name, node_types=parsed, standard_options=standard_options
+    )
 
 
 def serialize_custom_filter(definition: CustomFilterDefinition) -> bytes:
-    """表示名を重複保存せず、検証済みのschema version 2をUTF-8で返す。"""
+    """表示名を重複保存せず、型別のschema version 3をUTF-8で返す。"""
+    if definition.standard_options.keys() - definition.node_types.keys():
+        raise CustomFilterError("標準追加には対応するノード型定義が必要です。")
     payload: dict[str, object] = {
-        "schema_version": 2,
+        "schema_version": 3,
         "node_types": {
-            node_type: list(paths)
+            node_type: {
+                "include": list(paths),
+                "standard": {
+                    "enabled": options.enabled,
+                    "filter": options.display_filter,
+                    "position": options.position,
+                },
+            }
             for node_type, paths in definition.node_types.items()
+            for options in (
+                definition.standard_options.get(
+                    node_type, StandardAttributeOptions()
+                ),
+            )
         },
     }
     _parse_definition(payload, definition.name)

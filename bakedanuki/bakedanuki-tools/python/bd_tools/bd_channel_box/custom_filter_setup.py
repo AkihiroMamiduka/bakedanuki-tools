@@ -28,7 +28,11 @@ from .custom_filter_dialogs import (
 from .custom_filter_editor import CustomFilterDraft, filter_file_name
 from . import config
 from .custom_filter_registry import CustomFilterRegistry
-from .custom_filters import CustomFilterError, normalize_filter_path
+from .custom_filters import (
+    CustomFilterError,
+    StandardAttributeOptions,
+    normalize_filter_path,
+)
 
 __all__ = ["CustomFilterSetupPanel"]
 
@@ -159,8 +163,41 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.node_type_combo.addItem("選択ノード", None)
         self.clear_type_button = qt.QToolButton(self)
         self.clear_type_button.setObjectName("customFilterSetupClearType")
+        self.standard_enabled_checkbox = qt.QCheckBox(
+            "標準条件の属性を追加", self
+        )
+        self.standard_enabled_checkbox.setObjectName(
+            "customFilterStandardEnabled"
+        )
+        self.standard_enabled_checkbox.setToolTip(
+            "手動登録にない属性を、実ノードの現在のKeyable・ChannelBox状態で"
+            "判定して追加します。Mayaの属性や表示状態は変更しません。"
+        )
+        self.standard_filter_combo = qt.QComboBox(self)
+        self.standard_filter_combo.setObjectName("customFilterStandardFilter")
+        self.standard_filter_combo.setAccessibleName("追加する標準条件")
+        for label, value in (
+            ("Keyable", "keyable"),
+            ("ChannelBox", "channel_box"),
+            ("Keyable + ChannelBox", "visible"),
+        ):
+            self.standard_filter_combo.addItem(label, value)
+        self.standard_filter_combo.setSizePolicy(
+            qt.QSizePolicy.Policy.Ignored, qt.QSizePolicy.Policy.Fixed
+        )
+        self.standard_position_combo = qt.QComboBox(self)
+        self.standard_position_combo.setObjectName(
+            "customFilterStandardPosition"
+        )
+        self.standard_position_combo.setAccessibleName("標準属性の追加位置")
+        self.standard_position_combo.addItem("先頭", "first")
+        self.standard_position_combo.addItem("末尾", "last")
         self.order_list = qt.QListWidget(self)
         self.order_list.setObjectName("customFilterSetupOrder")
+        self.order_list.setToolTip(
+            "手動登録した属性の順序です。標準条件の属性は重複を除き、"
+            "この順序の先頭または末尾へ自動追加します。"
+        )
         self.order_list.setSelectionMode(
             qt.QAbstractItemView.SelectionMode.ExtendedSelection
         )
@@ -308,6 +345,15 @@ class CustomFilterSetupPanel(qt.QWidget):
         grid.addLayout(filter_controls, 0, 1)
         grid.addWidget(self.node_type_label, 1, 0)
         grid.addLayout(type_controls, 1, 1)
+        grid.addWidget(self.standard_enabled_checkbox, 2, 0, 1, 2)
+        standard_controls = qt.QHBoxLayout()
+        standard_controls.setContentsMargins(0, 0, 0, 0)
+        standard_controls.setSpacing(4)
+        standard_controls.addWidget(qt.QLabel("条件:", self))
+        standard_controls.addWidget(self.standard_filter_combo, 1)
+        standard_controls.addWidget(qt.QLabel("位置:", self))
+        standard_controls.addWidget(self.standard_position_combo)
+        grid.addLayout(standard_controls, 3, 0, 1, 2)
         order_buttons = qt.QVBoxLayout()
         order_buttons.setSpacing(2)
         for button in (self.up_button, self.down_button, self.remove_button):
@@ -341,8 +387,8 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.tool_box.setObjectName("customFilterSetupToolBox")
         # ページと候補の背景をMayaのWindow配色へ揃える
         self.tool_box.setBackgroundRole(qt.QPalette.ColorRole.Window)
-        self.tool_box.addItem(self.order_page, "フィルターの表示順")
-        self.tool_box.addItem(self.candidate_page, "属性をフィルターに含める")
+        self.tool_box.addItem(self.order_page, "手動登録の表示順")
+        self.tool_box.addItem(self.candidate_page, "属性を手動登録する")
         self.tool_box.setCurrentWidget(self.candidate_page)
         layout = qt.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -362,6 +408,15 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.preset_rename_button.clicked.connect(self._rename_preset)
         self.node_type_combo.currentIndexChanged.connect(
             self._change_node_type
+        )
+        self.standard_enabled_checkbox.toggled.connect(
+            self._change_standard_enabled
+        )
+        self.standard_filter_combo.currentIndexChanged.connect(
+            self._change_standard_choice
+        )
+        self.standard_position_combo.currentIndexChanged.connect(
+            self._change_standard_choice
         )
         self.search_edit.textChanged.connect(self._change_search)
         self.tool_box.currentChanged.connect(self._change_list_page)
@@ -667,6 +722,64 @@ class CustomFilterSetupPanel(qt.QWidget):
         self._type_info_node_type = None
         self._refresh_view()
 
+    def _refresh_standard_options(self) -> None:
+        """編集対象の型の標準追加条件を、下書きを変更せず表示する。"""
+        options = (
+            self.draft.standard_options(self._node_type)
+            if self.draft is not None and self._node_type is not None
+            else StandardAttributeOptions()
+        )
+        controls = (
+            self.standard_enabled_checkbox,
+            self.standard_filter_combo,
+            self.standard_position_combo,
+        )
+        blocked = tuple(control.blockSignals(True) for control in controls)
+        try:
+            self.standard_enabled_checkbox.setChecked(options.enabled)
+            self.standard_filter_combo.setCurrentIndex(
+                self.standard_filter_combo.findData(options.display_filter)
+            )
+            self.standard_position_combo.setCurrentIndex(
+                self.standard_position_combo.findData(options.position)
+            )
+        finally:
+            for control, previous in zip(controls, blocked):
+                control.blockSignals(previous)
+
+    def _change_standard_enabled(self, _checked: bool) -> None:
+        """標準追加の有効状態を、現在のノード型の下書きへ反映する。"""
+        self._apply_standard_options()
+
+    def _change_standard_choice(self, _index: int) -> None:
+        """標準追加の条件または位置を、現在のノード型へ反映する。"""
+        self._apply_standard_options()
+
+    def _apply_standard_options(self) -> None:
+        """手動登録を保ち、標準条件の変更だけを保存前の定義へ記録する。"""
+        draft = self.draft
+        node_type = self._node_type
+        display_filter = self.standard_filter_combo.currentData()
+        position = self.standard_position_combo.currentData()
+        if draft is None or node_type is None:
+            return
+        if display_filter not in ("keyable", "channel_box", "visible"):
+            return
+        if position not in ("first", "last"):
+            return
+        self._finish_radio_sweep()
+        options = StandardAttributeOptions(
+            enabled=self.standard_enabled_checkbox.isChecked(),
+            display_filter=display_filter,
+            position=position,
+        )
+        if options == draft.standard_options(node_type):
+            return
+        draft.set_standard_options(node_type, options)
+        self._refresh_node_types()
+        self._refresh_target_label()
+        self._sync_buttons()
+
     def _refresh_context(self) -> None:
         """選択ノードか固定した型から、編集対象と現在の候補を決める。"""
         fixed_type = self.node_type_combo.currentData()
@@ -806,7 +919,10 @@ class CustomFilterSetupPanel(qt.QWidget):
                 if selected
                 else "この属性だけに適用"
             )
-            tooltip = f"{path}\n{scope}"
+            tooltip = (
+                f"{path}\n{scope}\n"
+                "手動登録だけを変更し、標準条件に合う属性は自動追加されます。"
+            )
             candidate.include.setToolTip(tooltip)
             candidate.exclude.setToolTip(tooltip)
 
@@ -1064,6 +1180,7 @@ class CustomFilterSetupPanel(qt.QWidget):
             )
             self.node_label.setToolTip("")
         self._refresh_target_label()
+        self._refresh_standard_options()
         self._refresh_order()
         self._refresh_candidates()
         self._sync_buttons()
@@ -1486,6 +1603,13 @@ class CustomFilterSetupPanel(qt.QWidget):
         )
         self.preset_rename_button.setEnabled(preset_editable)
         self.node_type_combo.setEnabled(draft is not None)
+        standard_editable = draft is not None and node_type is not None
+        self.standard_enabled_checkbox.setEnabled(standard_editable)
+        standard_enabled = (
+            standard_editable and self.standard_enabled_checkbox.isChecked()
+        )
+        self.standard_filter_combo.setEnabled(standard_enabled)
+        self.standard_position_combo.setEnabled(standard_enabled)
         self.up_button.setEnabled(has_order and selected_rows[0] > 0)
         self.down_button.setEnabled(
             has_order and selected_rows[-1] < self.order_list.count() - 1

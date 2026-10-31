@@ -46,6 +46,9 @@ from bd_tools.bd_channel_box.controller import (
 from bd_tools.bd_channel_box.custom_filters import (
     CustomFilterDefinition,
     CustomFilterSelection,
+    StandardAttributeDisplayFilter,
+    StandardAttributeOptions,
+    StandardAttributePosition,
 )
 from bd_tools.bd_channel_box.custom_filter_editor import (
     CustomFilterDraft,
@@ -150,6 +153,33 @@ assert_type(
 )
 assert_type(
     bd_channel_box.show().widget.setup_panel.node_type_combo, qt.QComboBox
+)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.standard_enabled_checkbox,
+    qt.QCheckBox,
+)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.standard_filter_combo,
+    qt.QComboBox,
+)
+assert_type(
+    bd_channel_box.show().widget.setup_panel.standard_position_combo,
+    qt.QComboBox,
+)
+standard_options = CustomFilterDraft("rig.json").standard_options("joint")
+assert_type(standard_options, StandardAttributeOptions)
+assert_type(standard_options.enabled, bool)
+assert_type(standard_options.display_filter, StandardAttributeDisplayFilter)
+assert_type(standard_options.position, StandardAttributePosition)
+assert_type(
+    CustomFilterDraft("rig.json").set_standard_options(
+        "joint", StandardAttributeOptions(enabled=True)
+    ),
+    None,
+)
+assert_type(
+    CustomFilterDefinition("Rig", {}).standard_options,
+    dict[str, StandardAttributeOptions],
 )
 assert_type(
     bd_channel_box.show().widget.setup_panel.new_button, qt.QToolButton
