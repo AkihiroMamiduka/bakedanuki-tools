@@ -33,6 +33,7 @@ _PREPARE_RESTART_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PREPARE_RESTART"
 _NAME_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_NAME_ONLY"
 _CONNECTIONS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CONNECTIONS_ONLY"
 _CUSTOM_FILTERS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CUSTOM_FILTERS_ONLY"
+_ORDER_DRAG_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_ORDER_DRAG_ONLY"
 _STANDARD_OPTIONS_ONLY_VARIABLE = (
     "BAKEDANUKI_TOOLS_UI_QA_STANDARD_OPTIONS_ONLY"
 )
@@ -85,6 +86,7 @@ class _MayaSmokeSession:
         self._reference_native_box = ""
         self._reference_case_index = 0
         self._value_layout: tuple[int, int, int, int] | None = None
+        self._order_drag_scroll_paths: tuple[str, ...] = ()
         self._started_at = time.perf_counter()
         self._startup_idle_checks = 0
         self._stage_index = 0
@@ -196,6 +198,14 @@ class _MayaSmokeSession:
                 self._show,
                 self._inspect,
                 self._inspect_node_name_enter,
+                self._finish,
+            )
+        elif os.environ.get(_ORDER_DRAG_ONLY_VARIABLE) == "1":
+            self._stages = (
+                self._setup_scene,
+                self._show,
+                self._inspect_custom_filter_order_drag,
+                self._inspect_order_drag_auto_scroll,
                 self._finish,
             )
         elif os.environ.get(_STANDARD_OPTIONS_ONLY_VARIABLE) == "1":
@@ -2832,6 +2842,240 @@ class _MayaSmokeSession:
         )
         self.steps.append("custom_filter_same_column_sweep_preserves_scene")
 
+    def _inspect_custom_filter_order_drag(self) -> None:
+        """実画面で左右のドラッグ操作と表示順の保存・伸縮ボタンを確認する。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+        from bd_tools import bd_channel_box
+        from bd_tools.bd_channel_box.custom_filters import load_custom_filter
+
+        window = self._require_window()
+        widget = window.widget
+        panel = widget.setup_panel
+        registry = widget.custom_filter_registry
+        source = self.output / "Middle Drag Order.json"
+        initial = (
+            "visibility",
+            "weight",
+            "savedMissing",
+            "enabled",
+            "mode",
+            *(f"savedPath{index:02d}" for index in range(60)),
+        )
+        _write_json(
+            source,
+            {
+                "schema_version": 1,
+                "name": "Middle Drag Order",
+                "node_types": {
+                    "transform": list(initial),
+                    "joint": ["visibility"],
+                },
+            },
+        )
+        registry.create_group(self.output / "Order Drag Group.json")
+        registry.create_preset(self.output / "Order Drag Preset.json")
+        registry.add_paths((source,))
+        registry.save()
+        widget.controller.set_mode("custom_filter_setup")
+        panel.set_target(str(source))
+        panel.tool_box.setCurrentWidget(panel.order_page)
+
+        # 独立したfloating配置で、上下ボタンが残りの高さへ均等に追従する
+        previous_height = 0
+        for height in (600, 800):
+            cmds.workspaceControl(
+                bd_channel_box.WORKSPACE_CONTROL_NAME,
+                edit=True,
+                floating=True,
+                resizeWidth=640,
+                resizeHeight=height,
+            )
+            self._flush_gui()
+            remove, up, down = (
+                panel.remove_button,
+                panel.up_button,
+                panel.down_button,
+            )
+            if (
+                remove.size() != qt.QSize(20, 20)
+                or up.width() != 20
+                or down.width() != 20
+                or min(up.height(), down.height()) < 20
+                or abs(up.height() - down.height()) > 1
+                or up.height() <= previous_height
+                or not (
+                    remove.mapToGlobal(qt.QPoint()).y()
+                    < up.mapToGlobal(qt.QPoint()).y()
+                    < down.mapToGlobal(qt.QPoint()).y()
+                )
+            ):
+                raise AssertionError(
+                    "除外・上・下の配置と均等な伸縮が不正です"
+                )
+            previous_height = up.height()
+        self._capture("order-drag-buttons.png")
+        self.steps.append("order_buttons_resize_equally_after_fixed_remove")
+        order = panel.order_list
+        viewport = order.viewport()
+        original = source.read_bytes()
+        cmds.flushUndo()
+
+        # 左ドラッグは並べ替えず、保存済みの欠落pathも範囲選択する
+        start = order.visualItemRect(order.item(0)).center()
+        end = order.visualItemRect(order.item(3)).center()
+        for kind, position in (
+            (qt.QEvent.Type.MouseButtonPress, start),
+            (qt.QEvent.Type.MouseMove, end),
+            (qt.QEvent.Type.MouseButtonRelease, end),
+        ):
+            self._mouse(viewport, kind, position)
+        self._flush_gui()
+        selected = tuple(
+            row for row in range(order.count()) if order.item(row).isSelected()
+        )
+        if selected != (0, 1, 2, 3):
+            raise AssertionError("左ドラッグの連続選択が維持されません")
+        if panel.draft is None or panel.draft.is_dirty:
+            raise AssertionError("左ドラッグで下書きの順序が変わりました")
+
+        # 離れた選択行を、元の順番のまとまりとして指定行間へ移す
+        order.clearSelection()
+        order.setCurrentRow(1)
+        order.item(3).setSelected(True)
+        start = order.visualItemRect(order.item(3)).center()
+        end = qt.QPoint(start.x(), order.visualItemRect(order.item(5)).top())
+        for kind, position in (
+            (qt.QEvent.Type.MouseButtonPress, start),
+            (qt.QEvent.Type.MouseMove, end),
+        ):
+            self._mouse(
+                viewport,
+                kind,
+                position,
+                mouse_button=qt.Qt.MouseButton.MiddleButton,
+            )
+        self._flush_gui()
+        self._capture("order-drag-insertion-line.png")
+        self._mouse(
+            viewport,
+            qt.QEvent.Type.MouseButtonRelease,
+            end,
+            mouse_button=qt.Qt.MouseButton.MiddleButton,
+        )
+        self._flush_gui()
+        expected = (
+            "visibility",
+            "savedMissing",
+            "mode",
+            "weight",
+            "enabled",
+            *initial[5:],
+        )
+        selected_paths = tuple(
+            order.item(row).data(qt.Qt.ItemDataRole.UserRole)
+            for row in range(order.count())
+            if order.item(row).isSelected()
+        )
+        if (
+            panel.draft.paths("transform") != expected
+            or selected_paths != ("weight", "enabled")
+            or panel.draft.paths("joint") != ("visibility",)
+            or source.read_bytes() != original
+            or not cmds.undoInfo(query=True, undoQueueEmpty=True)
+        ):
+            raise AssertionError(
+                "中ドラッグの下書き・選択・他型の保持が不正です"
+            )
+        self._capture("order-drag-after-drop.png")
+        self.steps.append(
+            "middle_drag_inserts_noncontiguous_paths_as_one_block"
+        )
+
+        # 破棄で元へ戻し、同じ操作を保存した後はJSONに新しい順序を残す
+        panel.discard()
+        self._flush_gui()
+        if panel.draft is None or panel.draft.paths("transform") != initial:
+            raise AssertionError("中ドラッグの未保存変更を破棄できません")
+        order.clearSelection()
+        order.setCurrentRow(1)
+        order.item(3).setSelected(True)
+        start = order.visualItemRect(order.item(3)).center()
+        end = qt.QPoint(start.x(), order.visualItemRect(order.item(5)).top())
+        for kind, position in (
+            (qt.QEvent.Type.MouseButtonPress, start),
+            (qt.QEvent.Type.MouseMove, end),
+            (qt.QEvent.Type.MouseButtonRelease, end),
+        ):
+            self._mouse(
+                viewport,
+                kind,
+                position,
+                mouse_button=qt.Qt.MouseButton.MiddleButton,
+            )
+        if not panel.save():
+            raise AssertionError("中ドラッグ後の順序を保存できません")
+        if load_custom_filter(source).node_types["transform"] != expected:
+            raise AssertionError(
+                "表示順と保存されたincludeの順序が一致しません"
+            )
+        self.steps.append("middle_drag_save_and_discard_preserve_scene_undo")
+
+        # 次のstageまでQt timerを進め、下端での自動スクロールを検証する
+        order.verticalScrollBar().setValue(0)
+        order.clearSelection()
+        order.setCurrentRow(0)
+        self._flush_gui()
+        self._order_drag_scroll_paths = panel.draft.paths("transform")
+        self.measurements["order_drag_scroll_before"] = (
+            order.verticalScrollBar().value()
+        )
+        start = order.visualItemRect(order.item(0)).center()
+        end = qt.QPoint(start.x(), viewport.height() - 2)
+        for kind, position in (
+            (qt.QEvent.Type.MouseButtonPress, start),
+            (qt.QEvent.Type.MouseMove, end),
+        ):
+            self._mouse(
+                viewport,
+                kind,
+                position,
+                mouse_button=qt.Qt.MouseButton.MiddleButton,
+            )
+
+    def _inspect_order_drag_auto_scroll(self) -> None:
+        """中ドラッグ中の自動スクロールとEsc取消を実際のevent loopで確認する。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+
+        panel = self._require_window().widget.setup_panel
+        order = panel.order_list
+        value = order.verticalScrollBar().value()
+        self.measurements["order_drag_scroll_after"] = value
+        if value <= self.measurements["order_drag_scroll_before"]:
+            raise AssertionError("中ドラッグの下端で自動スクロールしません")
+        self._capture("order-drag-auto-scroll.png")
+        self._key(order, qt.Qt.Key.Key_Escape)
+        self._mouse(
+            order.viewport(),
+            qt.QEvent.Type.MouseButtonRelease,
+            qt.QPoint(
+                order.viewport().width() // 2, order.viewport().height() - 2
+            ),
+            mouse_button=qt.Qt.MouseButton.MiddleButton,
+        )
+        self._flush_gui()
+        if (
+            panel.draft is None
+            or panel.draft.is_dirty
+            or panel.draft.paths("transform") != self._order_drag_scroll_paths
+            or not cmds.undoInfo(query=True, undoQueueEmpty=True)
+        ):
+            raise AssertionError("Esc取消で順序またはMaya Undoが変わりました")
+        self.steps.append("middle_drag_auto_scroll_and_escape_cancel")
+
     def _inspect_custom_filter_type_editor(self) -> None:
         """実画面で型の直接編集、検索位置、アイコン操作を確認して撮影する。"""
         from maya import cmds
@@ -2907,8 +3151,16 @@ class _MayaSmokeSession:
                 resources[icon_name] = (
                     not qt.QIcon(f":/{icon_name}").pixmap(16, 16).isNull()
                 )
-                if button.size() != qt.QSize(20, 20):
-                    raise AssertionError("表示順ボタンが20×20ではありません")
+                if (
+                    button.width() != 20
+                    or button.height() < 20
+                    or (
+                        button is panel.remove_button and button.height() != 20
+                    )
+                ):
+                    raise AssertionError(
+                        "表示順ボタンの幅・最小高さが不正です"
+                    )
                 if button.icon().pixmap(16, 16).isNull():
                     raise AssertionError("表示順ボタンのアイコンが空です")
                 if (
@@ -7967,14 +8219,19 @@ class _MayaSmokeSession:
         position: qt.QPoint,
         *,
         modifiers: qt.Qt.KeyboardModifier | None = None,
+        mouse_button: qt.Qt.MouseButton | None = None,
     ) -> None:
         """Widget内の位置へマウス操作を送り、連続編集の開始と終了を通す。"""
         from bd_util.ui import qt
 
         if modifiers is None:
             modifiers = qt.Qt.KeyboardModifier.NoModifier
-        button = qt.Qt.MouseButton.LeftButton
-        buttons = qt.Qt.MouseButton.LeftButton
+        button = (
+            qt.Qt.MouseButton.LeftButton
+            if mouse_button is None
+            else mouse_button
+        )
+        buttons = button
         if event_type == qt.QEvent.Type.MouseMove:
             button = qt.Qt.MouseButton.NoButton
         elif event_type == qt.QEvent.Type.MouseButtonRelease:
@@ -8186,6 +8443,7 @@ def _launch(
     name_only: bool = False,
     connections_only: bool = False,
     custom_filters_only: bool = False,
+    order_drag_only: bool = False,
     standard_options_only: bool = False,
     dialogs_only: bool = False,
     exports_only: bool = False,
@@ -8242,6 +8500,7 @@ def _launch(
     environment[_CUSTOM_FILTERS_ONLY_VARIABLE] = (
         "1" if custom_filters_only else "0"
     )
+    environment[_ORDER_DRAG_ONLY_VARIABLE] = "1" if order_drag_only else "0"
     environment[_STANDARD_OPTIONS_ONLY_VARIABLE] = (
         "1" if standard_options_only else "0"
     )
@@ -8349,6 +8608,7 @@ def main() -> int:
     restart_group.add_argument("--name-only", action="store_true")
     restart_group.add_argument("--connections-only", action="store_true")
     restart_group.add_argument("--custom-filters-only", action="store_true")
+    restart_group.add_argument("--order-drag-only", action="store_true")
     restart_group.add_argument("--standard-options-only", action="store_true")
     restart_group.add_argument("--dialogs-only", action="store_true")
     restart_group.add_argument("--exports-only", action="store_true")
@@ -8371,6 +8631,7 @@ def main() -> int:
         name_only=arguments.name_only,
         connections_only=arguments.connections_only,
         custom_filters_only=arguments.custom_filters_only,
+        order_drag_only=arguments.order_drag_only,
         standard_options_only=arguments.standard_options_only,
         dialogs_only=arguments.dialogs_only,
         exports_only=arguments.exports_only,

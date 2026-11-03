@@ -294,6 +294,12 @@ def editor(
     monkeypatch.setattr(ui_dialog, "warning_near", cancel_unexpected_warning)
     _new_scene()
     widget = ChannelBoxWidget()
+    # フィルター登録先となる共有構成を、検証対象のJSONとは別に用意する
+    preset_root = tmp_path / "test-presets"
+    preset_root.mkdir()
+    widget.custom_filter_registry.create_group(preset_root / "group.json")
+    widget.custom_filter_registry.create_preset(preset_root / "preset.json")
+    widget.custom_filter_registry.save()
     widget.show()
     _events()
     try:

@@ -17,7 +17,13 @@ from bd_util.maya.node.inspection import (
     inspect_scalar_attributes_by_type,
     matches_scalar_attribute_display_filter,
 )
-from bd_util.ui import RadioButtonSweep, exec_dialog_near, qt
+from bd_util.ui import (
+    ListReorderRequest,
+    MiddleDragReorderListWidget,
+    RadioButtonSweep,
+    exec_dialog_near,
+    qt,
+)
 from bd_util.ui import dialog as ui_dialog
 
 from .custom_filter_dialogs import (
@@ -192,9 +198,10 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.standard_position_combo.setAccessibleName("標準属性の追加位置")
         self.standard_position_combo.addItem("先頭", "first")
         self.standard_position_combo.addItem("末尾", "last")
-        self.order_list = qt.QListWidget(self)
+        self.order_list = MiddleDragReorderListWidget(self)
         self.order_list.setObjectName("customFilterSetupOrder")
         self.order_list.setToolTip(
+            "左ドラッグで範囲選択、中ボタンドラッグで選択行をまとめて移動します。\n"
             "手動登録した属性の順序です。標準条件の属性は重複を除き、"
             "この順序の先頭または末尾へ自動追加します。"
         )
@@ -283,7 +290,15 @@ class CustomFilterSetupPanel(qt.QWidget):
                 icon = qt.QIcon(f":/{fallback}")
             button.setIcon(icon)
             button.setIconSize(qt.QSize(16, 16))
-            button.setFixedSize(20, 20)
+            if button in (self.up_button, self.down_button):
+                button.setFixedWidth(20)
+                button.setMinimumHeight(20)
+                button.setSizePolicy(
+                    qt.QSizePolicy.Policy.Fixed,
+                    qt.QSizePolicy.Policy.Expanding,
+                )
+            else:
+                button.setFixedSize(20, 20)
             button.setToolTip(label)
             button.setAccessibleName(label)
         self.remove_order_action.setIcon(self.remove_button.icon())
@@ -355,10 +370,11 @@ class CustomFilterSetupPanel(qt.QWidget):
         standard_controls.addWidget(self.standard_position_combo)
         grid.addLayout(standard_controls, 3, 0, 1, 2)
         order_buttons = qt.QVBoxLayout()
+        order_buttons.setContentsMargins(0, 0, 0, 0)
         order_buttons.setSpacing(2)
-        for button in (self.up_button, self.down_button, self.remove_button):
-            order_buttons.addWidget(button)
-        order_buttons.addStretch(1)
+        order_buttons.addWidget(self.remove_button)
+        order_buttons.addWidget(self.up_button, 1)
+        order_buttons.addWidget(self.down_button, 1)
         order_content = qt.QHBoxLayout()
         order_content.setSpacing(4)
         order_content.addLayout(order_buttons)
@@ -421,6 +437,7 @@ class CustomFilterSetupPanel(qt.QWidget):
         self.search_edit.textChanged.connect(self._change_search)
         self.tool_box.currentChanged.connect(self._change_list_page)
         self.order_list.itemSelectionChanged.connect(self._sync_buttons)
+        self.order_list.reorder_requested.connect(self._reorder_order)
         self.up_button.clicked.connect(partial(self._move_selected, -1))
         self.down_button.clicked.connect(partial(self._move_selected, 1))
         self.remove_button.clicked.connect(self._remove_selected)
@@ -1133,6 +1150,7 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def _show_order_context_menu(self, position: qt.QPoint) -> None:
         """正式pathを持つ項目上だけで、選択行を除外するメニューを開く。"""
+        self.order_list.cancel_reorder()
         self._finish_radio_sweep()
         self.order_context_menu.hide()
         item = self._select_order_context_target(position)
@@ -1144,12 +1162,14 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def _change_list_page(self, _index: int) -> None:
         """作業ページを切り替える際にメニューとなぞり・選択ドラッグを閉じる。"""
+        self.order_list.cancel_reorder()
         self.order_context_menu.hide()
         self._finish_radio_sweep()
         self._finish_candidate_drag()
 
     def hideEvent(self, event: qt.QtGui.QHideEvent) -> None:
         """設定モードを隠す際にメニューとドラッグの一時状態を終了する。"""
+        self.order_list.cancel_reorder()
         self.order_context_menu.hide()
         self._finish_radio_sweep()
         self._finish_candidate_drag()
@@ -1242,6 +1262,7 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def _refresh_order(self) -> None:
         """全登録pathを並べ、複数選択と現在行を正式pathで復元する。"""
+        self.order_list.cancel_reorder()
         self.order_context_menu.hide()
         draft = self.draft
         node_type = self._node_type
@@ -1470,6 +1491,28 @@ class CustomFilterSetupPanel(qt.QWidget):
             self._refresh_order()
             self._refresh_target_label()
 
+    def _reorder_order(self, request: ListReorderRequest) -> None:
+        """中ドラッグした行を元の表示順のまま指定行間へまとめて挿入する。"""
+        draft = self.draft
+        node_type = self._node_type
+        if draft is None or node_type is None:
+            return
+        paths = draft.paths(node_type)
+        selected = tuple(paths[row] for row in request.rows)
+        scroll_position = self.order_list.verticalScrollBar().value()
+        if not draft.move_many_to(node_type, selected, request.before_row):
+            return
+
+        # ドロップ先の表示位置と選択を保ち、現在行が画面外なら見える位置へ戻す
+        self._refresh_order()
+        self.order_list.verticalScrollBar().setValue(scroll_position)
+        current = cast(
+            qt.QListWidgetItem | None, self.order_list.currentItem()
+        )
+        if current is not None:
+            self.order_list.scrollToItem(current)
+        self._refresh_target_label()
+
     def _remove_selected(self) -> None:
         """ノードにないpathも含め、選択した全pathをまとめて除外する。"""
         draft = self.draft
@@ -1627,6 +1670,7 @@ class CustomFilterSetupPanel(qt.QWidget):
 
     def save(self) -> bool:
         """全構成と編集中のJSONを保存し、改名先と通常表示の参照を引き継ぐ。"""
+        self.order_list.cancel_reorder()
         self._finish_radio_sweep()
         draft = self.draft
         self._saving = True

@@ -395,6 +395,55 @@ class CustomFilterDraft:
             paths[index], paths[target] = paths[target], paths[index]
         return True
 
+    def move_many_to(
+        self,
+        node_type: str,
+        selected_paths: Iterable[str],
+        before_index: int,
+    ) -> bool:
+        """選択属性を元の順序でまとめ、移動前の一覧の行間へ挿入する。
+
+        Args:
+            node_type: 並べ替えるノード型。
+            selected_paths: 移動する属性path。未知のpathは無視する。
+            before_index: 移動前の一覧の行間。先頭は0、末尾は属性数。
+
+        Returns:
+            順序を変更した場合だけTrue。
+
+        Raises:
+            ValueError: `before_index`が一覧の行間の範囲外の場合。
+        """
+        paths = self.node_types.get(node_type, [])
+        if not 0 <= before_index <= len(paths):
+            raise ValueError("挿入位置には0から属性数までを指定してください")
+
+        # 元の並びで選択を抜き出し、除去した分だけ挿入位置を補正する
+        keys = {_attribute_key(path) for path in selected_paths}
+        selected: list[str] = []
+        remaining: list[str] = []
+        insertion_index = before_index
+        for index, path in enumerate(paths):
+            if _attribute_key(path) in keys:
+                selected.append(path)
+                if index < before_index:
+                    insertion_index -= 1
+            else:
+                remaining.append(path)
+        if not selected:
+            return False
+
+        # 同じ順序へのドロップは下書きを変更せずに終了する
+        reordered = (
+            remaining[:insertion_index]
+            + selected
+            + remaining[insertion_index:]
+        )
+        if reordered == paths:
+            return False
+        paths[:] = reordered
+        return True
+
     def save(self) -> None:
         """外部変更と移動先の衝突を検査し、名前・全型・属性順を保存する。"""
         source = Path(self.source_path)

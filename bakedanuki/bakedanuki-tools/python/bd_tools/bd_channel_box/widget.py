@@ -3400,6 +3400,7 @@ class ChannelBoxWidget(qt.QWidget):
         self._scroll_timer.stop()
         self._search_timer.stop()
         self.context_menu.close()
+        self.setup_panel.order_list.cancel_reorder()
         self.setup_panel.order_context_menu.close()
         for widget in self.row_widgets:
             if isinstance(widget, AttributeRowWidget):

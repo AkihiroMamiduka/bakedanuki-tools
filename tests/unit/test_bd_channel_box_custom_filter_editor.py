@@ -443,6 +443,134 @@ def test_move_many_keeps_selected_order_and_stops_at_edges(
     assert load_custom_filter(path).node_types["transform"] == ("other",)
 
 
+@pytest.fixture
+def insertion_draft(tmp_path: Path) -> tuple[CustomFilterDraft, Path]:
+    """行間への挿入を検証するため、別型を含む順序付き下書きを作る。"""
+    path = tmp_path / "insertion.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "Insertion",
+                "node_types": {
+                    "joint": ["a", "b", "c", "d", "e"],
+                    "transform": ["other"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return CustomFilterDraft(path), path
+
+
+@pytest.mark.parametrize(
+    ("selected", "before_index", "expected"),
+    (
+        (("c",), 0, ("c", "a", "b", "d", "e")),
+        (("b",), 5, ("a", "c", "d", "e", "b")),
+        (("a",), 3, ("b", "c", "a", "d", "e")),
+        (("d", "c"), 0, ("c", "d", "a", "b", "e")),
+        (("b", "c"), 5, ("a", "d", "e", "b", "c")),
+        (("b", "d"), 0, ("b", "d", "a", "c", "e")),
+        (("b", "d"), 5, ("a", "c", "e", "b", "d")),
+        (("d", ".b", "b", "missing"), 3, ("a", "c", "b", "d", "e")),
+    ),
+)
+def test_move_many_to_inserts_selected_paths_in_original_order(
+    insertion_draft: tuple[CustomFilterDraft, Path],
+    selected: tuple[str, ...],
+    before_index: int,
+    expected: tuple[str, ...],
+) -> None:
+    """単一・連続・非連続選択を元の順序で任意の行間へまとめて移す。"""
+    draft, path = insertion_draft
+    source = path.read_bytes()
+    assert draft.move_many_to("joint", iter(selected), before_index)
+    assert draft.paths("joint") == expected
+    assert draft.paths("transform") == ("other",)
+    assert draft.is_dirty
+    assert path.read_bytes() == source
+
+
+@pytest.mark.parametrize(
+    ("selected", "before_index"),
+    (
+        (("c",), 2),
+        (("c",), 3),
+        (("b", "c"), 1),
+        (("b", "c"), 2),
+        (("b", "c"), 3),
+        (("a", "b", "c", "d", "e"), 3),
+        (("missing",), 2),
+        ((), 2),
+    ),
+)
+def test_move_many_to_preserves_clean_state_when_order_does_not_change(
+    insertion_draft: tuple[CustomFilterDraft, Path],
+    selected: tuple[str, ...],
+    before_index: int,
+) -> None:
+    """自身の位置や未知の選択へのドロップは変更なしとして扱う。"""
+    draft, _path = insertion_draft
+    assert not draft.move_many_to("joint", selected, before_index)
+    assert draft.paths("joint") == ("a", "b", "c", "d", "e")
+    assert draft.paths("transform") == ("other",)
+    assert not draft.is_dirty
+
+
+@pytest.mark.parametrize("before_index", (-1, 6))
+def test_move_many_to_rejects_invalid_insertion_boundaries(
+    insertion_draft: tuple[CustomFilterDraft, Path], before_index: int
+) -> None:
+    """一覧外の挿入位置は例外にし、作業中の順序を変更しない。"""
+    draft, _path = insertion_draft
+    with pytest.raises(ValueError, match="挿入位置"):
+        draft.move_many_to("joint", ("b", "d"), before_index)
+    assert draft.paths("joint") == ("a", "b", "c", "d", "e")
+    assert not draft.is_dirty
+
+
+def test_move_many_to_keeps_empty_and_undefined_types_unchanged(
+    insertion_draft: tuple[CustomFilterDraft, Path],
+) -> None:
+    """未定義型を作らず、空の明示型とその標準追加設定を維持する。"""
+    draft, _path = insertion_draft
+    assert not draft.move_many_to("missing", ("a",), 0)
+    assert not draft.has_node_type("missing")
+    with pytest.raises(ValueError, match="挿入位置"):
+        draft.move_many_to("missing", ("a",), 1)
+    assert not draft.is_dirty
+
+    options = StandardAttributeOptions(enabled=True)
+    draft.set_standard_options("empty", options)
+    assert not draft.move_many_to("empty", ("a",), 0)
+    assert draft.has_node_type("empty")
+    assert draft.paths("empty") == ()
+    assert draft.standard_options("empty") == options
+
+
+def test_move_many_to_restores_dirty_state_and_saves_final_order(
+    insertion_draft: tuple[CustomFilterDraft, Path],
+) -> None:
+    """元順への復元で未保存を解消し、最終順序だけを他型とともに保存する。"""
+    draft, path = insertion_draft
+    source = path.read_bytes()
+    assert draft.move_many_to("joint", ("b", "c"), 5)
+    assert draft.is_dirty
+    assert draft.move_many_to("joint", ("b", "c"), 1)
+    assert draft.paths("joint") == ("a", "b", "c", "d", "e")
+    assert not draft.is_dirty
+    assert path.read_bytes() == source
+
+    assert draft.move_many_to("joint", ("b", "d"), 5)
+    draft.save()
+    assert load_custom_filter(path).node_types == {
+        "joint": ("a", "c", "e", "b", "d"),
+        "transform": ("other",),
+    }
+    assert not draft.is_dirty
+
+
 def test_remove_many_keeps_explicit_empty_and_restores_new_type(
     tmp_path: Path,
 ) -> None:

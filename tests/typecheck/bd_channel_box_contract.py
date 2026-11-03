@@ -20,6 +20,7 @@ from bd_util.ui import (
     IntValueStepSpinBox,
     IntSliderSpinBox,
     IntStepProfile,
+    MiddleDragReorderListWidget,
     PathLineEdit,
     RadioButtonSweep,
     StringLineEdit,
@@ -149,6 +150,10 @@ assert_type(
 )
 assert_type(bd_channel_box.show().widget.setup_panel.order_page, qt.QWidget)
 assert_type(
+    bd_channel_box.show().widget.setup_panel.order_list,
+    MiddleDragReorderListWidget,
+)
+assert_type(
     bd_channel_box.show().widget.setup_panel.candidate_page, qt.QWidget
 )
 assert_type(
@@ -248,6 +253,9 @@ assert_type(
     None,
 )
 assert_type(CustomFilterDraft("rig.json").move_many("joint", ("a",), -1), bool)
+assert_type(
+    CustomFilterDraft("rig.json").move_many_to("joint", ("a",), 0), bool
+)
 assert_type(CustomFilterDraft("rig.json").remove_many("joint", ("a",)), None)
 assert_type(
     bd_channel_box.show().widget.setup_panel.selected_candidate_paths(),

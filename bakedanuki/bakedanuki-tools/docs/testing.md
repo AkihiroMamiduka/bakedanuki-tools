@@ -661,6 +661,13 @@ utilは`verify.cmd`が成功し、3 versionの型contract、Maya 2025 full pytes
 非基準の属性追加・改名では再構築せず、基準の属性追加・削除・改名・ノード削除と未選択へ
 追従すること、混在選択の基準型変更でも未保存定義と候補外path・別型の定義を保持し、
 JSON保存がsceneとUndoに触れないことも確認します。
+手動登録順の中ボタンドラッグは`test_bd_channel_box_order_drag.py`で、単一・連続・
+非連続選択と選択外の行からの移動、正式pathによる下書き・選択の同期、保存・破棄、
+別型とMaya Undoの保護、左ドラッグ選択の維持を確認します。ボタンは除外20×20、
+上下の幅20・残り高さの均等配分を、複数のWindow高さで確認します。
+挿入先の計算と順序不変時の未保存状態はunit test、挿入線・自動スクロール・取消は
+utilの`test_middle_drag_reorder_list.py`で検証します。
+Maya本体は`test_bd_channel_box_maya.py --order-drag-only`で操作と表示を確認します。
 2026-10-22の基準限定化では、上記を含む関連runtime testをMaya 2025／2026／2027で
 各350件、unit testを38件通過しました。Blackと3 versionのPyrightも成功しています。
 Maya 2025本体は`test_bd_channel_box_maya.py --custom-filters-only`で13段階の操作に成功し、
