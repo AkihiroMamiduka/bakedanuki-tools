@@ -668,6 +668,13 @@ JSON保存がsceneとUndoに触れないことも確認します。
 挿入先の計算と順序不変時の未保存状態はunit test、挿入線・自動スクロール・取消は
 utilの`test_middle_drag_reorder_list.py`で検証します。
 Maya本体は`test_bd_channel_box_maya.py --order-drag-only`で操作と表示を確認します。
+
+新規の`CustomFilterRegistry`を使う設定画面のfixtureは、個人設定を一時ディレクトリへ分離し、
+`create_group()`→`create_preset()`→`add_paths()`の順に編集対象の構成を用意します。
+保存済み状態からの編集を検証する場合は、その構成を`save()`してから操作を始めます。
+空のregistryへ直接`add_paths()`すると現在プリセットがなく失敗するため、
+ほかのテストの実行順や実ユーザーの登録状態へ依存させないでください。
+
 2026-10-22の基準限定化では、上記を含む関連runtime testをMaya 2025／2026／2027で
 各350件、unit testを38件通過しました。Blackと3 versionのPyrightも成功しています。
 Maya 2025本体は`test_bd_channel_box_maya.py --custom-filters-only`で13段階の操作に成功し、
