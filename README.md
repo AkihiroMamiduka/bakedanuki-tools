@@ -267,6 +267,7 @@ bakedanuki/
 
 - [Development](bakedanuki/bakedanuki-tools/docs/development.md)
 - [Architecture](bakedanuki/bakedanuki-tools/docs/architecture.md)
+- [ヘルプ連携仕様（実装予定）](bakedanuki/bakedanuki-tools/docs/help_integration.md)
 - [Testing](bakedanuki/bakedanuki-tools/docs/testing.md)
 - [Reloading](bakedanuki/bakedanuki-tools/docs/reloading.md)
 - [Roadmap](bakedanuki/bakedanuki-tools/docs/roadmap.md)

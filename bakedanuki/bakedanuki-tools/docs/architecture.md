@@ -58,6 +58,20 @@ bd_nodes = bdu.Nodes()
 operator = bd_nodes.existing("ctrl")
 ```
 
+## 公開ヘルプとの連携（実装予定）
+
+util・tools・webの共通契約は[ヘルプ連携仕様](help_integration.md)に定義します。
+現時点では仕様の文書化のみで、以下のAPI・JSON・ヘルプUIは未実装です。
+
+- utilがサイト基点URLのJSONを所有し、初回読込で公開定数へ保持する。
+- 個別パッケージがページ対応表・原稿・画像とヘルプ操作を所有する。
+- 固定URLを`tools/tool/bd-channel-box/`のように定め、分類は別の情報として持つ。
+- webは明示的に採用した公開ReleaseのJSONと原稿を取得してサイトを生成する。
+- tools・rigからwebへの実行時依存は追加せず、webもPythonパッケージをimportしない。
+
+JSONの正本と実行時のキャッシュ、配布対象、型、reload、採用版の固定方法は
+同仕様に従います。既存の開発向け`docs/`全体を公開用原稿として取り込みません。
+
 ## Tool Package Shape
 
 個別ツールは、最初の機能を実装する段階で `bd_tools` 直下に package を追加します。

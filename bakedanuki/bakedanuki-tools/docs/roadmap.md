@@ -337,3 +337,19 @@ bdChannelBoxから独立した
 - [ ] 共通 `bakedanuki/` 配布 root へ tools / util を統合する
 - [ ] version と changelog の release 手順を決める
 - [ ] 対応 Maya version ごとの導入・起動確認を行う
+
+## Phase 6: 公開ヘルプとの連携
+
+役割分担・JSONの配置と形式・公開API・原稿の集約・Releaseの採用条件は
+[ヘルプ連携仕様](help_integration.md)を正本とします。
+仕様の確定と、機能の実装・公開は別の段階として管理します。
+
+- [x] Cloudflareの公開先`https://web.bakedanuki.workers.dev/`を確保し、Hello Worldを確認する
+- [x] util・tools・webのヘルプ連携仕様を文書化する
+- [ ] utilへサイトJSON・公開定数・URL組み立て・汎用ブラウザーAPIを実装する
+- [ ] toolsへページ対応表・ヘルプAPI・bdChannelBoxの原稿と画像・ヘルプUIを追加する
+- [ ] JSON同梱、型contract、正規reload、Mayaでのブラウザー起動を検証する
+- [ ] 原稿・画像・設定を含むutilとtoolsの対応するReleaseを公開する
+- [ ] webリポジトリへ採用版一覧・分類設定・Starlightの集約と公開処理を実装する
+- [ ] 公開URLの本文・画像・リンク・検索と、取り込み失敗時に公開しないことを確認する
+- [ ] フィードバック受付を用意し、Webから案内する
