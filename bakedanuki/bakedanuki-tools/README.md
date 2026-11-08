@@ -138,7 +138,7 @@ callback や UI など Maya 外部状態の終了処理については
 
 - [Development](docs/development.md)
 - [Architecture](docs/architecture.md)
-- [ヘルプ連携仕様（実装予定）](docs/help_integration.md)
+- [ヘルプ連携仕様](docs/help_integration.md)
 - [Testing](docs/testing.md)
 - [Reloading](docs/reloading.md)
 - [Roadmap](docs/roadmap.md)

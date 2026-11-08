@@ -58,10 +58,11 @@ bd_nodes = bdu.Nodes()
 operator = bd_nodes.existing("ctrl")
 ```
 
-## 公開ヘルプとの連携（実装予定）
+## 公開ヘルプとの連携
 
 util・tools・webの共通契約は[ヘルプ連携仕様](help_integration.md)に定義します。
-現時点では仕様の文書化のみで、以下のAPI・JSON・ヘルプUIは未実装です。
+utilのサイトJSON・公開定数・URL組み立て・汎用ブラウザーAPIは実装済みです。
+toolsのページ対応表・ヘルプAPI・原稿・ヘルプUIとwebの集約・公開は未実装です。
 
 - utilがサイト基点URLのJSONを所有し、初回読込で公開定数へ保持する。
 - 個別パッケージがページ対応表・原稿・画像とヘルプ操作を所有する。

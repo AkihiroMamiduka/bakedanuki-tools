@@ -3,8 +3,9 @@
 ## 状態と対象
 
 2026-11-08に確定した、util・tools・webで共有する実装仕様です。
-本書は今後実装する契約を定義します。ここに記載するPython API、JSON、
-公開用原稿、Webの集約処理は、この文書化では追加していません。
+本書は実装済みの共通基盤と、今後追加するtools・webの契約を定義します。
+utilのサイトJSON・公開定数・URL組み立て・汎用ブラウザーAPIは実装済みです。
+toolsのページ対応表・ヘルプAPI・公開原稿・ヘルプUIと、webの集約処理は未実装です。
 現在の公開先はHello Worldの確認まで完了しており、個別ヘルプは未公開です。
 
 初回はbdChannelBoxの1ページを対象にします。toolsの他のツール、utilの利用ガイド、
@@ -57,14 +58,17 @@ webはPythonパッケージを実行・importせず、JSONと原稿を直接読�
 
 ## ファイルの配置
 
-以下は今後追加する配置です。実装前に空のパッケージやJSONだけを作成しません。
+以下のうちutilの項目は実装済みで、toolsとwebの項目は今後追加する配置です。
+未着手の項目について、空のパッケージやJSONだけを先に作成しません。
 `package root`はMaya Module定義が指すフォルダを指し、リポジトリ直下とは区別します。
 
 | 用途 | リポジトリからの相対パス |
 | --- | --- |
 | utilのサイト情報 | `bakedanuki/bakedanuki-util/python/bd_util/site/site.json` |
 | utilの公開API | `bakedanuki/bakedanuki-util/python/bd_util/site/__init__.py` |
-| 汎用ブラウザー起動 | `bakedanuki/bakedanuki-util/python/bd_util/py/web.py` |
+| Web関連の公開入口 | `bakedanuki/bakedanuki-util/python/bd_util/py/web/__init__.py` |
+| 汎用ブラウザー起動 | `bakedanuki/bakedanuki-util/python/bd_util/py/web/browser.py` |
+| 共通のURL検証 | `bakedanuki/bakedanuki-util/python/bd_util/py/web/_url.py` |
 | toolsのページ対応表 | `bakedanuki/bakedanuki-tools/python/bd_tools/help/pages.json` |
 | toolsのヘルプAPI | `bakedanuki/bakedanuki-tools/python/bd_tools/help/__init__.py` |
 | 公開用原稿・画像 | `bakedanuki/bakedanuki-tools/docs/user/`以下 |
@@ -76,6 +80,8 @@ webはPythonパッケージを実行・importせず、JSONと原稿を直接読�
 
 toolsのpackage rootは`bakedanuki/bakedanuki-tools/`、
 utilのpackage rootは`bakedanuki/bakedanuki-util/`です。
+`bd_util.py.web`の`__init__.py`は公開APIの取りまとめに留め、
+ブラウザー起動の実装は`browser.py`、siteと共有するURL検証は`_url.py`へ配置します。
 現在の`docs/architecture.md`、`docs/testing.md`などは開発向け文書として維持し、
 `docs/`全体を利用者向けサイトへ自動公開しません。
 
@@ -181,6 +187,7 @@ PythonでURLを得る際には、この原稿ファイルの実在を要求し�
 ## Pythonの公開APIとキャッシュ
 
 以下のAPI名・型を初期実装の契約とします。
+`bd_util.site`と`bd_util.py.web`は実装済みで、`bd_tools.help`は実装予定です。
 
 | 公開場所 | 名前・型 | 役割 |
 | --- | --- | --- |
@@ -435,8 +442,11 @@ webリポジトリへコミットせず、失敗時は公開処理を実行し�
 | 4: パッケージ公開 | util→toolsの対応するReleaseを公開し、タグ・SHA・JSON・原稿を確認 |
 | 5: web | 採用版一覧、集約・生成・公開、公開URLの本文と画像・リンク・検索を確認 |
 
-本書の作成は段階1のみです。段階2以降のPython・JSON・原稿・UI・web作成や、
-リリース・commit・push・Cloudflareの変更は、この文書化に含めません。
+段階1の仕様化と、段階2のutil実装まで完了しています。util側にはJSON・URLの検証、
+初回読込と正規reload、ブラウザーAPIの戻り値・例外、型contractのテストを追加しました。
+util内の具体的な使い方と配布対象は、同リポジトリの
+`bakedanuki/bakedanuki-util/docs/site.md`に記載します。
+段階3以降のtools・web実装と、対応するパッケージReleaseの公開は未着手です。
 ヘルプUIは既存のQt facadeとWindow lifecycleを利用し、初回はbdChannelBoxの
 メニューバーに追加します。URLをimport時やWindow表示時に自動で開きません。
 
