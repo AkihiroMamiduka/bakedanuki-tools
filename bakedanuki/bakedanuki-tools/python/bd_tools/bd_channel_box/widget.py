@@ -8,6 +8,7 @@ from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import Literal, Protocol, TypeAlias, cast
+from webbrowser import Error as BrowserError
 
 from maya import cmds
 
@@ -1314,6 +1315,14 @@ class ChannelBoxWidget(qt.QWidget):
         cast(_MenuActions, self.settings_menu).addAction(
             self.manage_custom_filters_action
         )
+        self.help_menu = qt.QMenu("ヘルプ", self.menu_bar)
+        self.menu_bar.addMenu(self.help_menu)
+        self.open_help_action = qt.QAction("オンラインヘルプ", self)
+        self.open_help_action.setObjectName("openOnlineHelpAction")
+        self.open_help_action.setToolTip(
+            "bdChannelBoxの使い方を既定のブラウザーで開きます"
+        )
+        cast(_MenuActions, self.help_menu).addAction(self.open_help_action)
         self.mode_combo = qt.QComboBox(self)
         self.mode_combo.addItem("値編集", "values")
         self.mode_combo.addItem("表示・ロック", "states")
@@ -1541,6 +1550,7 @@ class ChannelBoxWidget(qt.QWidget):
         self.manage_custom_filters_action.triggered.connect(
             self._show_custom_filter_manager
         )
+        self.open_help_action.triggered.connect(self._open_help)
         self.search_edit.textChanged.connect(self._queue_search_filter)
         # 登録一覧が揃ってから値編集の選択を復元し、最初の属性一覧へ適用する
         initial_filter = self.value_filter_preferences.restore(
@@ -1905,6 +1915,22 @@ class ChannelBoxWidget(qt.QWidget):
         self.lock_sweep.finish()
         self.message_label.hide()
         self.controller.refresh()
+
+    def _open_help(self) -> None:
+        """明示操作時だけヘルプを開き、起動失敗を既存の通知欄へ表示する。"""
+        try:
+            # ページ情報とブラウザーAPIは利用者がヘルプを開く時に読み込む
+            from .. import help as tool_help
+
+            if not tool_help.open_page("bd_channel_box"):
+                self._show_operation_report(
+                    "オンラインヘルプを開けませんでした。"
+                    "既定のブラウザーの設定をご確認ください。"
+                )
+        except (OSError, ValueError, KeyError, BrowserError) as error:
+            self._show_operation_report(
+                f"オンラインヘルプを開けませんでした: {error}"
+            )
 
     def _show_error(self, message: str) -> None:
         """入力拒否や再構築失敗を、操作対象の画面へ表示する。"""

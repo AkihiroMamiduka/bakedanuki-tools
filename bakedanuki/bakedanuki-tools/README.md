@@ -103,6 +103,27 @@ Shelfへ直接記入する場合は、コマンドの言語を`MEL`に設定し�
 toolsとutilがPythonから読み込める環境なら、メニュー自動登録OFFや開発reload後も使用できます。
 既に開いているWindowは、公開`show()`の仕様に従って再利用します。
 
+## オンラインヘルプ
+
+bdChannelBox上部の **ヘルプ > オンラインヘルプ** から、既定ブラウザーへ
+登録されたヘルプのURLを渡せます。`bd_util.site`と`bd_util.py.web`を含む
+対応する`bakedanuki-util`を配置してください。ヘルプ操作はsceneやUndoを変更しません。
+
+現在の公開先はHello Worldの段階で、個別ヘルプは未公開です。
+操作説明は[bdChannelBoxの使い方](docs/help/tool/bd-channel-box/index.md)で確認できます。
+PythonからURLだけを取得する場合は、次の公開APIを使います。
+
+```python
+from bd_tools import help as tool_help
+
+tool_help.get_url("bd_channel_box")
+```
+
+`tool_help.open_page("bd_channel_box")`は明示的にブラウザーを起動し、起動依頼の成否を返します。
+`python/bd_tools/help/pages.json`はPythonパッケージと一緒に配布します。
+公開原稿と画像はタグ付きソースへ保持し、Maya実行用の配布物から省略できます。
+詳細は[ヘルプ連携仕様](docs/help_integration.md)を参照してください。
+
 ## Import Check
 
 Maya の Script Editor で次を実行します。

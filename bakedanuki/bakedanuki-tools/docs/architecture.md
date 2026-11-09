@@ -62,7 +62,8 @@ operator = bd_nodes.existing("ctrl")
 
 util・tools・webの共通契約は[ヘルプ連携仕様](help_integration.md)に定義します。
 utilのサイトJSON・公開定数・URL組み立て・汎用ブラウザーAPIは実装済みです。
-toolsのページ対応表・ヘルプAPI・原稿・ヘルプUIとwebの集約・公開は未実装です。
+toolsのページ対応表・ヘルプAPI、bdChannelBoxの原稿・画像とヘルプメニューも実装済みです。
+対応するReleaseの公開とwebの集約・個別ヘルプ公開は未実施です。
 
 - utilがサイト基点URLのJSONを所有し、初回読込で公開定数へ保持する。
 - 個別パッケージがページ対応表・原稿・画像とヘルプ操作を所有する。
@@ -72,6 +73,16 @@ toolsのページ対応表・ヘルプAPI・原稿・ヘルプUIとwebの集約�
 
 JSONの正本と実行時のキャッシュ、配布対象、型、reload、採用版の固定方法は
 同仕様に従います。既存の開発向け`docs/`全体を公開用原稿として取り込みません。
+公開用原稿のrootは`docs/help/`とし、個別ツールは`tool/<slug>/`へまとめます。
+パッケージ紹介・導入・FAQなどはroot直下へ追加でき、公開URLはページ対応表で決めます。
+
+`bd_tools.help.__init__`は`HelpPage`・`PAGES`・`get_url()`・`open_page()`の
+公開だけを担当します。`_registry.py`が同梱`pages.json`を初回読込時に検証し、
+frozen dataclassと読み取り専用Mappingへ保持します。`_api.py`がページIDを解決し、
+URL生成時にutilのsite、明示起動時にutilのwebを読み込みます。
+対応表の読込だけではutil・Maya・Qtを読み込まず、原稿の実在も要求しません。
+bdChannelBoxの`widget.py`は「ヘルプ > オンラインヘルプ」を所有し、
+起動失敗や例外を既存の通知欄へ表示します。scene・Undoへは参加しません。
 
 ## Tool Package Shape
 

@@ -31,6 +31,7 @@ _OUTPUT_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_OUTPUT"
 _PHASE_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PHASE"
 _PREPARE_RESTART_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_PREPARE_RESTART"
 _NAME_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_NAME_ONLY"
+_HELP_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_HELP_ONLY"
 _CONNECTIONS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CONNECTIONS_ONLY"
 _CUSTOM_FILTERS_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_CUSTOM_FILTERS_ONLY"
 _ORDER_DRAG_ONLY_VARIABLE = "BAKEDANUKI_TOOLS_UI_QA_ORDER_DRAG_ONLY"
@@ -182,6 +183,15 @@ class _MayaSmokeSession:
                 self._inspect_restart,
                 self._setup_scene,
                 self._edit_after_restart,
+                self._finish,
+            )
+        elif os.environ.get(_HELP_ONLY_VARIABLE) == "1":
+            self._stages = (
+                self._setup_scene,
+                self._prepare_help_browser,
+                self._show,
+                self._prepare_help_capture,
+                self._wait_for_help_click,
                 self._finish,
             )
         elif os.environ.get(_CONNECTIONS_ONLY_VARIABLE) == "1":
@@ -408,6 +418,113 @@ class _MayaSmokeSession:
         self.baseline_callbacks = self._callback_counts()
         self.window = bd_channel_box.show()
         self.steps.append("show_multiple_selection")
+
+    def _prepare_help_browser(self) -> None:
+        """実ブラウザーへの依頼を記録し、明示操作以外の起動も検出する。"""
+        import webbrowser
+
+        self._help_browser_calls: list[dict[str, object]] = []
+        self._original_browser_open = webbrowser.open
+
+        def record_open(
+            url: str, new: int = 0, autoraise: bool = True
+        ) -> bool:
+            """元の起動処理へ渡したURLと結果を検証資料へ残す。"""
+            result = self._original_browser_open(
+                url, new=new, autoraise=autoraise
+            )
+            record: dict[str, object] = {
+                "url": url,
+                "new": new,
+                "result": result,
+            }
+            self._help_browser_calls.append(record)
+            _write_json(self.output / "browser-open.json", record)
+            return result
+
+        webbrowser.open = record_open
+
+    def _prepare_help_capture(self) -> None:
+        """公開原稿用の3モードを撮影し、実メニュー操作を待つ。"""
+        from maya import cmds
+
+        from bd_util.ui import qt
+        from bd_tools import bd_channel_box, help as tool_help
+
+        window = self._require_window()
+        cmds.workspaceControl(
+            bd_channel_box.WORKSPACE_CONTROL_NAME,
+            edit=True,
+            floating=True,
+            resizeWidth=460,
+            resizeHeight=660,
+        )
+        self._flush_gui()
+        for index, filename in (
+            (0, "help-main.png"),
+            (1, "help-display-lock.png"),
+            (2, "help-custom-filter.png"),
+        ):
+            window.widget.mode_combo.setCurrentIndex(index)
+            self._flush_gui()
+            self._capture(filename)
+        window.widget.mode_combo.setCurrentIndex(0)
+        self._flush_gui()
+        if self._help_browser_calls:
+            raise AssertionError(
+                "表示やモード切替だけでブラウザーが起動しました"
+            )
+        if [action.text() for action in window.widget.help_menu.actions()] != [
+            "オンラインヘルプ"
+        ]:
+            raise AssertionError("オンラインヘルプのメニューが不正です")
+        self._help_scene_before = self._help_scene_state()
+        title = f"bdChannelBox Help QA - Maya {cmds.about(version=True)}"
+        window.window().setWindowTitle(title)
+        window.window().raise_()
+        qt.QApplication.processEvents()
+        _write_json(
+            self.output / "help-ready.json",
+            {
+                "title": title,
+                "expected_url": tool_help.get_url("bd_channel_box"),
+                "instruction": "ヘルプ > オンラインヘルプを選択してください",
+            },
+        )
+        self.steps.append("capture_help_modes_without_browser_launch")
+
+    def _help_scene_state(self) -> dict[str, object]:
+        """ヘルプ操作で変更しないscene・選択・Undoの状態を取得する。"""
+        from maya import cmds
+
+        return {
+            "selection": cmds.ls(selection=True, long=True),
+            "modified": cmds.file(query=True, modified=True),
+            "undo_name": cmds.undoInfo(query=True, undoName=True),
+            "redo_name": cmds.undoInfo(query=True, redoName=True),
+            "values": [cmds.getAttr(f"{name}.weight") for name in self.nodes],
+        }
+
+    def _wait_for_help_click(self) -> None:
+        """実メニューからのブラウザー起動を待ち、URLと副作用を確認する。"""
+        import webbrowser
+
+        from bd_tools import help as tool_help
+
+        if not self._help_browser_calls:
+            self._stage_index -= 1
+            return
+        webbrowser.open = self._original_browser_open
+        expected = {
+            "url": tool_help.get_url("bd_channel_box"),
+            "new": 2,
+            "result": True,
+        }
+        if self._help_browser_calls != [expected]:
+            raise AssertionError(self._help_browser_calls)
+        if self._help_scene_state() != self._help_scene_before:
+            raise AssertionError("ヘルプ操作でscene・選択・Undoが変わりました")
+        self.steps.append("open_help_from_maya_menu_with_real_browser")
 
     def _inspect(self) -> None:
         """実Windowの描画と対応Viewの存在を確認して画像を保存する。"""
@@ -8441,6 +8558,7 @@ def _launch(
     prepare_restart: bool = False,
     restart_from: Path | None = None,
     name_only: bool = False,
+    help_only: bool = False,
     connections_only: bool = False,
     custom_filters_only: bool = False,
     order_drag_only: bool = False,
@@ -8496,6 +8614,7 @@ def _launch(
     environment[_PHASE_VARIABLE] = phase
     environment[_PREPARE_RESTART_VARIABLE] = "1" if prepare_restart else "0"
     environment[_NAME_ONLY_VARIABLE] = "1" if name_only else "0"
+    environment[_HELP_ONLY_VARIABLE] = "1" if help_only else "0"
     environment[_CONNECTIONS_ONLY_VARIABLE] = "1" if connections_only else "0"
     environment[_CUSTOM_FILTERS_ONLY_VARIABLE] = (
         "1" if custom_filters_only else "0"
@@ -8606,6 +8725,7 @@ def main() -> int:
     restart_group.add_argument("--prepare-restart", action="store_true")
     restart_group.add_argument("--restart-from", type=Path)
     restart_group.add_argument("--name-only", action="store_true")
+    restart_group.add_argument("--help-only", action="store_true")
     restart_group.add_argument("--connections-only", action="store_true")
     restart_group.add_argument("--custom-filters-only", action="store_true")
     restart_group.add_argument("--order-drag-only", action="store_true")
@@ -8629,6 +8749,7 @@ def main() -> int:
         prepare_restart=arguments.prepare_restart,
         restart_from=arguments.restart_from,
         name_only=arguments.name_only,
+        help_only=arguments.help_only,
         connections_only=arguments.connections_only,
         custom_filters_only=arguments.custom_filters_only,
         order_drag_only=arguments.order_drag_only,

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "package": "bd_tools",
+  "pages": {
+    "bd_channel_box": {
+      "path": "tools/tool/bd-channel-box/",
+      "source": "docs/help/tool/bd-channel-box/index.md",
+      "categories": ["util"]
+    }
+  }
+}

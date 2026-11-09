@@ -27,6 +27,17 @@ Windowの破棄から再表示までまとめて実行します。
 bd_tools.reload_package(clear_pycache=True)
 ```
 
+## ヘルプ対応表の再読み込み
+
+`bd_tools.help`は初回読込時に同梱`pages.json`を検証し、読み取り専用の`PAGES`へ
+保持します。ファイルを書き換えただけでは更新せず、toolsの正規reloadで作り直します。
+初回importと、ヘルプを利用していない状態のreloadはutil・Maya・Qtを読み込みません。
+
+ページ対応表だけを変更した場合は`bd_tools.reload_package()`、utilの`site.json`や
+URL処理も変更した場合は`bd_tools.reload_package(reload_util=True)`を使用します。
+定数や個別moduleを変数に保持していた場合は、reload後に取り直してください。
+ヘルプメニューは再生成したWidgetへ一度だけ接続し、再表示でもブラウザーを開きません。
+
 ## External State Lifecycle
 
 Python module を `sys.modules` から外すだけでは、次の Maya 外部状態は破棄されません。

@@ -186,6 +186,17 @@
 
 ### Added
 
+- `bd_tools.help`へ変更不能な`HelpPage`、読み取り専用の`PAGES`、
+  `get_url()`・`open_page()`を追加。初回読込で同梱`help/pages.json`を検証・保持し、
+  URL生成・明示起動時だけ対応するutilのサイト・ブラウザーAPIを利用する。
+  bdChannelBoxの「ヘルプ > オンラインヘルプ」から開き、起動失敗を既存の通知欄へ示す。
+  `pages.json`はPythonパッケージと一緒に配布する。公開原稿と3枚のPNGは
+  `docs/help/tool/bd-channel-box/`へまとめ、対応表の`source`を配置へ追従させる。
+  ページID`bd_channel_box`と公開パス`tools/tool/bd-channel-box/`は維持し、
+  原稿・画像はタグ付きソースへ含める。一般公開原稿のrootは`docs/help/`とする。
+  個別ヘルプのWeb公開は未実施。`bd_util.site`と`bd_util.py.web`を含む対応utilが必要。
+  toolsだけの更新は`bd_tools.reload_package()`、utilも更新する場合は
+  `bd_tools.reload_package(reload_util=True)`で反映する。既存設定・sceneの移行は不要。
 - bdChannelBoxのカスタムフィルター管理へ、各段の右端にエクスポートボタンを追加。
   グループ・プリセットは選択1件と配下の参照先、フィルターは選択した複数件を出力する。
   保存先内の`export_custom_filter`へ種類別にコピーし、相対参照をその中へ閉じる。

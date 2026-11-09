@@ -42,6 +42,20 @@ bool・byte／short／long・float系・enum・stringの複数ノード編集、
 値同期と選択切替の負荷も改善しました。将来の任意候補は
 [Roadmap](roadmap.md#bdchannelboxの拡張候補)、変更ごとの確認結果は[検証](#検証)を参照してください。
 
+## オンラインヘルプ
+
+メニューバーの`ヘルプ > オンラインヘルプ`から、既定ブラウザーへ使い方のページを
+開きます。公開用原稿は[bdChannelBoxの使い方](help/tool/bd-channel-box/index.md)です。
+Web側の集約・公開は別段階のため、原稿の実装完了とオンラインでの本文表示は区別します。
+
+ページIDは`bd_channel_box`、対応表は`bd_tools/help/pages.json`です。
+`bd_tools.help.open_page()`を利用者の明示操作時だけ呼び出し、基点URLはutilから取得します。
+Window表示・Mode切替・reloadではブラウザーを開きません。
+起動依頼が`False`または例外になった場合は、既存の画面下通知欄へ理由を表示します。
+URL取得やヘルプ起動はscene・選択・Undoを変更しません。
+責務と配布対象は[ヘルプ連携仕様](help_integration.md)、検証方法は
+[Testing](testing.md#公開ヘルプ連携の検証)を参照してください。
+
 ## 起動と終了
 
 Maya上部の`bakedanuki > tools > bdChannelBox`から開けます。スクリプトから開く場合は

@@ -347,13 +347,17 @@ bdChannelBoxから独立した
 - [x] Cloudflareの公開先`https://web.bakedanuki.workers.dev/`を確保し、Hello Worldを確認する
 - [x] util・tools・webのヘルプ連携仕様を文書化する
 - [x] utilへサイトJSON・公開定数・URL組み立て・汎用ブラウザーAPIを実装する
-- [ ] toolsへページ対応表・ヘルプAPI・bdChannelBoxの原稿と画像・ヘルプUIを追加する
-- [ ] JSON同梱、型contract、正規reload、Mayaでのブラウザー起動を検証する
+- [x] toolsへページ対応表・ヘルプAPI・bdChannelBoxの原稿と画像・ヘルプUIを追加する
+- [x] JSON同梱、型contract、正規reload、Mayaからブラウザーへの起動依頼を検証する
 - [ ] 原稿・画像・設定を含むutilとtoolsの対応するReleaseを公開する
 - [ ] webリポジトリへ採用版一覧・分類設定・Starlightの集約と公開処理を実装する
 - [ ] 公開URLの本文・画像・リンク・検索と、取り込み失敗時に公開しないことを確認する
 - [ ] フィードバック受付を用意し、Webから案内する
 
-util側にはJSON検証、初回読込と正規reload、URL組み立て、ブラウザーAPIの
-戻り値・例外のテストと型contractを追加済みです。tools側との組み合わせと
-Maya本体からの実ブラウザー起動は、ヘルプUIを追加する段階で確認します。
+utilとtoolsにはJSON検証、初回読込と正規reload、URL組み立て、ブラウザーAPIの
+戻り値・例外のテストと型contractを追加し、toolsのunit test・Black・全3版のPyrightを確認済みです。
+Maya 2025 / 2026 / 2027のruntime testは全件を実行し、各871件が成功しました。
+Maya 2027本体では予定URLを`new=2`で渡し、起動依頼の`True`とscene・Undoの不変を
+確認しました。ブラウザー画面の表示内容と個別ヘルプ本文への到達は未確認です。
+検証用Mayaの終了待ちの時間切れは、操作の成功と分けて[Testing](testing.md#公開ヘルプ連携の検証)へ記録しています。
+Web公開先は引き続きHello Worldの状態で、Releaseの公開とWeb集約・公開が次の段階です。

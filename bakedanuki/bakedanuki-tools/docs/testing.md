@@ -15,6 +15,74 @@ lifecycle などを検証します。
 package単独importと未使用状態のreloadではutilを読み込まないことを確認します。
 メニューのunit testは各ツールの画像定数を差し替え、登録側へそのまま渡すことを確認します。
 
+## 公開ヘルプ連携の検証
+
+`tests/unit/test_help.py`はJSONの型・未知schema・重複・パス・分類、
+frozenの`HelpPage`と読み取り専用`PAGES`、初回読込と正規reload、
+原稿を含まない配布配置、CWD非依存とutilへの遅延依存を確認します。
+`tests/typecheck/help_contract.py`は公開値型・Mapping・APIの戻り値を固定します。
+
+```powershell
+.\scripts\test-unit.cmd -k help
+```
+
+`tests/maya/test_bd_channel_box_help.py`はメニューの成功・`False`・例外通知、
+表示やMode切替時の無起動、scene・選択・値・変更フラグ・既存Undoの維持を確認します。
+先行するdockテストがtoolsをreloadするため、ブラウザーの差し替えはfixture内で
+現行の`bd_tools.help`を取り直して行います。自動テストでは実ブラウザーを開きません。
+
+```powershell
+$env:QT_QPA_PLATFORM = "offscreen"
+.\scripts\test-maya-all.cmd -q --tb=short
+```
+
+実Mayaでの画像撮影と手動のメニュー操作には、専用profileの次の入口を使います。
+起動した検証用bdChannelBoxで`ヘルプ > オンラインヘルプ`を選択してください。
+この工程は実ブラウザーを開くため、通常の自動テストとは分けて実行します。
+
+```powershell
+& "C:\Program Files\Autodesk\Maya2027\bin\mayapy.exe" -B `
+    scripts/test_bd_channel_box_maya.py --maya-version 2027 --help-only --timeout 300
+```
+
+runnerは一時フォルダーへ`help-main.png`・`help-display-lock.png`・
+`help-custom-filter.png`、待機情報`help-ready.json`、起動依頼`browser-open.json`と
+操作結果`result.json`を保存します。公開用画像は内容を確認してから
+`docs/help/tool/bd-channel-box/images/`の`main.png`・`display-lock.png`・
+`custom-filter.png`へ配置します。画像の自動上書きは行いません。
+
+2026-11-08のMaya 2027本体確認では、3モードの撮影、実メニューからの起動依頼
+（ページID`bd_channel_box`、`new=2`、戻り値`True`）、scene・選択・Undoの不変と
+UI破棄までの成功結果を保存しました。資料は検証フォルダー
+`bd-channel-box-maya2027-bf3m88jg`に残しています。検証用Mayaの終了は300秒の
+待機上限に達したため、runner全体は終了コード1です。操作成功とプロセス終了を
+分けて扱い、後者の原因は未特定です。ブラウザー内の本文表示は未確認です。
+WebはHello Worldの段階であり、ページ本文・画像・リンク・検索はWeb公開時に確認します。
+
+同日の自動検証結果は次のとおりです。runtimeはoffscreenで全件を実行し、
+各versionの871件にはオンラインヘルプの回帰7件を含みます。
+
+| 検証 | 結果 |
+| --- | --- |
+| unit | 258件成功 |
+| Pyright（Maya 2025 / 2026 / 2027） | 各エラー・型警告0件 |
+| Black | 100ファイルの整形確認成功 |
+| Maya 2025 runtime | 871件成功 |
+| Maya 2026 runtime | 871件成功 |
+| Maya 2027 runtime | 871件成功 |
+| 公開原稿・画像 | frontmatter、登録原稿とPNG 3枚の参照・実在を確認 |
+
+2026-11-09に公開原稿を`docs/help/tool/bd-channel-box/`へ移動し、
+対応表の`source`と検証rootを`docs/help/`へ更新しました。
+原稿3配置とサイト基点2通りの組合せでも公開URLが変わらず、原稿を省略した
+Maya配布物でもURLを取得できることをunit testで確認しています。
+旧`docs/user/`と類似prefix`docs/help-other/`は拒否します。
+
+移動後はunit全264件（うちヘルプ85件）、Pyright、Blackが成功しました。
+ヘルプ関連runtimeはMaya 2025 / 2026 / 2027で各7件成功です。
+この再検証はヘルプ関連へ絞り、全runtime 871件の結果は上記11月8日の記録を維持します。
+原稿・画像4ファイルのSHA256一致と、新配置でのfrontmatter・全画像参照も確認しました。
+
 ## Maya Runtime Tests
 
 `tests/maya` は session 開始時に `maya.standalone` を初期化し、Maya API、`bd_tools`、

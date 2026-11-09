@@ -174,6 +174,12 @@ Attribute SearchはNice Name・属性名・正式pathを、大文字小文字を
 toolsとutilは、組み合わせて動作確認した版を配置してください。
 詳細は [bdChannelBox](bakedanuki/bakedanuki-tools/docs/bd_channel_box.md) を参照してください。
 
+bdChannelBoxの **ヘルプ > オンラインヘルプ** から、既定ブラウザーへヘルプのURLを渡せます。
+この機能には`bd_util.site`と`bd_util.py.web`を含む対応するutilが必要です。
+現在のWeb公開先はHello Worldの段階で、個別ヘルプはまだ公開していません。
+公開準備済みの操作説明は[bdChannelBoxの使い方](bakedanuki/bakedanuki-tools/docs/help/tool/bd-channel-box/index.md)を
+参照してください。URL生成・配布・公開の役割分担は[ヘルプ連携仕様](bakedanuki/bakedanuki-tools/docs/help_integration.md)に記載しています。
+
 ## bdChildCompensatedSet
 
 子の位置・姿勢を維持して移動または回転を設定する、2タブのdockableツールです。

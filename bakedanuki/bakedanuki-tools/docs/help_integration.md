@@ -3,9 +3,10 @@
 ## 状態と対象
 
 2026-11-08に確定した、util・tools・webで共有する実装仕様です。
-本書は実装済みの共通基盤と、今後追加するtools・webの契約を定義します。
+本書は実装済みのutil・toolsの基盤と、今後追加するwebの契約を定義します。
 utilのサイトJSON・公開定数・URL組み立て・汎用ブラウザーAPIは実装済みです。
-toolsのページ対応表・ヘルプAPI・公開原稿・ヘルプUIと、webの集約処理は未実装です。
+toolsのページ対応表・ヘルプAPI、bdChannelBoxの公開原稿・画像・ヘルプUIも実装済みです。
+対応するReleaseの公開と、webの集約・個別ヘルプ公開は未実施です。
 現在の公開先はHello Worldの確認まで完了しており、個別ヘルプは未公開です。
 
 初回はbdChannelBoxの1ページを対象にします。toolsの他のツール、utilの利用ガイド、
@@ -58,7 +59,7 @@ webはPythonパッケージを実行・importせず、JSONと原稿を直接読�
 
 ## ファイルの配置
 
-以下のうちutilの項目は実装済みで、toolsとwebの項目は今後追加する配置です。
+以下のうちutilとtoolsの項目は実装済みで、webの項目は今後追加する配置です。
 未着手の項目について、空のパッケージやJSONだけを先に作成しません。
 `package root`はMaya Module定義が指すフォルダを指し、リポジトリ直下とは区別します。
 
@@ -70,10 +71,12 @@ webはPythonパッケージを実行・importせず、JSONと原稿を直接読�
 | 汎用ブラウザー起動 | `bakedanuki/bakedanuki-util/python/bd_util/py/web/browser.py` |
 | 共通のURL検証 | `bakedanuki/bakedanuki-util/python/bd_util/py/web/_url.py` |
 | toolsのページ対応表 | `bakedanuki/bakedanuki-tools/python/bd_tools/help/pages.json` |
-| toolsのヘルプAPI | `bakedanuki/bakedanuki-tools/python/bd_tools/help/__init__.py` |
-| 公開用原稿・画像 | `bakedanuki/bakedanuki-tools/docs/user/`以下 |
-| 初回の原稿 | `bakedanuki/bakedanuki-tools/docs/user/bd-channel-box/index.md` |
-| 初回の画像 | 同じ`bd-channel-box/`内の`images/`以下 |
+| toolsのヘルプAPI公開入口 | `bakedanuki/bakedanuki-tools/python/bd_tools/help/__init__.py` |
+| ヘルプURL生成・起動 | 同じ`help/`内の`_api.py` |
+| ページ対応表の検証・保持 | 同じ`help/`内の`_registry.py` |
+| 公開用原稿・画像 | `bakedanuki/bakedanuki-tools/docs/help/`以下 |
+| 初回の原稿 | `bakedanuki/bakedanuki-tools/docs/help/tool/bd-channel-box/index.md` |
+| 初回の画像 | 同じ`bd-channel-box/images/`内の`main.png`・`display-lock.png`・`custom-filter.png` |
 | webの採用版一覧 | `bakedanuki-web`リポジトリの`config/releases.json` |
 | webの分類表示 | 同リポジトリの`config/categories.json` |
 | webの集約処理 | 同リポジトリの`scripts/collect-help.mjs` |
@@ -82,8 +85,14 @@ toolsのpackage rootは`bakedanuki/bakedanuki-tools/`、
 utilのpackage rootは`bakedanuki/bakedanuki-util/`です。
 `bd_util.py.web`の`__init__.py`は公開APIの取りまとめに留め、
 ブラウザー起動の実装は`browser.py`、siteと共有するURL検証は`_url.py`へ配置します。
+`bd_tools.help`も`__init__.py`は公開APIの取りまとめに留め、
+URL生成・起動は`_api.py`、ページ対応表の検証と保持は`_registry.py`へ配置します。
 現在の`docs/architecture.md`、`docs/testing.md`などは開発向け文書として維持し、
 `docs/`全体を利用者向けサイトへ自動公開しません。
+公開用原稿のrootは`docs/help/`とし、パッケージ紹介・導入・設定・FAQなどの原稿を
+直下に置けます。個別ツールの原稿は`tool/<slug>/`へまとめ、画像はその原稿と同じ
+フォルダの`images/`へ置きます。この配置から公開URLを自動的に決めず、
+ページ対応表の`path`を引き続き正本とします。
 
 ## 共通JSONの規則
 
@@ -129,7 +138,7 @@ UiStateManager、scene、Undoの状態から独立させます。
   "pages": {
     "bd_channel_box": {
       "path": "tools/tool/bd-channel-box/",
-      "source": "docs/user/bd-channel-box/index.md",
+      "source": "docs/help/tool/bd-channel-box/index.md",
       "categories": ["util"]
     }
   }
@@ -158,10 +167,10 @@ UiStateManager、scene、Undoの状態から独立させます。
 分類表示順は配列から決めず、webの設定に従います。
 `util`分類は「汎用・補助」の意味であり、`bd_util`への依存を示す値ではありません。
 
-`source`は`docs/user/`配下の`.md`ファイルを指す、`/`区切りの相対パスです。
+`source`は`docs/help/`配下の`.md`ファイルを指す、`/`区切りの相対パスです。
 絶対パス、バックスラッシュ、`.`・`..`のセグメントを禁止します。
 例えば上の値は、リポジトリ内の
-`bakedanuki/bakedanuki-tools/docs/user/bd-channel-box/index.md`を指します。
+`bakedanuki/bakedanuki-tools/docs/help/tool/bd-channel-box/index.md`を指します。
 原稿の移動時は`source`だけを更新でき、URLは維持できます。
 PythonでURLを得る際には、この原稿ファイルの実在を要求しません。
 
@@ -187,7 +196,7 @@ PythonでURLを得る際には、この原稿ファイルの実在を要求し�
 ## Pythonの公開APIとキャッシュ
 
 以下のAPI名・型を初期実装の契約とします。
-`bd_util.site`と`bd_util.py.web`は実装済みで、`bd_tools.help`は実装予定です。
+`bd_util.site`・`bd_util.py.web`・`bd_tools.help`は実装済みです。
 
 | 公開場所 | 名前・型 | 役割 |
 | --- | --- | --- |
@@ -217,7 +226,7 @@ Python側にもURL文字列を手書きする構成にはしません。
 呼んだときだけブラウザーAPIを使用します。
 `import bd_tools`時のutil・Maya・Qtを読み込まない既存契約も維持します。
 
-実装後の利用例です。Web側ではこのPythonコードを使いません。
+Mayaでの利用例です。Web側ではこのPythonコードを使いません。
 
 ```python
 from bd_util import site
@@ -275,7 +284,7 @@ MayaのbakedanukiメニューからbdChannelBoxを開きます。
 ![bdChannelBoxの画面](./images/main.png)
 ```
 
-画像は原稿からの相対パスで参照し、解決後も`docs/user/`内に収めます。
+画像は原稿からの相対パスで参照し、解決後も`docs/help/`内に収めます。
 初版の同梱画像は`.png`・`.jpg`・`.jpeg`・`.webp`・`.gif`・`.svg`です。
 ルート相対URLで画像を指す方式を避け、公開基点の共通パスを変えても参照を保ちます。
 相対リンク先のMarkdownは対応表へ登録された原稿に限定します。
@@ -289,7 +298,7 @@ Web集約時に、リンク先の`path`へサイト基点の共通パスを一�
 
 webの集約処理は、登録されたMarkdownと参照する画像だけをコピーします。
 packageごとに`src/content/docs/imported/<package>/`以下へ
-`docs/user/`内の相対構造を保って配置し、各原稿に対応表由来の`slug`を付けます。
+`docs/help/`内の相対構造を保って配置し、各原稿に対応表由来の`slug`を付けます。
 例えば公開パス`tools/tool/bd-channel-box/`から、
 `slug: tools/tool/bd-channel-box`を生成します。
 元の原稿は書き換えず、生成用コピーはGitへ登録しません。
@@ -442,13 +451,23 @@ webリポジトリへコミットせず、失敗時は公開処理を実行し�
 | 4: パッケージ公開 | util→toolsの対応するReleaseを公開し、タグ・SHA・JSON・原稿を確認 |
 | 5: web | 採用版一覧、集約・生成・公開、公開URLの本文と画像・リンク・検索を確認 |
 
-段階1の仕様化と、段階2のutil実装まで完了しています。util側にはJSON・URLの検証、
-初回読込と正規reload、ブラウザーAPIの戻り値・例外、型contractのテストを追加しました。
+段階1の仕様化、段階2のutil実装、段階3のtools実装まで完了しています。
+util・toolsにはJSON・URLの検証、初回読込と正規reload、
+ブラウザーAPIの戻り値・例外、型contractのテストを追加しました。
 util内の具体的な使い方と配布対象は、同リポジトリの
 `bakedanuki/bakedanuki-util/docs/site.md`に記載します。
-段階3以降のtools・web実装と、対応するパッケージReleaseの公開は未着手です。
-ヘルプUIは既存のQt facadeとWindow lifecycleを利用し、初回はbdChannelBoxの
-メニューバーに追加します。URLをimport時やWindow表示時に自動で開きません。
+段階4のパッケージRelease公開と、段階5のweb実装・公開は未実施です。
+ヘルプUIは既存のQt facadeとWindow lifecycleを利用し、bdChannelBoxの
+メニューバーに追加しています。URLをimport時やWindow表示時に自動で開きません。
+
+toolsのunit test・Black・全3版のPyrightを確認済みです。
+Maya 2025 / 2026 / 2027のruntime testも全件を実行し、各871件が成功しました。
+Maya 2027本体では予定URLを
+`new=2`でブラウザーへ渡し、起動依頼が`True`だったこととscene・Undoの不変を
+確認しました。ブラウザー画面の表示内容や本文への到達は未確認です。
+検証用Mayaの終了は待機上限に達したため、runner全体の成功とは扱いません。
+操作結果と終了待ちの記録は[Testing](testing.md#公開ヘルプ連携の検証)を参照してください。
+Webの本文・画像・リンク・検索の確認は、段階5の公開後に実施します。
 
 段階2・3の検証では次の契約を固定します。
 
