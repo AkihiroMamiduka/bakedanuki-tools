@@ -60,6 +60,7 @@ from bd_util.maya.ui import (
     capture_all_scalar_node_values,
     capture_scalar_node_values,
     connected_plug_edit_reason,
+    get_channel_box_precision,
     inspect_plug_input_state,
     read_enum_definition,
     resolve_bool_plug,
@@ -142,6 +143,15 @@ class _BulkValueCache:
     registry: MayaCallbackRegistry
     keys: tuple[tuple[str, str], ...] | None = None
     invalidated: bool = False
+
+
+@dataclass(frozen=True)
+class _RowStructure:
+    """Undo後に入力行を保持できる属性構成と数値入力範囲。"""
+
+    attributes: tuple[ScalarAttributeInfo, ...]
+    limits: tuple[tuple[float | None, float | None], ...]
+    precision: int
 
 
 __all__ = [
@@ -237,6 +247,7 @@ class ChannelBoxController(qt.QObject):
     mode_changed = qt.Signal()
     filter_changed = qt.Signal()
     time_changed = qt.Signal(bool)
+    history_changed = qt.Signal()
 
     def __init__(self, parent: qt.QObject) -> None:
         """表示用状態と、Windowと同じ寿命の監視を初期化する。"""
@@ -247,6 +258,8 @@ class ChannelBoxController(qt.QObject):
         self.node_ids: tuple[str, ...] = ()
         self._node_handles: tuple[om.MObjectHandle, ...] = ()
         self._node_paths: tuple[om.MDagPath | None, ...] = ()
+        self._row_structure: _RowStructure | None = None
+        self._undo_refresh_pending = False
         self._bulk_rows: dict[tuple[str, str], ChannelRow] | None = None
         self._bulk_value_cache: _BulkValueCache | None = None
         self._bulk_numeric_keys: tuple[tuple[str, str], ...] | None = None
@@ -296,9 +309,7 @@ class ChannelBoxController(qt.QObject):
             )
             for name in ("Undo", "Redo"):
                 self._events.register(
-                    om.MEventMessage.addEventCallback(
-                        name, self._queue_rebuild
-                    )
+                    om.MEventMessage.addEventCallback(name, self._on_undo_redo)
                 )
             self._events.register(
                 om.MEventMessage.addEventCallback(
@@ -329,6 +340,7 @@ class ChannelBoxController(qt.QObject):
             return
         self.state_edit_session.finish()
         self._timer.stop()
+        self._undo_refresh_pending = False
         self._refresh_pending()
 
     @property
@@ -518,6 +530,17 @@ class ChannelBoxController(qt.QObject):
         self._dispose_rows()
         self._timer.start(0)
 
+    def _on_undo_redo(self, *_args: object) -> None:
+        """旧入力を止め、Undo後の構成が変わった場合だけ行を作り直す。"""
+        if self._disposed:
+            return
+        # 中断通知から再入した入力も、構成確認が終わるまで受け付けない
+        self._undo_refresh_pending = True
+        self._timer.start(0)
+        self.history_changed.emit()
+        self.state_edit_session.finish()
+        self._finish_value_edit()
+
     def _on_selection_changed(self, *_args: object) -> None:
         """選択が切り替わった時点でノード名の未確定入力を止める。"""
         if self._disposed:
@@ -589,6 +612,10 @@ class ChannelBoxController(qt.QObject):
         """最新の構成を取得し、再構築の失敗は画面へ通知する。"""
         if self._disposed:
             return
+        if om.MGlobal.isUndoing() or om.MGlobal.isRedoing():
+            # 他のcallbackがQtを進めても、構成の復元途中では作り直さない
+            self._timer.start(0)
+            return
         if self.state_edit_session.is_editing:
             self._filter_refresh_pending = True
             return
@@ -602,6 +629,12 @@ class ChannelBoxController(qt.QObject):
             attributes = tuple(
                 inspect_scalar_attributes(n) for n in names[-1:]
             )
+            if self._undo_refresh_pending and self._can_reuse_rows(
+                names, attributes
+            ):
+                # 値・編集可否の最終同期は、各BindingのUndo通知へ委譲する
+                self._undo_refresh_pending = False
+                return
             self._dispose_rows()
             self.node_names = names
             self.node_ids = tuple(
@@ -616,11 +649,59 @@ class ChannelBoxController(qt.QObject):
             )
             self._watch_nodes()
             self.rows = self._create_rows(attributes, representative_only=True)
+            self._row_structure = self._read_row_structure(attributes)
         except Exception as error:
             self._dispose_rows()
             self.selection_limit_exceeded = False
             self.error_occurred.emit(str(error))
         self.rows_changed.emit()
+
+    def _read_row_structure(
+        self, attributes: tuple[tuple[ScalarAttributeInfo, ...], ...]
+    ) -> _RowStructure:
+        """現在の表示属性と、Slider選別・操作範囲に使うhard limitを読む。"""
+        limits: list[tuple[float | None, float | None]] = []
+        for row in self.rows:
+            if not isinstance(row, ChannelRow):
+                continue
+            binding = row.binding
+            if isinstance(binding, MayaFloatPlugsBinding):
+                presentation = binding.store.presentation
+                limits.append((presentation.minimum, presentation.maximum))
+            elif isinstance(binding, MayaIntPlugsBinding):
+                limits.append(binding.hard_limits)
+        return _RowStructure(
+            attributes[-1] if attributes else (),
+            tuple(limits),
+            get_channel_box_precision(),
+        )
+
+    def _can_reuse_rows(
+        self,
+        names: tuple[str, ...],
+        attributes: tuple[tuple[ScalarAttributeInfo, ...], ...],
+    ) -> bool:
+        """同名の別実体や破棄済みBindingを除き、表示構成の一致を確認する。"""
+        if self._row_structure is None or names != self.node_names:
+            return False
+        if len(names) != len(self._node_handles):
+            return False
+        for name, handle in zip(names, self._node_handles, strict=True):
+            if (
+                not handle.isValid()
+                or not handle.isAlive()
+                or self._node_object(name) != handle.object()
+            ):
+                return False
+        for row in self.rows:
+            binding = (
+                row.binding
+                if isinstance(row, ChannelRow)
+                else row.state_binding
+            )
+            if not qt.isValid(binding) or binding.is_disposed:
+                return False
+        return self._read_row_structure(attributes) == self._row_structure
 
     def _create_rows(
         self,
@@ -904,6 +985,8 @@ class ChannelBoxController(qt.QObject):
 
     def _dispose_rows(self) -> None:
         """Qtの遅延削除を待たず、すべての入力とMaya監視を終了する。"""
+        self._row_structure = None
+        self._undo_refresh_pending = False
         self._filter_refresh_pending = False
         self._custom_filter_fallback_node_type = None
         self.setup_attributes = ()

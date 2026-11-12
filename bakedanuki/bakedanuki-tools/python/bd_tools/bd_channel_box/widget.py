@@ -1516,6 +1516,7 @@ class ChannelBoxWidget(qt.QWidget):
         )
         self.setup_panel.error_occurred.connect(self._show_error)
         self.controller.time_changed.connect(self._interrupt_value_input)
+        self.controller.history_changed.connect(self._cancel_history_input)
         self.mode_combo.currentIndexChanged.connect(self._change_mode)
         self.filter_combo.currentIndexChanged.connect(self._change_filter)
         self.copy_all_values_action.triggered.connect(self._copy_all_values)
@@ -2051,6 +2052,82 @@ class ChannelBoxWidget(qt.QWidget):
                 widget.close_context_menu()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
+
+    def _cancel_history_input(self) -> None:
+        """Undo前の下書きやドラッグを、保持する入力行から書き戻さずに除く。"""
+        search_pending = self._search_timer.isActive()
+        self._cancel_transient_input()
+        if search_pending:
+            self._search_timer.start(0)
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
+        focused = cast(
+            Callable[[], qt.QWidget | None],
+            getattr(qt.QApplication, "focusWidget"),
+        )()
+        for widget in self.row_widgets:
+            if not isinstance(widget, AttributeRowWidget):
+                continue
+            if (
+                not qt.isValid(widget.row.binding)
+                or widget.row.binding.is_disposed
+            ):
+                continue
+            editor = widget.editor
+            if isinstance(editor, StringLineEdit):
+                # 値が変化しないUndoでも、旧下書きを次の確定へ持ち越さない
+                enabled = editor.isInputEnabled()
+                editor.setInputEnabled(False)
+                editor.setInputEnabled(enabled)
+            elif isinstance(
+                editor,
+                (
+                    FloatValueStepSpinBox,
+                    FloatSliderSpinBox,
+                    IntValueStepSpinBox,
+                    IntSliderSpinBox,
+                ),
+            ):
+                if isinstance(editor, (FloatSliderSpinBox, IntSliderSpinBox)):
+                    editor.slider.finish_edit()
+                if focused is None or not editor.isAncestorOf(focused):
+                    continue
+                # 未確定文字の取消だけを行い、最終値は遅延Binding同期で表示する
+                spin_box = editor.spin_box
+                blocker = qt.QtCore.QSignalBlocker(spin_box)
+                try:
+                    if isinstance(
+                        editor, (IntValueStepSpinBox, IntSliderSpinBox)
+                    ):
+                        binding = widget.row.binding
+                        assert isinstance(binding, MayaIntPlugsBinding)
+                        editor.spin_box.setValue(binding.value)
+                    else:
+                        binding = widget.row.binding
+                        assert isinstance(binding, MayaFloatPlugsBinding)
+                        editor.spin_box.setValue(
+                            binding.view_model.presentation.to_display(
+                                binding.value
+                            )
+                        )
+                finally:
+                    del blocker
+                if isinstance(
+                    editor, (FloatValueStepSpinBox, IntValueStepSpinBox)
+                ):
+                    step = editor.step_spin_box
+                    step_blocker = qt.QtCore.QSignalBlocker(step)
+                    try:
+                        if isinstance(editor, IntValueStepSpinBox):
+                            editor.step_spin_box.setValue(
+                                editor.step_spin_box.value()
+                            )
+                        else:
+                            editor.step_spin_box.setValue(
+                                editor.step_spin_box.value()
+                            )
+                    finally:
+                        del step_blocker
 
     def _interrupt_value_input(self, was_editing: bool) -> None:
         """時刻変更前のドラッグと未確定数値を、新しい時刻へ持ち越さない。"""

@@ -1610,12 +1610,20 @@ Undoでは対象ごとに異なっていた状態と元のkeyable／channelBox�
 
 ## 更新と終了
 
-選択、属性追加・削除、keyable/channelBox切替、改名、Undo/Redo、scene切替で
+選択、属性追加・削除、keyable/channelBox切替、改名、scene切替で
 構成を再取得します。「全て」では表示フラグだけの変更による全行再構築は不要です。
 通常の値変更では全行を作り直さず、Bindingで表示を同期します。
 utilの複数属性Bindingはdirtyになったplugと祖先を照合し、関係する行だけを読み直します。
 「全て」で多数の行を表示しても、独立した1属性の変更で他の行を再読取りしません。
 接続・親属性・アニメーションによる変更も追従し、Undo／Redoや単位変更では全対象を再同期します。
+Undo／Redoでは先に未確定の値・Step・文字列、選択肢・メニュー、ドラッグ・なぞり操作と
+一時的な操作対象を終了します。次のQtイベントで選択実体・属性構成・数値のhard limit・
+表示精度を確認し、同じ場合は入力行・属性選択・スクロール位置・確定済みStepを保持します。
+構成が変化した場合や、削除で既存Bindingが無効になった場合だけ行を再構築します。
+同じpathでも削除後に作り直された属性や、同名の別ノードのBindingは再利用しません。
+Undo／Redo中に連続入力の途中値が通知されても、utilは読取りを最終状態の同期へまとめます。
+値の同期はsceneへ書き戻さず、Redo履歴を維持します。反映にはtoolsと対応するutilを更新し、
+`bd_tools.reload_package(reload_util=True)`を実行してください。設定・sceneの移行は不要です。
 選択が変わると古いBindingと連続編集を終了してから、新しい対象へ接続します。
 タイトルバーのclose、`close()`、`dispose()`、tools reloadでもcallbackと入力を終了します。
 モード・フィルター切替、選択変更による行の再構築とWindow終了では、開いている属性メニューと
@@ -3231,3 +3239,61 @@ toolsとutilを両方更新し、`bd_tools.reload_package(reload_util=True)`で�
 汎用Widgetは移動要求の通知を担当し、toolsが型別の下書きと保存を所有します。
 画面・編集対象の切替に加え、所有Widgetの`dispose()`でも`cancel_reorder()`を呼び、
 アプリのevent filterと自動スクロールtimerを即時解除する経路を維持してください。
+
+### Undo応答の改善（2026-11-12）
+
+Maya 2025で「全て」を選び、多数の属性を表示して値をUndoしたときの
+入力再開までの遅延を改善しました。Undo／Redoでは選択実体・属性情報・数値の
+hard limit・表示精度を確認し、同じ場合は既存の入力行とBindingを保持します。
+構造変更の通知を受けた行は即座に失効させ、削除Undoで同名・同型へ戻っても
+破棄済みのBindingは再利用しません。構成が変化した場合は従来どおり再構築します。
+
+utilの複数属性Bindingと状態Bindingは、Undo／Redoの途中値を同期し直さず、
+復元完了後の再読取りへまとめます。通常の外部変更の即時同期と、削除履歴の
+即時記録を維持します。Undo中に他callbackがQtを進めた場合も、構成と値の
+途中状態を読まずに処理を予約し直します。
+
+行を保持する場合も、未確定の数値・Step・文字列、選択肢・メニュー、連続編集と
+一時的な操作対象を終了し、旧入力によるRedo履歴の消失を防ぎます。
+確定済みStep、属性選択、スクロール位置と、適用待ちの検索文字は保持します。
+設定・sceneの移行は不要です。toolsと対応するutilを両方更新し、
+`bd_tools.reload_package(reload_util=True)`で反映してください。
+
+検証結果は次のとおりです。
+
+- toolsのBlack、strict Pyright、unit 264件が成功。
+- Maya 2025のQt offscreen runtime testは897件成功。新規26件を含みます。
+- Maya 2026／2027のUndo関連testは各27件成功。新規26件と既存Step保持1件です。
+- utilの`verify.cmd`が成功。Black、3 versionのPyright、Maya 2025 full pytest、
+  3 versionのQt/UI互換性testと差分確認を含みます。途中読取りの集約を確認する
+  新規14件も、3 versionのUI検証で成功しています。
+
+Maya standaloneのnative Qt全件実行では、OS clipboardが空になる既存21件が失敗しました
+（875件成功）。offscreenの全件成功とは区別します。
+Maya 2026／2027の全件実行も、カスタムフィルターの設定保存でそれぞれ停止しています。
+2026は367件成功後の`test_export_tracks_the_initial_target_after_save_rename[filter]`、
+2027は449件成功後の`test_rename_transfers_saved_definition_without_second_file_read`です。
+該当する保存テストは、通常環境の単独再実行では2026の3件、2027の1件が成功しました。
+これらの全件成功と、利用者の実シーンでの動作確認は未確認として扱います。
+
+Maya 2025本体の専用processでも、Undo／Redo後の同じ入力行への再入力と、
+OS clipboardを使う値Copy／別属性へのPaste・Undoが成功しました。
+起動・scene切替・plug-in初期化のidle処理は測定前に完了させ、
+Undoの測定区間へ起動時の内部コマンドが混入しないよう分離しています。
+
+同じprocessで、変更前の全行再生成・途中値同期と、改善後の正式実装を比較しました。
+transform 1 nodeへ30個の独立double属性を追加し、「全て」で192行を表示しています。
+2回のwarm-up後、7回の中央値です。Undoコマンドと予約したQt更新・遅延削除を含めます。
+専用Mayaは非表示起動で、通常の実シーンの評価・描画時間を保証する値ではありません。
+
+| Undo対象 | 変更前 | 改善後 |
+| --- | ---: | ---: |
+| translateXの値変更1回 | 1186.135 ms | 93.853 ms |
+| translateXの値変更30回をまとめたchunk | 1221.565 ms | 147.694 ms |
+
+改善後は各試行の全行再生成が0回で、入力行の同一性を維持しています。
+変更前は各試行で1回再生成しています。Undo／RedoでMaya値と表示値が一致し、
+次の明示入力も一回のUndo／Redoへ分離できることを併せて確認しました。
+比較用資料は開発環境の`build/channel_box_undo_probe.py`、
+`build/channel_box_undo_improved_result.json`と、
+`%TEMP%/bd-channel-undo-maya2025-i3nxdsc0`へ保存しました。
