@@ -716,6 +716,7 @@ class AttributeRowWidget(qt.QWidget):
             )
         super().__init__(parent)
         self.row = row
+        self._editor_structure = self._read_editor_structure(row)
         self.selection_count = selection_count
         self._align_callback = align_callback
         self.setObjectName(f"channel_{row.attribute.path}")
@@ -761,6 +762,65 @@ class AttributeRowWidget(qt.QWidget):
         layout.addWidget(self.name_label, 1)
         layout.addWidget(self.input_indicator)
         layout.addWidget(self.editor)
+        self._update_state()
+
+    @staticmethod
+    def _read_editor_structure(row: ChannelRow) -> tuple[object, ...]:
+        """旧Bindingの破棄後も比較できる、入力形式と固定範囲を取得する。"""
+        binding = row.binding
+        if isinstance(binding, MayaFloatPlugsBinding):
+            presentation = binding.view_model.presentation
+            return (
+                row.attribute.kind,
+                presentation.minimum,
+                presentation.maximum,
+                get_channel_box_precision(),
+            )
+        if isinstance(binding, MayaIntPlugsBinding):
+            return (row.attribute.kind, *binding.hard_limits)
+        return (row.attribute.kind,)
+
+    def can_reuse(self, row: ChannelRow) -> bool:
+        """属性の入力形式・数値範囲が一致し、既存部品を再接続できるか返す。"""
+        return (
+            self.row.attribute.path == row.attribute.path
+            and self._editor_structure == self._read_editor_structure(row)
+        )
+
+    def set_row(self, row: ChannelRow, selection_count: int) -> None:
+        """旧Bindingを保持せず、入力部品を新しい選択のBindingへ接続する。"""
+        if not self.can_reuse(row):
+            raise ValueError("入力形式が異なる属性行は再利用できません")
+        old_binding = self.row.binding
+        if qt.isValid(old_binding):
+            old_binding.state_changed.disconnect(self._update_state)
+        self.row = row
+        self.selection_count = selection_count
+        editor = self.editor
+        binding = row.binding
+        if isinstance(editor, BoolCheckBox) and isinstance(
+            binding, MayaBoolPlugsBinding
+        ):
+            editor.set_source(binding)
+        elif isinstance(editor, EnumComboBox) and isinstance(
+            binding, MayaEnumPlugsBinding
+        ):
+            editor.set_source(binding)
+        elif isinstance(editor, StringLineEdit) and isinstance(
+            binding, MayaStringPlugsBinding
+        ):
+            editor.set_source(binding)
+        elif isinstance(
+            editor, (FloatValueStepSpinBox, FloatSliderSpinBox)
+        ) and isinstance(binding, MayaFloatPlugsBinding):
+            editor.set_source(binding)
+        elif isinstance(
+            editor, (IntValueStepSpinBox, IntSliderSpinBox)
+        ) and isinstance(binding, MayaIntPlugsBinding):
+            editor.set_source(binding)
+        else:
+            raise ValueError("属性の型と入力部品が一致しません")
+        row.binding.state_changed.connect(self._update_state)
         self._update_state()
 
     @property
@@ -975,6 +1035,8 @@ class AttributeRowWidget(qt.QWidget):
             self.input_indicator.set_input_state(
                 "locked" if visible_targets[0].is_locked else representative
             )
+        else:
+            self.input_indicator.set_input_state("unconnected")
         self.name_label.setText(self.row.attribute.nice_name)
         defined = (
             binding.is_value_defined
@@ -1059,6 +1121,23 @@ class AttributeStateRowWidget(qt.QWidget):
 
         # 初期同期や外部変更は書き込まず、明示選択とクリックだけを入力にする
         self.lock_check_box.clicked.connect(self.set_locked)
+        row.state_binding.state_changed.connect(self._update_state)
+        self._update_state()
+
+    def set_row(self, row: ChannelStateRow, selection_count: int) -> None:
+        """状態入力部品を残し、新しい選択の状態と操作対象へ切り替える。"""
+        old_binding = self.row.state_binding
+        if qt.isValid(old_binding):
+            old_binding.state_changed.disconnect(self._update_state)
+        self.row = row
+        self.selection_count = selection_count
+        for value, _label, description in _DISPLAY_OPTIONS:
+            self.display_buttons[value].setAccessibleName(
+                f"{row.attribute.nice_name} {description}"
+            )
+        self.lock_check_box.setAccessibleName(
+            f"{row.attribute.nice_name} ロック"
+        )
         row.state_binding.state_changed.connect(self._update_state)
         self._update_state()
 
@@ -2046,12 +2125,18 @@ class ChannelBoxWidget(qt.QWidget):
         """Bindingを破棄する前に、古い選択への入力とメニューを終了する。"""
         self._search_timer.stop()
         self.table_view.finish_numeric_edit(commit=False)
+        self.state_sweep.finish()
+        self.lock_sweep.finish()
         self.context_menu.close()
         for widget in self.row_widgets:
             if isinstance(widget, AttributeRowWidget):
                 widget.close_context_menu()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
+            if isinstance(
+                widget.editor, (FloatSliderSpinBox, IntSliderSpinBox)
+            ):
+                widget.editor.slider.finish_edit()
 
     def _cancel_history_input(self) -> None:
         """Undo前の下書きやドラッグを、保持する入力行から書き戻さずに除く。"""
@@ -2356,7 +2441,11 @@ class ChannelBoxWidget(qt.QWidget):
         )
 
     def _configure_value_input(
-        self, widget: AttributeRowWidget, key: tuple[str, str]
+        self,
+        widget: AttributeRowWidget,
+        key: tuple[str, str],
+        *,
+        connect_slider_events: bool = True,
     ) -> None:
         """既存Viewの入力を、属性選択を解釈する一括操作へ接続する。"""
         editor = widget.editor
@@ -2374,12 +2463,13 @@ class ChannelBoxWidget(qt.QWidget):
                 editor.slider.setValueRequestHandler(
                     partial(self._request_slider_value, key, binding, editor)
                 )
-                editor.slider.editStarted.connect(
-                    partial(self._begin_slider_edit, editor)
-                )
-                editor.slider.editFinished.connect(
-                    partial(self._finish_slider_edit, editor)
-                )
+                if connect_slider_events:
+                    editor.slider.editStarted.connect(
+                        partial(self._begin_slider_edit, editor)
+                    )
+                    editor.slider.editFinished.connect(
+                        partial(self._finish_slider_edit, editor)
+                    )
         elif isinstance(editor, (IntValueStepSpinBox, IntSliderSpinBox)):
             editor.spin_box.setValueRequestHandler(
                 partial(self._request_int_value, key)
@@ -2391,12 +2481,13 @@ class ChannelBoxWidget(qt.QWidget):
                 editor.slider.setValueRequestHandler(
                     partial(self._request_int_slider_value, key, editor)
                 )
-                editor.slider.editStarted.connect(
-                    partial(self._begin_slider_edit, editor)
-                )
-                editor.slider.editFinished.connect(
-                    partial(self._finish_slider_edit, editor)
-                )
+                if connect_slider_events:
+                    editor.slider.editStarted.connect(
+                        partial(self._begin_slider_edit, editor)
+                    )
+                    editor.slider.editFinished.connect(
+                        partial(self._finish_slider_edit, editor)
+                    )
         elif isinstance(editor, BoolCheckBox):
             editor.setValueRequestHandler(
                 partial(self._request_bool_value, key)
@@ -3248,15 +3339,28 @@ class ChannelBoxWidget(qt.QWidget):
         )
 
     def _rebuild_rows(self) -> None:
-        """古いViewを破棄して、新しい選択の入力行を配置する。"""
+        """共通する入力部品を再接続し、増減・入力形式の差分だけを更新する。"""
         self.state_sweep.clear()
         self.lock_sweep.clear()
+        reusable: dict[
+            tuple[str, str], AttributeRowWidget | AttributeStateRowWidget
+        ] = {}
         for widget in self.row_widgets:
+            if not qt.isValid(widget):
+                continue
             if isinstance(widget, AttributeRowWidget):
                 widget.close_context_menu()
             if isinstance(widget.editor, EnumComboBox):
                 widget.editor.hidePopup()
-            widget.hide()
+            # viewport交換で旧部品が残っていても、新しい表へ持ち込まない
+            parent_widget = cast(
+                Callable[[], qt.QWidget | None],
+                getattr(widget, "parentWidget"),
+            )()
+            if parent_widget == self.table_view.viewport():
+                reusable[
+                    (widget.row.attribute.path, widget.row.attribute.kind)
+                ] = widget
         self.row_widgets = ()
         names = self.controller.node_names
         if self.controller.mode == "custom_filter_setup":
@@ -3291,19 +3395,24 @@ class ChannelBoxWidget(qt.QWidget):
             for row in self.controller.rows:
                 widget: AttributeRowWidget | AttributeStateRowWidget
                 key = (row.attribute.path, row.attribute.kind)
+                previous = reusable.get(key)
                 if isinstance(row, ChannelStateRow):
-                    widget = AttributeStateRowWidget(
-                        row,
-                        len(names),
-                        self.table_view.viewport(),
-                        edit_session=self.controller.state_edit_session,
-                        display_state_request_handler=partial(
-                            self._request_display_state, key
-                        ),
-                        lock_request_handler=partial(
-                            self._request_locked, key
-                        ),
-                    )
+                    if isinstance(previous, AttributeStateRowWidget):
+                        previous.set_row(row, len(names))
+                        widget = previous
+                    else:
+                        widget = AttributeStateRowWidget(
+                            row,
+                            len(names),
+                            self.table_view.viewport(),
+                            edit_session=self.controller.state_edit_session,
+                            display_state_request_handler=partial(
+                                self._request_display_state, key
+                            ),
+                            lock_request_handler=partial(
+                                self._request_locked, key
+                            ),
+                        )
                     for value, button in widget.display_buttons.items():
                         self.state_sweep.add_button(
                             button,
@@ -3317,23 +3426,33 @@ class ChannelBoxWidget(qt.QWidget):
                         apply_unchanged=True,
                     )
                 else:
-                    widget = AttributeRowWidget(
-                        row,
-                        len(names),
-                        self.table_view.viewport(),
-                        context_menu_initializer=self._connect_row_menu,
-                        single_step=self._saved_single_step(key),
-                        align_callback=partial(
-                            self._run_selected_action, "align", key
-                        ),
-                        wheel_editing_without_focus=(
-                            self.wheel_editing_action.isChecked()
-                        ),
-                    )
-                    widget.step_changed.connect(
-                        partial(self._apply_step_value, key)
-                    )
-                    self._configure_value_input(widget, key)
+                    if isinstance(
+                        previous, AttributeRowWidget
+                    ) and previous.can_reuse(row):
+                        previous.set_row(row, len(names))
+                        widget = previous
+                        # 値要求は新Bindingへ差し替え、継続入力の接続は重複させない
+                        self._configure_value_input(
+                            widget, key, connect_slider_events=False
+                        )
+                    else:
+                        widget = AttributeRowWidget(
+                            row,
+                            len(names),
+                            self.table_view.viewport(),
+                            context_menu_initializer=self._connect_row_menu,
+                            single_step=self._saved_single_step(key),
+                            align_callback=partial(
+                                self._run_selected_action, "align", key
+                            ),
+                            wheel_editing_without_focus=(
+                                self.wheel_editing_action.isChecked()
+                            ),
+                        )
+                        widget.step_changed.connect(
+                            partial(self._apply_step_value, key)
+                        )
+                        self._configure_value_input(widget, key)
                 widgets.append(widget)
         except Exception:
             self.controller.dispose()

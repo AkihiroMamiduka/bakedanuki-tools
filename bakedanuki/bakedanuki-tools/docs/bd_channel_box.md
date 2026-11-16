@@ -1625,6 +1625,12 @@ Undo／Redo中に連続入力の途中値が通知されても、utilは読取�
 値の同期はsceneへ書き戻さず、Redo履歴を維持します。反映にはtoolsと対応するutilを更新し、
 `bd_tools.reload_package(reload_util=True)`を実行してください。設定・sceneの移行は不要です。
 選択が変わると古いBindingと連続編集を終了してから、新しい対象へ接続します。
+正式属性path・型・入力形式が一致する行と入力欄は再利用し、Maya側のBindingだけを
+新規に生成します。数値のhard limitまたは表示精度が異なる行は、その行だけ再生成します。
+追加属性は新規行、なくなった属性は削除行として反映し、並べ替えでは残存する入力欄を
+移動します。異なるノード型でも共通する行を再利用でき、同型かどうかだけで判定しません。
+enumの項目・値・ロック・接続状態・表示名は新しいBindingと属性情報から同期します。
+属性選択の保持条件は従来どおり同じ選択実体と順序の場合だけです。検索条件は維持します。
 タイトルバーのclose、`close()`、`dispose()`、tools reloadでもcallbackと入力を終了します。
 モード・フィルター切替、選択変更による行の再構築とWindow終了では、開いている属性メニューと
 enum・表示状態の選択肢も閉じ、古いBindingと連続編集を終了します。
@@ -1705,6 +1711,12 @@ toolsは時刻変更で連続編集と未確定入力を終了し、値の読取
 `verticalScrollBar()`と`ensureWidgetVisible()`による既存のスクロール操作は引き続き使えます。
 Maya本体がviewportを交換する場合があるため、内容の親Widgetは保持せず、使用時に`viewport()`で取得します。
 `row_widgets`、各行の`editor`、公開`show()`とWindowの復元入口は維持します。
+選択変更・表示更新後も共通する行と`editor`は存続する場合があります。
+保持した行から現在の属性情報とBindingを読む場合は、その都度`row.row`を参照してください。
+以前取得した`ChannelRow`／`ChannelStateRow`やBindingの対象は変わらず、
+旧Bindingは選択変更の直後に終了します。保持したBindingを新選択の入力に使わないでください。
+`ChannelTableView.rows`はmodelと同じ行順を返す読み取り専用propertyです。
+行構成を変更するコードは直接代入せず、`set_rows()`へ更新後の行を渡してください。
 `ChannelRow` / `ChannelStateRow`を直接構築するコードは、対応ノード名のtupleを
 新しい`target_names`引数へ渡してください。scene・保存設定の移行は不要です。
 
@@ -3297,3 +3309,55 @@ transform 1 nodeへ30個の独立double属性を追加し、「全て」で192�
 比較用資料は開発環境の`build/channel_box_undo_probe.py`、
 `build/channel_box_undo_improved_result.json`と、
 `%TEMP%/bd-channel-undo-maya2025-i3nxdsc0`へ保存しました。
+
+### 選択切替の応答改善（2026-11-16）
+
+選択変更・構成更新では、共通する正式path・型・入力形式の行と入力欄を再利用します。
+数値範囲・表示精度が変わった行だけを再生成し、属性の増減と並べ替えを差分で反映します。
+表では連続する追加・削除を一括通知し、全行の高さを確定してから新規editorを開きます。
+`row_widgets`は引き続き全表示属性のWidgetを持つtupleです。
+
+旧Bindingは選択変更時に終了し、新しい対象のBindingとViewModelへ接続し直します。
+未確定入力・popup・ドラッグ・なぞり操作は持ち越しません。
+utilの`set_source()`は旧通知を世代で判定し、Qt破棄通知の受信先をViewの寿命へ結び付けます。
+終了通知中に接続先が破棄・変更される場合も、残った入力を新旧の対象へ書き込みません。
+
+検証は次の範囲で成功しました。
+
+- toolsのunit test 264件、Maya 2025／2026／2027のruntime test各919件。
+- 最終の通知実装で、選択切替・入力取消・Undo・enum・画面終了の関連testを各版86件追加確認。
+- utilの`verify.cmd`成功。full pytest 16415件成功・2110件skip、
+  各版のQt test 1270件成功、Maya UI test各1049件成功・953件skip。
+- Black、Pyright contract、差分の空白検査が成功。
+
+再起動後、他の検証processが終了した状態で専用Maya 2025を順に起動し、
+固定した変更前HEAD（tools `4211ad9`／util `562393da`）と変更後を比較しました。
+Maya設定・project・startupを隔離し、実際のimport元とpackage内容のhashも照合しています。
+transform／jointへ各30個のdouble属性を追加し、2回のwarm-up後に7回計測しました。
+値は選択コマンド・予約したQt更新・遅延削除を含む中央値です。
+
+| 切替条件 | 行数 | 変更前 | 改善後 |
+| --- | ---: | ---: | ---: |
+| Keyable + ChannelBox、transform同士 | 40 | 125.794 ms | 82.867 ms |
+| 全て、transform同士 | 192 | 508.307 ms | 393.798 ms |
+| 全て、joint同士 | 254 | 724.161 ms | 585.756 ms |
+| 全て、代表nodeが同じで他の選択を変更 | 192 | 543.046 ms | 378.116 ms |
+
+同構成の全試行で全行のWidgetを保持しました。表の配置処理は、transformで
+159.593 msから1.560 ms、jointで240.259 msから2.055 msへ短縮しています。
+表の配置時間は全体時間の内数です。値・監視は新しい対象で準備し直します。
+
+transformとjoint間でも192行を保持し、62行だけを追加・削除しました。
+方向による差が大きいため、同じ7試行を切替先で分けた中央値も記録します。
+
+| 差分の方向 | 試行数 | 変更前 | 改善後 |
+| --- | ---: | ---: | ---: |
+| 62行追加（transform→joint） | 4 | 699.044 ms | 655.985 ms |
+| 62行削除（joint→transform） | 3 | 547.304 ms | 454.108 ms |
+
+実Maya画面では表示行の位置を照合し、選択変更後の数値入力→Undo→Redo→Undo、
+bool入力→Undoが新しい対象だけへ反映される7工程も成功しました。
+計測値は検証用sceneの値で、実sceneの評価・描画負荷によって変動します。
+比較資料は開発環境の`build/channel_box_selection_probe.py`、
+`build/channel_box_selection_baseline_result.json`、
+`build/channel_box_selection_improved_result.json`に保存しました。

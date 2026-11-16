@@ -9,6 +9,14 @@
 
 ### Changed
 
+- bdChannelBoxの選択変更・表示更新で、正式属性path・型・入力形式が共通する行と
+  入力欄を再利用し、追加・削除・数値範囲や表示精度の変更は該当行だけ更新する。
+  表の並べ替えでも残存行を維持する。旧選択のBinding・未確定入力・連続操作は
+  終了させ、新しいBindingへ接続し直す。`row_widgets`の各行は選択変更後も
+  存続する場合があるため、属性情報やBindingは使用時に`row.row`から取得する。
+  `ChannelTableView.rows`は読み取り専用となり、構成の変更には`set_rows()`を使う。
+  設定・sceneの移行は不要。toolsとutilを更新し、
+  `bd_tools.reload_package(reload_util=True)`で反映する。
 - bdChannelBoxのUndo／Redoで、選択実体・属性構成・数値入力範囲が同じ場合は
   既存の入力行と監視を保持し、値と編集可否だけを同期するよう変更。
   属性の追加・削除・改名、表示対象やhard limitの変更では再構築する。

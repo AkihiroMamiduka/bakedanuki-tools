@@ -713,7 +713,7 @@ def test_context_menus_omit_refresh_and_direct_refresh_only_reads_values(
     menu.close()
     editor.refresh()
     _events()
-    assert _row(editor, "weight") is not row
+    assert _row(editor, "weight") is row
     assert _value_step(editor, "translateX").singleStep() == 0.01
     assert cmds.getAttr("channelA.weight") == 0.25
     assert cmds.getAttr("channelB.weight") == 0.75
@@ -757,13 +757,15 @@ def test_selection_change_closes_attribute_menu(
 ) -> None:
     """メニューを開いたまま選択が変わっても、旧対象の操作を残さない。"""
     row = _row(editor, "weight")
+    old_binding = row.row.binding
     menu = row.context_menu
     _open_context_menu(row.name_label)
     assert menu.isVisible()
     cmds.select("channelB", replace=True)
     _events()
-    assert row.row.binding.is_disposed
-    assert not qt.isValid(menu)
+    assert not qt.isValid(old_binding) or old_binding.is_disposed
+    assert _row(editor, "weight") is row
+    assert qt.isValid(menu) and not menu.isVisible()
     assert cmds.getAttr("channelB.weight") == 0.75
 
 

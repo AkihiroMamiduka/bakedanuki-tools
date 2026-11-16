@@ -38,6 +38,100 @@ class TableRow:
     direct_numeric_input: bool = False
 
 
+class _RowModel(qt.QtCore.QAbstractTableModel):
+    """行の実体と高さだけを持ち、残存editorを保ったまま構成を変更する。"""
+
+    def __init__(self, parent: qt.QObject) -> None:
+        """値を複製しない一列のmodelと、行のsize hintを初期化する。"""
+        super().__init__(parent)
+        self.rows: tuple[TableRow, ...] = ()
+        self._sizes: list[qt.QSize] = []
+
+    def rowCount(
+        self,
+        parent: (
+            qt.QModelIndex | qt.QtCore.QPersistentModelIndex
+        ) = qt.QModelIndex(),
+    ) -> int:
+        """rootだけに属性行を持ち、子行は作らない。"""
+        return 0 if parent.isValid() else len(self.rows)
+
+    def columnCount(
+        self,
+        parent: (
+            qt.QModelIndex | qt.QtCore.QPersistentModelIndex
+        ) = qt.QModelIndex(),
+    ) -> int:
+        """rootの一列だけを入力行の格納先にする。"""
+        return 0 if parent.isValid() else 1
+
+    def data(
+        self,
+        index: qt.QModelIndex | qt.QtCore.QPersistentModelIndex,
+        role: int = int(qt.Qt.ItemDataRole.DisplayRole),
+    ) -> object:
+        """editorの大きさだけを公開し、値と表示は既存Viewへ委譲する。"""
+        if (
+            index.isValid()
+            and role == qt.Qt.ItemDataRole.SizeHintRole
+            and 0 <= index.row() < len(self._sizes)
+        ):
+            return self._sizes[index.row()]
+        return None
+
+    def insert_rows(self, index: int, rows: tuple[TableRow, ...]) -> None:
+        """連続する新規行を一度に通知し、残存editorの再配置をまとめる。"""
+        if not rows:
+            return
+        sizes = [row.widget.sizeHint() for row in rows]
+        self.beginInsertRows(qt.QModelIndex(), index, index + len(rows) - 1)
+        self.rows = self.rows[:index] + rows + self.rows[index:]
+        self._sizes[index:index] = sizes
+        self.endInsertRows()
+
+    def remove_rows(self, index: int, count: int) -> None:
+        """連続する削除行を一度に通知し、そのeditorだけをQtで破棄する。"""
+        if not count:
+            return
+        self.beginRemoveRows(qt.QModelIndex(), index, index + count - 1)
+        self.rows = self.rows[:index] + self.rows[index + count :]
+        del self._sizes[index : index + count]
+        self.endRemoveRows()
+
+    def move_row(self, source: int, destination: int) -> None:
+        """Qtの移動通知で、行Widgetとpersistent editorを一緒に移す。"""
+        if source == destination:
+            return
+        destination_child = destination + int(source < destination)
+        if not self.beginMoveRows(
+            qt.QModelIndex(),
+            source,
+            source,
+            qt.QModelIndex(),
+            destination_child,
+        ):
+            raise RuntimeError("属性行を移動できません")
+        rows = list(self.rows)
+        rows.insert(destination, rows.pop(source))
+        self.rows = tuple(rows)
+        self._sizes.insert(destination, self._sizes.pop(source))
+        self.endMoveRows()
+
+    def replace_descriptions(self, rows: tuple[TableRow, ...]) -> None:
+        """配置済みWidgetの新しい入力対象と操作設定を反映する。"""
+        self.rows = rows
+
+    def update_size(self, index: int, size: qt.QSize) -> None:
+        """変化したsize hintだけを通知し、同じ配置の再計算を避ける。"""
+        if self._sizes[index] == size:
+            return
+        self._sizes[index] = size
+        model_index = self.index(index, 0)
+        self.dataChanged.emit(
+            model_index, model_index, [int(qt.Qt.ItemDataRole.SizeHintRole)]
+        )
+
+
 class _RowDelegate(qt.QStyledItemDelegate):
     """属性行全体を常時開いたeditorとして配置する。"""
 
@@ -93,8 +187,7 @@ class ChannelTableView(qt.QTableView):
     def __init__(self, parent: qt.QWidget | None = None) -> None:
         """行の描画と選択を準備し、まだ属性へ入力しない。"""
         super().__init__(parent)
-        self.rows: tuple[TableRow, ...] = ()
-        self._row_model = qt.QStandardItemModel(self)
+        self._row_model = _RowModel(self)
         self._row_delegate = _RowDelegate(self)
         self._targets: dict[qt.QObject, tuple[int, bool, bool]] = {}
         self._palettes: list[tuple[qt.QWidget, qt.QPalette, bool]] = []
@@ -142,10 +235,20 @@ class ChannelTableView(qt.QTableView):
         super().setupViewport(viewport)
         viewport.setBackgroundRole(qt.QPalette.ColorRole.Window)
 
+    @property
+    def rows(self) -> tuple[TableRow, ...]:
+        """移動通知の途中でもmodelと同じ順序の属性行を返す。"""
+        return self._row_model.rows
+
     def set_rows(
         self, rows: Sequence[TableRow], preserve_selection: bool = True
     ) -> None:
-        """旧入力を破棄し、残存する属性だけ選択を引き継ぐ。"""
+        """旧入力を終了し、同じWidgetの行を残して構成と選択を更新する。"""
+        desired = tuple(rows)
+        desired_widgets = {id(row.widget) for row in desired}
+        if len(desired_widgets) != len(desired):
+            raise ValueError("同じ属性行Widgetを複数行へ配置できません")
+        targets_unchanged = self.rows == desired
         with self._selection_update():
             selected = self.selected_keys() if preserve_selection else ()
             current = self.currentIndex().row()
@@ -156,59 +259,103 @@ class ChannelTableView(qt.QTableView):
             )
             self.finish_numeric_edit(commit=False)
             self._finish_drag()
-            self._remove_targets()
-            self._row_model.clear()
-            self.rows = tuple(rows)
+            if not targets_unchanged:
+                self._remove_targets()
             self._anchor = -1
-            self._row_model.setColumnCount(1)
 
-            # Bindingを持つ既存行はdelegateが所有し、値はmodelへ複製しない
+            # 残存行のeditorは閉じず、削除・移動・追加だけをmodelへ通知する
+            index = len(self.rows) - 1
+            while index >= 0:
+                if id(self.rows[index].widget) in desired_widgets:
+                    index -= 1
+                    continue
+                last = index
+                while index >= 0 and (
+                    id(self.rows[index].widget) not in desired_widgets
+                ):
+                    index -= 1
+                self._row_model.remove_rows(index + 1, last - index)
+            existing_widgets = {id(row.widget) for row in self.rows}
+            created_widgets: set[int] = set()
+            index = 0
+            while index < len(desired):
+                row = desired[index]
+                if id(row.widget) not in existing_widgets:
+                    last = index + 1
+                    while last < len(desired) and (
+                        id(desired[last].widget) not in existing_widgets
+                    ):
+                        last += 1
+                    added = desired[index:last]
+                    self._row_model.insert_rows(index, added)
+                    created_widgets.update(id(item.widget) for item in added)
+                    existing_widgets.update(created_widgets)
+                    index = last
+                    continue
+                existing = next(
+                    (
+                        candidate
+                        for candidate in range(index, len(self.rows))
+                        if self.rows[candidate].widget is row.widget
+                    ),
+                    None,
+                )
+                if existing is not None and existing != index:
+                    self._row_model.move_row(existing, index)
+                index += 1
+            self._row_model.replace_descriptions(desired)
+
+            # 行を保持しても、交換した入力部品と新しい行番号へ監視をつなぐ
             for index, row in enumerate(self.rows):
-                item = qt.QStandardItem()
-                item.setSizeHint(row.widget.sizeHint())
-                self._row_model.setItem(index, 0, item)
-                self.openPersistentEditor(self._row_model.index(index, 0))
-                self.setRowHeight(
-                    index, max(1, row.widget.sizeHint().height())
-                )
-                self._add_target(
-                    row.widget, index, numeric=False, editable=False
-                )
-                self._add_target(
-                    row.name_label, index, numeric=False, editable=False
-                )
-                self._remember_palette(row.name_label)
-                if row.input_indicator is not None:
-                    self._add_target(
-                        row.input_indicator,
-                        index,
-                        numeric=False,
-                        editable=False,
-                    )
-                if row.value_field is not None:
-                    self._add_target(
-                        row.value_field, index, numeric=True, editable=True
-                    )
-                    find_children = cast(
-                        Callable[[type[qt.QLineEdit]], list[qt.QLineEdit]],
-                        getattr(row.value_field, "findChildren"),
-                    )
-                    children = find_children(qt.QLineEdit)
-                    for child in children:
-                        self._add_target(
-                            child, index, numeric=True, editable=True
-                        )
-                if row.text_field is not None:
-                    self._add_target(
-                        row.text_field, index, numeric=False, editable=True
-                    )
+                size = row.widget.sizeHint()
+                self._row_model.update_size(index, size)
+                height = max(1, size.height())
+                if self.rowHeight(index) != height:
+                    self.setRowHeight(index, height)
+                if self.isRowHidden(index):
+                    self.setRowHidden(index, False)
+                if not targets_unchanged:
+                    self._add_row_targets(row, index)
+            # 全行の高さと位置を確定してから、新規editorだけを開く
+            for index, row in enumerate(self.rows):
+                if id(row.widget) in created_widgets:
+                    self.openPersistentEditor(self._row_model.index(index, 0))
             self.select_keys(selected)
-            if preserve_selection and current_key is not None:
+            current_survives = any(row.key == current_key for row in self.rows)
+            if not preserve_selection or (
+                not current_survives and not self.selected_keys()
+            ):
+                self.setCurrentIndex(qt.QModelIndex())
+            elif current_key is not None:
                 for index, row in enumerate(self.rows):
                     if row.key == current_key:
                         self._set_current(index)
                         break
             self._paint_selection()
+
+    def _add_row_targets(self, row: TableRow, index: int) -> None:
+        """新しい行番号と入力部品へ、選択・入力のイベント監視を接続する。"""
+        self._add_target(row.widget, index, numeric=False, editable=False)
+        self._add_target(row.name_label, index, numeric=False, editable=False)
+        self._remember_palette(row.name_label)
+        if row.input_indicator is not None:
+            self._add_target(
+                row.input_indicator, index, numeric=False, editable=False
+            )
+        if row.value_field is not None:
+            self._add_target(
+                row.value_field, index, numeric=True, editable=True
+            )
+            find_children = cast(
+                Callable[[type[qt.QLineEdit]], list[qt.QLineEdit]],
+                getattr(row.value_field, "findChildren"),
+            )
+            for child in find_children(qt.QLineEdit):
+                self._add_target(child, index, numeric=True, editable=True)
+        if row.text_field is not None:
+            self._add_target(
+                row.text_field, index, numeric=False, editable=True
+            )
 
     def selected_keys(self) -> tuple[_RowKey, ...]:
         """表示中の選択属性を行順で返し、widgetの寿命から切り離す。"""

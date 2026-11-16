@@ -272,6 +272,8 @@ row = bd_channel_box.show().widget.row_widgets[0]
 assert_type(row, AttributeRowWidget | AttributeStateRowWidget)
 if isinstance(row, AttributeRowWidget):
     assert_type(row.row, ChannelRow)
+    assert_type(row.can_reuse(row.row), bool)
+    assert_type(row.set_row(row.row, 1), None)
     assert_type(row.context_menu, AttributeRowMenu)
     assert_type(
         row.editor,
