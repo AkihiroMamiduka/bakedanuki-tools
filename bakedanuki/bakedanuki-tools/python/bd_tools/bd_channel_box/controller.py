@@ -68,6 +68,7 @@ from bd_util.maya.ui import (
     resolve_float_plug,
     resolve_int_plug,
     resolve_string_plug,
+    shared_plugs_events,
     shared_plugs_lifetime,
     shared_scalar_plug_nodes,
 )
@@ -648,7 +649,15 @@ class ChannelBoxController(qt.QObject):
                 self._selected_dag_path(name) for name in names
             )
             self._watch_nodes()
-            self.rows = self._create_rows(attributes, representative_only=True)
+            # 同時に作る表示用Bindingの固定通知だけを共有し、対象と検証は分離する
+            with (
+                shared_plugs_events()
+                if self._mode == "values"
+                else nullcontext()
+            ):
+                self.rows = self._create_rows(
+                    attributes, representative_only=True
+                )
             self._row_structure = self._read_row_structure(attributes)
         except Exception as error:
             self._dispose_rows()

@@ -9,6 +9,15 @@
 
 ### Changed
 
+- bdChannelBoxの値編集Modeで、表示用Bindingの構築範囲内だけ固定Mayaイベントの
+  登録を共有する。表示・ロックModeは共有対象外とし、各Bindingの対象・値・検証と
+  node固有の監視は個別に管理する。utilの複数属性Bindingは初回取得のsnapshotを
+  外部通知前に一回だけ消費し、取得中の変更・削除・再入時は全対象を再取得する。
+  通常refresh・入力前の再検証と、選択変更時の旧Bindingの即時終了を維持する。
+  前回の選択切替改善の完了後に、追加の改善として実装。読取りと通知登録回数の削減、
+  同process内の時間比較とばらつきは`docs/bd_channel_box.md`の検証記録へ記載する。
+  scene・設定の移行は不要。toolsとutilを更新し、
+  `bd_tools.reload_package(reload_util=True)`で反映する。
 - bdChannelBoxの選択変更・表示更新で、正式属性path・型・入力形式が共通する行と
   入力欄を再利用し、追加・削除・数値範囲や表示精度の変更は該当行だけ更新する。
   表の並べ替えでも残存行を維持する。旧選択のBinding・未確定入力・連続操作は
